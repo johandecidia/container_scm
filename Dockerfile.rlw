@@ -1,0 +1,58 @@
+FROM node:22-bookworm AS vite-builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY api-client ./api-client
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+
+FROM python:3.14-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PRODUCTION=1
+ENV DJANGO_SETTINGS_MODULE=container_scm.settings_production
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    git \
+    gcc \
+    build-essential \
+    libpq-dev \
+    libjpeg-dev \
+    libcairo2 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/requirements.txt
+
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY . /app/
+COPY --from=vite-builder /app/static /app/static
+
+RUN SECRET_KEY=dummy \
+    DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy \
+    REDIS_URL=redis://localhost:6379/0 \
+    ALLOWED_HOSTS=* \
+    CSRF_TRUSTED_ORIGINS=https://dummy.local \
+    FRONTEND_ADDRESS=https://dummy.local \
+    DJANGO_VITE_DEV_MODE=False \
+    python manage.py collectstatic --noinput
+
+RUN printf '#!/bin/sh\n\
+set -e\n\
+PORT_RUN=${PORT:-8000}\n\
+echo "Running migrations..."\n\
+python manage.py migrate --no-input\n\
+echo "Starting Gunicorn on port $PORT_RUN..."\n\
+gunicorn container_scm.wsgi:application --bind 0.0.0.0:$PORT_RUN --workers 2\n' > /start.sh \
+    && chmod +x /start.sh
+
+CMD ["/start.sh"]

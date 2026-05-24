@@ -28,7 +28,19 @@ CSRF_COOKIE_SECURE = True
 USE_HTTPS_IN_ABSOLUTE_URLS = True
 
 # If you don't want to use environment variables to set production hosts you can add them here
-# ALLOWED_HOSTS = ["example.com"]
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
+
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=[],
+)
+
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=CSRF_TRUSTED_ORIGINS,
+)
+
+DJANGO_VITE["default"]["dev_mode"] = False
 
 # Your email config goes here.
 # see https://github.com/anymail/django-anymail for more details / examples

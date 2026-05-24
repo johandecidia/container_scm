@@ -106,6 +106,7 @@ dependencies = [
     "requests",
     "sentry-sdk[django]>=2.55.0",
     "stripe>=14,<15",
+    "whitenoise[brotli]",
     "wagtail",
 ]
 
