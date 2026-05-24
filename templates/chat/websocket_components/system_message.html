@@ -1,0 +1,10 @@
+<div id="message-list" hx-swap-oob="beforeend">
+  <div class="pg-chat-message-system">
+    {% include "chat/components/system_icon.html" %}
+    <div class="pg-message-wrapper">
+      <div id="thinking-{{ contents_div_id }}" class="hidden"></div>
+      <div id="{{ contents_div_id }}" class="pg-message-contents">
+      </div>
+    </div>
+  </div>
+</div>

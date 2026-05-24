@@ -1,0 +1,140 @@
+{% extends "pegasus/examples/examples_base.html" %}
+{% load static %}
+{% block app %}
+<section class="app-card">
+  <h1 class="text-3xl font-bold mb-2">Examples Gallery</h1>
+  <h2 class="text-xl mb-1">
+    End-to-end, fully functional examples for your project's needs.
+  </h2>
+</section>
+  <div class="flex flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0">
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/object-demo-icons.png' %}" alt="Object Demo">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Employee Lifecycle</h3>
+            <p>
+              A front-end for working with your database implemented in vanilla Django, React, Vue.js, and HTMX.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_employees:object_lifecycle_home' %}" class="btn btn-outline">
+              <span>View Employee App</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/celery-icon.png' %}" alt="Background Tasks">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Background Tasks</h3>
+            <p>
+              Support background, long-running, or scheduled tasks easily with a working Celery
+              + front-end integration.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_examples:tasks' %}" class="btn btn-outline">
+              <span>View Tasks</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/undraw/undraw_analytics.svg' %}" alt="Charts">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Charts</h3>
+            <p>
+              Fully-integrated charts based on real data from your application.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_employees:charts' %}" class="btn btn-outline">
+              <span>View Charts</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="flex flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0 mt-2">
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/flags.png' %}" alt="Feature Flags">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Feature Flags</h3>
+            <p>
+              Use Feature Flags to enable or disable portions of your site dynamically.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_examples:flags' %}" class="btn btn-outline">
+              <span>View Feature Flag example</span>
+              <span class="icon">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/pricing-page-screenshot-small.png' %}" alt="Pricing Page">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Pricing Page</h3>
+            <p>
+              Communicate your application's value with a simple, flexible
+              pricing page.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_examples:pricing_page' %}" class="btn btn-outline">
+              <span>View Pricing Page</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endblock %}

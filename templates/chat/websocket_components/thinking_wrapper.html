@@ -1,0 +1,16 @@
+{% load i18n %}
+<div id="{{ thinking_id }}" hx-swap-oob="true">
+  <div class="collapse collapse-arrow bg-base-200 mb-2 collapse-open"
+       x-data="{ open: true, done: false }"
+       :class="{ 'collapse-open': open, 'collapse-close': !open }">
+    <div class="collapse-title text-sm font-medium cursor-pointer min-h-0 !py-2 !px-3"
+         @click="open = !open">
+      <span x-show="open && !done" class="add-loading-dots">{% translate "Thinking" %}</span>
+      <span x-show="open && done">{% translate "Hide thinking steps" %}</span>
+      <span x-show="!open">{% translate "Show thinking steps" %}</span>
+    </div>
+    <div class="collapse-content !px-3 !pb-2" x-show="open">
+      <div id="{{ content_id }}" class="text-sm opacity-60"></div>
+    </div>
+  </div>
+</div>

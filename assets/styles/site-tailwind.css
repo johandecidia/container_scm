@@ -1,0 +1,64 @@
+@import 'tailwindcss';
+
+/*
+   add custom components using imports, as described here:
+   https://tailwindcss.com/docs/using-with-preprocessors#build-time-imports
+*/
+@import './app/tailwind/app-components.css';
+@import './app/tailwind/chat-components.css';
+@import './app/tailwind/chat-components.utilities.css';
+@import './app/tailwind/subscription-components.css';
+@import './pegasus/tailwind.css';
+
+@config "../../tailwind.config.js";
+
+
+/*
+  Flowbite 4.x components (e.g. datepicker) use theme-based utility classes like
+  bg-neutral-primary-medium instead of standard Tailwind classes like bg-white.
+  Uncomment the following line to use the full flowbite theme. This may conflict with parts of DaisyUI.
+*/
+/* @import "flowbite/src/themes/default"; */
+
+/*
+  For now, we define only the minimum needed to fix the datepicker's transparent background on the demo page.
+*/
+@theme {
+  --color-neutral-primary-medium: var(--color-white);
+  --color-brand: var(--color-blue-700);
+}
+
+@plugin "flowbite/plugin" {
+  /* the forms plugin is disabled here because it conflicts with DaisyUI form styles */
+  forms: false;
+}
+@plugin "@tailwindcss/typography";
+@plugin "daisyui";
+
+@source "../../node_modules/flowbite";
+
+/*
+  The default border color has changed to `currentColor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+}
+
+/* set pegasus css variables to DaisyUI default colors: https://daisyui.com/docs/colors/ */
+
+:root {
+  --primary: var(--color-primary);
+  --danger: var(--color-error);
+  --success: var(--color-success);
+}

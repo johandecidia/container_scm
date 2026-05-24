@@ -1,0 +1,39 @@
+{% extends "pegasus/examples/examples_base.html" %}
+{% load static %}
+{% load meta_tags %}
+{% load django_vite %}
+{% block app %}
+  <section class="app-card">
+    <div class="flex flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0">
+      <div class="basis-1/4 grow-0 shrink-0 text-center">
+        <img class="img-fluid" alt="Pydantic AI" src="{% static 'images/pegasus/pydantic-ai.png' %}" style="max-height: 160px;"/>
+      </div>
+      <div class="flex-1">
+        <h1 class="text-3xl font-bold mb-2">Pydantic AI Agentic Chat Demo</h1>
+        <h2 class="text-xl mb-1">
+          Chat to edit your data models.
+        </h2>
+        <div class="prose max-w-none lg:prose-lg">
+          <p>
+            This is an interactive data model and UI example built with <a href="https://ai.pydantic.dev/" target="_blank">Pydantic AI</a>.
+            Click "Chat" on the sidebar and try things like "add an employee named Alice", or "give Bob a raise".
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+  <div class="app-card">
+    <div id="employee-list"
+         hx-get="{% url 'pegasus_employees:agentic_object_lifecycle_list' %}"
+         hx-trigger="htmx:wsAfterMessage from:body"
+         hx-target="#employee-list"
+         hx-swap="innerHTML">
+      {% include 'pegasus/employees/components/employee_table.html' %}
+    </div>
+  </div>
+  {% websocket_url 'ws_ai_new_chat' as base_ws_url %}
+  {% include "chat/components/chat_overlay.html" with chat_websocket_url=base_ws_url|add:"?agent_type=employees" %}
+{% endblock %}
+{% block page_js %}
+{% vite_asset 'assets/javascript/chat/ws_initialize.ts' %}
+{% endblock %}

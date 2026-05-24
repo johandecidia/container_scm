@@ -1,0 +1,77 @@
+{% extends "web/app/app_base.html" %}
+{% load django_vite %}
+
+{% load static %}
+{% load i18n %}
+{% block app %}
+<section class="app-card">
+  <div class="flex flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0 lg:flex-row-reverse items-center">
+    <div class="basis-1/3 grow-0 shrink-0">
+      <img class="img-fluid" src="{% static 'images/chat/chatgpt-logo.png' %}" alt="ChatGPT Logo">
+    </div>
+    <div class="flex-1">
+      <h1 class="text-3xl font-bold mb-2">{% translate "AI Chat" %}</h1>
+      <div class="prose max-w-none lg:prose-lg">
+        <p>
+          {% blocktranslate trimmed %}
+          Use <a href="https://en.wikipedia.org/wiki/Large_language_model" target="_blank">LLMs</a> to automatically
+          respond to user input or questions.
+          {% endblocktranslate %}
+        </p>
+        <p>
+          {% blocktranslate trimmed %}
+          You can create full-page chat experiences or use the chat widget to add AI-powered chat to any page in your app.
+          Try it by clicking the "Chat" button on the right of the page.
+          {% endblocktranslate %}
+        </p>
+        <p>
+          {% blocktranslate trimmed %}
+          You can also add agentic behavior. Try the "Weather Agent Chat" button to create a chat with an AI agent,
+          that has access to the logged in user's information, and tools to lookup local weather and send emails.
+          {% endblocktranslate %}
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+<div class="app-card">
+  <div>
+    <h1 class="text-3xl font-bold mb-2">{% translate "My Chats" %}</h1>
+    <h2 class="text-xl mb-1">{% translate "Manage your chats here." %}</h2>
+  </div>
+  <div class="mb-2 flex space-x-1">
+    <a href="{% url "chat:new_chat" %}?agent_type=weather" class="btn btn-primary" type="submit" >
+      {% translate 'Weather Agent Chat' %}
+    </a>
+    <a href="{% url "chat:new_chat" %}" class="btn btn-outline" type="submit" >
+      {% translate 'New Chat' %}
+    </a>
+  </div>
+  {% if chats.count %}
+  <div class="table-responsive">
+    <table class="table table table-zebra w-full">
+      <thead>
+        <tr>
+          <th class="text-left">{% translate "Chat" %}</th>
+          <th class="text-left">{% translate "Type" %}</th>
+          <th class="text-left">{% translate "Started On" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for chat in chats.all %}
+        <tr>
+          <td><a class="link" href="{% url 'chat:single_chat' chat.id %}">{{ chat.name }}</a></td>
+          <td>{{ chat.agent_type }}</td>
+          <td>{{ chat.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+  {% include "chat/components/chat_overlay.html" %}
+{% endblock %}
+{% block page_js %}
+{% vite_asset 'assets/javascript/chat/ws_initialize.ts' %}
+{% endblock page_js %}

@@ -1,0 +1,32 @@
+.idea
+.vscode
+*.code-workspace
+*.pyc
+*~
+.venv
+/.vite/
+venv
+db.sqlite3
+.sass-cache/
+celerybeat-schedule
+container_scm/localsettings.py
+container_scm/local.py
+static_root/
+node_modules/
+# ai assistants
+.playwright-mcp/
+.claude/settings.local.json
+openapitools.json
+media/
+docs/_build
+_dist/
+.env
+.env.production
+.DS_Store
+.direnv
+.envrc
+# compiled static files are built in dev/deploy
+static/assets/
+static/css/
+static/js/
+static/.vite/

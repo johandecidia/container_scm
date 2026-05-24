@@ -1,0 +1,17 @@
+{% extends "web/app/app_base.html" %}
+{% load static %}
+{% block app %}
+<section class="app-card">
+  <h1 class="text-3xl font-bold mb-2">Oops, there's an error in your subscription setup</h1>
+  <p>Details:</p>
+  <div class="text-error">
+    {{ error }}
+  </div>
+  <p>
+    <strong>
+      For more information on how to setup Stripe Subscriptions see
+      <a href="https://docs.saaspegasus.com/subscriptions" target="_blank" class="link">the documentation</a>.
+    </strong>
+  </p>
+</section>
+{% endblock %}

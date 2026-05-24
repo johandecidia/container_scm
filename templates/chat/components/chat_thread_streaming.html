@@ -1,0 +1,33 @@
+{% load i18n %}
+{% load markdown_tags %}
+<div class="pg-chat-wrapper {% if embedded %}overlay-mode{% endif %}" hx-ext="ws" ws-connect="{{ websocket_url }}{% if embedded %}{% if '?' in websocket_url %}&{% else %}?{% endif %}embedded=true{% endif %}" x-data="{message: '', chatConnectionStatus: 'connecting', get chatConnectionStatusMessage() { return this.chatConnectionStatus === 'connecting' ? '{% translate "Connecting..." %}' : '{% translate "Connection lost. Please refresh the page." %}'; }}">
+  <small id="connection-status" class="px-4 my-2 text-base-content/70 text-center" x-show="chatConnectionStatus !== 'connected'" x-text="chatConnectionStatusMessage"></small>
+  <div id="message-list" class="pg-chat-pane" hx-swap-oob="beforeend">
+    <div class="pg-chat-message-system">
+      {% include "chat/components/system_icon.html" %}
+      <div class="pg-message-contents">
+        <p>{% translate "Hello, what can I help you with today?" %}</p>
+      </div>
+    </div>
+  {% if chat %}
+    {% for message in chat.messages.all %}
+    {% with message.content as message_text %}
+      {% if message.is_human_message %}
+        {% include 'chat/components/user_message.html' %}
+      {% else %}
+        <div class="pg-chat-message-system">
+          {% include "chat/components/system_icon.html" %}
+          <div class="pg-message-contents">
+            {{ message_text|render_markdown }}
+          </div>
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% endfor %}
+  {% endif %}
+  </div>
+  <form class="pg-chat-input-bar" ws-send @submit.prevent="message === ''" @submit="message = ''">
+    <input id="chat-message-input" name="message" type="text" x-model="message" placeholder="{% translate 'Type your message...' %}" aria-label="Message" class="input w-full" :disabled="chatConnectionStatus !== 'connected'">
+    <button type="submit" class="btn btn-primary mx-2" :disabled="!message || chatConnectionStatus !== 'connected'" x-text="chatConnectionStatus === 'connected' ? '{% translate "Send" %}' : '{% translate "Connecting..." %}'"></button>
+  </form>
+</div>

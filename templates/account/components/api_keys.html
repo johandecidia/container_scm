@@ -1,0 +1,44 @@
+{% load i18n %}
+<section class="app-card">
+  <h2 class="text-xl mb-1">{% translate "API Keys" %}</h2>
+  {% for key in api_keys %}
+    {% if forloop.first %}
+    <div class='table-responsive'>
+      <table class="table table table-zebra w-full">
+        <thead>
+        <tr>
+          <th>{% translate "Prefix" %}</th>
+          <th>{% translate "Created" %}</th>
+          <th></th>
+        </tr>
+        </thead>
+        <tbody>
+      {% endif %}
+          <tr>
+            <td>{{ key.prefix }}</td>
+            <td>{{ key.created.date }}</td>
+            <td>
+              <form method="post" action="{% url 'users:revoke_api_key' %}">
+                {% csrf_token %}
+                <input type="hidden" name="key_prefix" value="{{ key.prefix }}">
+                <div class="flex space-x-1">
+                  <input type="submit" class="btn btn-outline text-red-500 border-red-500 hover:bg-red-500 hover:border-red-700 hover:text-white" value="{% translate "Revoke" %}" />
+                </div>
+              </form>
+            </td>
+          </tr>
+      {% if forloop.last %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% empty %}
+    <p>{% translate "You haven't created any API keys yet. Create one below." %}</p>
+  {% endfor %}
+  <form method="post" action="{% url 'users:create_api_key' %}">
+    {% csrf_token %}
+    <div class="mt-2">
+      <input type="submit" class="btn btn-outline" value="{% translate "New API Key" %}" />
+    </div>
+  </form>
+</section>

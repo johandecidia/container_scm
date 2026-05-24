@@ -1,0 +1,13 @@
+{% extends "pegasus/examples/examples_base.html" %}
+{% load static %}
+{% load form_tags %}
+{% block app %}
+<section class="app-card">
+  <h2 class="text-xl mb-1">Example Form</h2>
+  <form method="post">
+    {% csrf_token %}
+    {% render_form_fields form %}
+    <input type="submit" value="Save Data" class="btn btn-outline">
+  </form>
+</section>
+{% endblock %}

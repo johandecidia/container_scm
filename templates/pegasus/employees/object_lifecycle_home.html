@@ -1,0 +1,144 @@
+{% extends "pegasus/examples/examples_base.html" %}
+{% load static %}
+{% block app %}
+<section class="app-card">
+  <h1 class="text-3xl font-bold mb-2">Employee Lifecycle App</h1>
+  <h2 class="text-xl mb-1">
+    The same CRUD (Create, Read, Update, Delete) application, backed by four different technologies.
+  </h2>
+</section>
+  <div class="flex flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0">
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/django-icon.png' %}" alt="Django">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Django Forms</h3>
+            <p>
+              <strong>Tried-and-true Django forms.</strong>
+              Great for rapid prototyping, or for those who don't want the overhead of fancy JavaScript frameworks.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_employees:django_object_lifecycle' %}" class="btn btn-outline">
+              <span>Django Forms Demo</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/react-icon.png' %}" alt="React">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>React</h3>
+            <p>
+              <strong>A single-page application built with React and React Router.</strong>
+              React is the most popular front-end framework in the world today.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_employees:react_object_lifecycle' %}" class="btn btn-outline">
+              <span>React Demo</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex-1">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/htmx-icon.png' %}" alt="HTMX">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>HTMX</h3>
+            <p>
+              <strong>A single-page application built with HTMX.</strong>
+              HTMX allows building rich front-end experiences without writing any native JavaScript.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_employees:htmx_object_lifecycle' %}" class="btn btn-outline">
+              <span>HTMX Demo</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="flex flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0 mt-2">
+    <div class="flex-1 basis-1/3 grow-0 shrink-0">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/pydantic-ai.png' %}" alt="Pydantic AI">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Agentic Editing</h3>
+            <p>
+              <strong>Edit your employee data with natural language!</strong>
+              Use Pydantic AI and a set of built-in tools to edit employee data with a built-in chat panel.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_employees:agentic_object_lifecycle' %}" class="btn btn-outline">
+              <span>Agentic Editing Demo</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex-1 basis-1/3 grow-0 shrink-0">
+      <div class="card shadow-xl h-100">
+        <div class="">
+          <figure class="image aspect-3/2">
+            <img class="img-fluid" src="{% static 'images/pegasus/vue-icon.png' %}" alt="Vue.js">
+          </figure>
+        </div>
+        <div class="card-body pt-0">
+          <div class="prose max-w-none lg:prose-lg">
+            <h3>Vue.js</h3>
+            <p>
+              <strong>A single-page application built with Vue.js.</strong>
+              Vue is a popular alternative to React, with an easier on-ramp to modern JavaScript and a die-hard fanbase.
+            </p>
+          </div>
+          <div class="buttons">
+            <a href="{% url 'pegasus_employees:vue_object_lifecycle' %}" class="btn btn-outline">
+              <span>Vue.js Demo</span>
+              <span class="w-6 h-6 inline-flex justify-center items-center">
+                <i class="fa fa-angle-double-right"></i>
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

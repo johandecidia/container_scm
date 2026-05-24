@@ -1,0 +1,9 @@
+{% extends "web/chat/chat_wrapper.html" %}
+{% load django_vite %}
+{% block page_head %}
+{% vite_asset 'assets/javascript/chat/ws_initialize.ts' %}
+{% endblock %}
+{% block chat_ui %}
+{% include "chat/components/chat_thread_streaming.html" %}
+{% endblock %}
+{% block page_js %}{% endblock page_js %}

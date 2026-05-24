@@ -1,0 +1,54 @@
+{% extends "web/app/app_base.html" %}
+{% load form_tags %}
+{% load meta_tags %}
+{% load i18n %}
+{% load static %}
+{% load django_vite %}
+{% block app %}
+<section class="app-card">
+  <h1 class="text-3xl font-bold mb-2">{% translate "Project Dashboard" %}</h1>
+  <form>
+    <div class="flex flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0">
+      <div class="flex-1">
+        {% render_field form.start %}
+      </div>
+      <div class="flex-1">
+        {% render_field form.end %}
+      </div>
+    </div>
+    <div class="text-right mt-2">
+      <input type="submit" class="btn btn-primary" value="Update">
+    </div>
+  </form>
+  <div class="mt-2">
+    <div class="text-xl mb-1">{% translate "User Signups (Daily)" %}
+      <canvas id="signup-chart" class="mt-2"></canvas>
+    </div>
+    <div class="mt-2">
+      <div class="text-xl mb-1">{% translate "Registered Users (Total)" %}
+        <canvas id="user-chart" class="mt-2"></canvas>
+      </div>
+    </div>
+  </div>
+</section>
+{% websocket_url 'ws_ai_new_chat' as base_ws_url %}
+{% include "chat/components/chat_overlay.html" with chat_websocket_url=base_ws_url|add:"?agent_type=admin" %}
+{% endblock %}
+{% block page_js %}
+{{ signup_data|json_script:'signup-data' }}
+{% vite_asset 'assets/javascript/app.js' %}
+{% vite_asset 'assets/javascript/chat/ws_initialize.ts' %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const start = new Date("{{ start|escapejs }}");
+    const end = new Date("{{ end|escapejs }}");
+    const startValue = {{ start_value }};
+
+    const signupChartCtx = document.getElementById('signup-chart').getContext('2d');
+    const userChartCtx = document.getElementById('user-chart').getContext('2d');
+    const signupData = JSON.parse(document.getElementById('signup-data').textContent);
+    SiteJS.app.DashboardCharts.barChartWithDates(signupChartCtx, start, end, signupData, "User Signups");
+    SiteJS.app.DashboardCharts.cumulativeChartWithDates(userChartCtx, start, end, signupData, "Registered Users", startValue);
+  });
+</script>
+{% endblock %}

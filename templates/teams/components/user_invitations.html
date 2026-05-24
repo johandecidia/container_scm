@@ -1,0 +1,31 @@
+{% load i18n %}
+<div class="table-responsive">
+  <table class="table table table-zebra w-full">
+    <thead>
+    <tr>
+      <th>{% translate "Team Name" %}</th>
+      <th/>
+    </tr>
+    </thead>
+    <tbody>
+    {% for invitation in invitations %}
+      <tr>
+        <td>{{ invitation.team_name }}</td>
+        <td class="flex space-x-1 justify-end">
+          {% if not invitation.verified %}
+          <a class="btn btn-outline mx-1" href="{% url 'account_email' %}">
+            {% blocktranslate trimmed with email=invitation.email %}
+              Verify "{{ email }}" to accept
+            {% endblocktranslate %}
+          </a>
+          {% else %}
+          <a class="btn btn-outline mx-1" href="{% url 'teams:accept_invitation' invitation.id %}">
+            {% translate "View Invitation" %}
+          </a>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>

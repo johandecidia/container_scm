@@ -1,0 +1,7 @@
+{% load i18n %}
+<div class="mt-2" hx-target="this" hx-swap="outerHTML">
+  <a class="btn btn-primary" hx-get="{% url 'pegasus_employees:htmx_new_employee' %}">
+    <span class="w-6 h-6 inline-flex justify-center items-center"><i class="fa fa-plus"></i></span>
+    <span>{% translate "Add Employee" %}</span>
+  </a>
+</div>

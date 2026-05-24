@@ -1,0 +1,133 @@
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+extend-exclude = [
+    ".direnv",
+    ".git",
+    ".ruff_cache",
+    "node_modules",
+    "migrations",
+]
+line-length = 120
+indent-width = 4
+target-version = "py314"
+
+[tool.ruff.lint]
+fixable = [
+    "ALL",
+]
+unfixable = []
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.14"
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+
+# Third-party libraries without type stubs - explicitly list each to suppress import-untyped
+[[tool.mypy.overrides]]
+module = [
+    "allauth.*",
+    "celery.*",
+    "celery_progress.*",
+    "django_celery_beat.*",
+    "djstripe.*",
+    "environ.*",
+    "health_check.*",
+    "kombu.*",
+    "mailchimp3.*",
+    "modelcluster.*",
+    "storages.*",
+    "stripe.*",
+    "wagtail.*",
+]
+ignore_missing_imports = true
+
+# Django Channels routing files have incompatible types with django-stubs
+# Disable arg-type checks for routing modules
+[[tool.mypy.overrides]]
+module = "*.routing"
+disable_error_code = ["arg-type"]
+
+# Django admin files have known issues with decorators and type annotations
+# Disable specific error codes that are problematic
+[[tool.mypy.overrides]]
+module = "*.admin"
+disable_error_code = ["attr-defined", "assignment"]
+
+[tool.django-stubs]
+django_settings_module = "container_scm.settings"
+
+[tool.setuptools]
+py-modules = []
+
+[project]
+name = "container-scm"
+version = "0.1.0"
+description = "Container Supply Chain Layer is an operational platform built for container trading, depot operations, and inbound logistics management.  The system connects procurement, shipment tracking, inventory, landed cost, reservation management, and dispatch planning into one unified operational layer. It provides real-time visibility into what containers are ordered, in transit, available, reserved, and ready for delivery.  Designed to integrate with ERP systems, depot systems, and shipping line tracki"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "Django>=6.0",
+    "boto3",
+    "celery",
+    "celery-progress",
+    "celery[redis]",
+    "channels",
+    "channels_redis",
+    "dj-stripe>=2.10,<2.11",
+    "django-allauth[socialaccount,mfa,headless]>=65.13.0",
+    "django-anymail[mailgun]", # email services
+    "django-celery-beat",
+    "django-cors-headers",
+    "django-environ",
+    "django-health-check",
+    "django-hijack",
+    "django-htmx",
+    "django-storages",
+    "django-vite>=3.1.0",
+    "django-waffle",
+    "djangorestframework",
+    "djangorestframework-api-key",
+    "docutils",
+    "drf-spectacular",
+    "httpx>=0.28.1",
+    "markdown",
+    "nh3>=0.2.21",
+    "openai",
+    "psycopg",
+    "pydantic-ai-slim[openai,anthropic,google,mcp]>=1.0",
+    "python-dateutil",
+    "redis",
+    "requests",
+    "sentry-sdk[django]>=2.55.0",
+    "stripe>=14,<15",
+    "wagtail",
+]
+
+[dependency-groups]
+dev = [
+    "channels[daphne]",
+    "django-browser-reload",
+    "django-watchfiles",
+    "pre-commit",
+    "ruff>=0.15.6",
+    "pegasus-cli>=0.13",
+    "psycopg[binary]",
+    "mypy>=1.18.2",
+    "django-stubs>=5.0.0",
+    "djangorestframework-stubs>=3.15.0",
+    "types-channels>=4.3.0.20250822",
+    "types-markdown>=3.10.0.20251106",
+    "types-python-dateutil>=2.9.0.20251108",
+    "types-requests>=2.32.4",
+]
+prod = [
+    "gunicorn",
+    "psycopg[c]",
+    "uvicorn[standard]",
+]
