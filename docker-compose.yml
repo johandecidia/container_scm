@@ -1,32 +1,90 @@
 services:
   db:
     image: postgres:17
-    # persist data beyond lifetime of container
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
-      - POSTGRES_DB=container_scm
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      POSTGRES_DB: container_scm
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}
       interval: 2s
       retries: 10
+
   redis:
-    image: redis
-    # persistent storage
+    image: redis:7
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: bash -c 'exec 6<>/dev/tcp/redis/6379'
+      test: redis-cli ping
       interval: 2s
       retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        MY_UID: ${MY_UID:-1000}
+        MY_GID: ${MY_GID:-1000}
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/code
+    ports:
+      - "${DJANGO_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/container_scm
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  vite:
+    image: node:22-bookworm
+    working_dir: /code
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - .:/code
+      - node_modules:/code/node_modules
+    ports:
+      - "${DJANGO_VITE_PORT:-5173}:5173"
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        MY_UID: ${MY_UID:-1000}
+        MY_GID: ${MY_GID:-1000}
+    command: celery -A container_scm worker -l INFO --beat --pool=solo
+    volumes:
+      - .:/code
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/container_scm
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
+  node_modules:

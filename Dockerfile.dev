@@ -1,0 +1,35 @@
+FROM python:3.14-bookworm
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV UV_LINK_MODE=copy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gettext \
+    build-essential \
+    libpq-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /uvx /bin/
+
+ARG MY_UID=1000
+ARG MY_GID=1000
+
+RUN groupadd -g $MY_GID -r django || true \
+  && useradd -u $MY_UID -r -g django -m -d /home/django django || true
+
+WORKDIR /code
+
+ENV UV_PROJECT_ENVIRONMENT=/home/django/.venv
+ENV PATH="/home/django/.venv/bin:$PATH"
+ENV UV_CACHE_DIR=/tmp/uv-cache
+
+RUN mkdir -p /tmp/uv-cache /code \
+  && chown -R django:django /tmp/uv-cache /code
+
+USER django
+
+COPY --chown=django:django pyproject.toml uv.lock ./
+RUN uv sync --frozen
+
+COPY --chown=django:django . .
