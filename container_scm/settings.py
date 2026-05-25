@@ -118,6 +118,13 @@ PROJECT_APPS = [
     "apps.chat",
     "apps.ai.apps.AiConfig",
     "apps.group_chat",
+    # SCM domain apps
+    "apps.scm.containers.apps.ContainersConfig",
+    "apps.scm.shipments.apps.ShipmentsConfig",
+    "apps.scm.rates.apps.RatesConfig",
+    "apps.scm.imports.apps.ImportsConfig",
+    "apps.scm.integrations.apps.IntegrationsConfig",
+    "apps.scm.analytics.apps.AnalyticsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + PEGASUS_APPS + PROJECT_APPS + WAGTAIL_APPS

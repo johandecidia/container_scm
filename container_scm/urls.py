@@ -85,6 +85,7 @@ urlpatterns = [
     path("content/", include(wagtail_urls)),
     path("chat/", include("apps.chat.urls")),
     path("group-chat/", include("apps.group_chat.urls")),
+    path("scm/", include("apps.scm.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # Add browser reload URL if the middleware is enabled (matches middleware check in settings.py)
