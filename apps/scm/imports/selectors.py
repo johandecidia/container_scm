@@ -11,4 +11,6 @@ def get_team_import_jobs(team: Team) -> QuerySet[ImportJob]:
 
 
 def get_pending_import_jobs() -> QuerySet[ImportJob]:
+    # Cross-team query — intended for Celery workers processing all pending jobs system-wide.
+    # Do NOT use this in user-facing views; use get_team_import_jobs() instead.
     return ImportJob.objects.filter(status=ImportJob.Status.PENDING)
