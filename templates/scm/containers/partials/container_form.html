@@ -1,16 +1,5 @@
 {% load i18n %}
 
-{% include "scm/components/modal.html" with modal_id="container-modal" modal_title=modal_title %}
-
-{# Modal content is injected via the `modal_body` block — see components/modal.html #}
-{# This partial is included inside the modal body when opened via HTMX. #}
-
-{% comment %}
-  Usage: rendered by container_create / container_update views when request.htmx is True.
-  The view sets `modal_title` in context.
-  On success the view responds with HX-Redirect or swaps the updated row.
-{% endcomment %}
-
 <dialog id="container-modal" class="modal modal-open">
   <div class="modal-box">
     <form method="post"
@@ -33,16 +22,16 @@
       </div>
 
       <div class="form-control mb-3">
-        <label class="label" for="{{ form.size.id_for_label }}">
-          <span class="label-text">{{ form.size.label }}</span>
+        <label class="label" for="{{ form.carrier.id_for_label }}">
+          <span class="label-text">{{ form.carrier.label }}</span>
         </label>
-        {{ form.size }}
-        {% if form.size.errors %}
-          <p class="text-error text-sm mt-1">{{ form.size.errors.0 }}</p>
+        {{ form.carrier }}
+        {% if form.carrier.errors %}
+          <p class="text-error text-sm mt-1">{{ form.carrier.errors.0 }}</p>
         {% endif %}
       </div>
 
-      <div class="form-control mb-4">
+      <div class="form-control mb-3">
         <label class="label" for="{{ form.status.id_for_label }}">
           <span class="label-text">{{ form.status.label }}</span>
         </label>
@@ -50,6 +39,27 @@
         {% if form.status.errors %}
           <p class="text-error text-sm mt-1">{{ form.status.errors.0 }}</p>
         {% endif %}
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="form-control">
+          <label class="label" for="{{ form.etd.id_for_label }}">
+            <span class="label-text">{{ form.etd.label }}</span>
+          </label>
+          {{ form.etd }}
+          {% if form.etd.errors %}
+            <p class="text-error text-sm mt-1">{{ form.etd.errors.0 }}</p>
+          {% endif %}
+        </div>
+        <div class="form-control">
+          <label class="label" for="{{ form.eta.id_for_label }}">
+            <span class="label-text">{{ form.eta.label }}</span>
+          </label>
+          {{ form.eta }}
+          {% if form.eta.errors %}
+            <p class="text-error text-sm mt-1">{{ form.eta.errors.0 }}</p>
+          {% endif %}
+        </div>
       </div>
 
       <div class="modal-action">

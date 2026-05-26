@@ -38,12 +38,20 @@
         <p class="font-medium">{{ container.container_number }}</p>
       </div>
       <div>
-        <p class="text-sm text-base-content/60">{% translate "Size" %}</p>
-        <p class="font-medium">{{ container.size|default:"—" }}</p>
+        <p class="text-sm text-base-content/60">{% translate "Carrier" %}</p>
+        <p class="font-medium">{{ container.carrier|default:"—" }}</p>
       </div>
       <div>
         <p class="text-sm text-base-content/60">{% translate "Status" %}</p>
         {% include "scm/components/status_badge.html" with status=container.status %}
+      </div>
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "ETD" %}</p>
+        <p class="font-medium">{{ container.etd|date:"Y-m-d"|default:"—" }}</p>
+      </div>
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "ETA" %}</p>
+        <p class="font-medium">{{ container.eta|date:"Y-m-d"|default:"—" }}</p>
       </div>
       <div>
         <p class="text-sm text-base-content/60">{% translate "Created" %}</p>

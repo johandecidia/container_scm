@@ -10,9 +10,10 @@
       {{ container.container_number }}
     </a>
   </td>
-  <td>{{ container.size|default:"—" }}</td>
+  <td>{{ container.carrier|default:"—" }}</td>
   <td>{% include "scm/components/status_badge.html" with status=container.status %}</td>
-  <td class="text-sm text-base-content/60">{{ container.created_at|date:"Y-m-d" }}</td>
+  <td class="text-sm text-base-content/60">{{ container.etd|date:"Y-m-d"|default:"—" }}</td>
+  <td class="text-sm text-base-content/60">{{ container.eta|date:"Y-m-d"|default:"—" }}</td>
   <td class="text-right">
     <div class="flex justify-end gap-1">
       <button

@@ -4,13 +4,14 @@ from apps.teams.models import Team
 from .models import Container
 
 
-def create_container(team: Team, container_number: str, **kwargs) -> Container:
-    return Container.objects.create(team=team, container_number=container_number, **kwargs)
+def create_container(team: Team, **kwargs) -> Container:
+    return Container.objects.create(team=team, **kwargs)
 
 
-def update_container_status(container: Container, status: str) -> Container:
-    container.status = status
-    container.save(update_fields=["status", "updated_at"])
+def update_container(container: Container, **kwargs) -> Container:
+    for field, value in kwargs.items():
+        setattr(container, field, value)
+    container.save()
     return container
 
 
