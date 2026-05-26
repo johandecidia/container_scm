@@ -1,0 +1,56 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <a href="{% url 'containers:list' team_slug %}" class="text-sm text-base-content/60 hover:text-base-content">
+          ← {% translate "Containers" %}
+        </a>
+        <h2 class="text-xl font-semibold mt-1">{{ container.container_number }}</h2>
+      </div>
+      <div class="flex gap-2">
+        <button
+          class="btn btn-outline btn-sm"
+          hx-get="{% url 'containers:update' team_slug container.pk %}"
+          hx-target="#modal-container"
+          hx-swap="innerHTML"
+        >
+          <i class="fa fa-edit"></i>
+          {% translate "Edit" %}
+        </button>
+        <button
+          class="btn btn-outline btn-error btn-sm"
+          hx-delete="{% url 'containers:delete' team_slug container.pk %}"
+          hx-confirm="{% translate 'Are you sure you want to delete this container?' %}"
+          hx-target="body"
+        >
+          <i class="fa fa-trash"></i>
+          {% translate "Delete" %}
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Container Number" %}</p>
+        <p class="font-medium">{{ container.container_number }}</p>
+      </div>
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Size" %}</p>
+        <p class="font-medium">{{ container.size|default:"—" }}</p>
+      </div>
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Status" %}</p>
+        {% include "scm/components/status_badge.html" with status=container.status %}
+      </div>
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Created" %}</p>
+        <p class="font-medium">{{ container.created_at|date:"Y-m-d" }}</p>
+      </div>
+    </div>
+  </section>
+
+  <div id="modal-container"></div>
+{% endblock %}

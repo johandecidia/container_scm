@@ -1,0 +1,19 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/components/status_badge.html" with status=container.status %}
+{% endcomment %}
+
+{% if status == "available" %}
+  <span class="badge badge-success badge-sm">{% translate "Available" %}</span>
+{% elif status == "in_transit" %}
+  <span class="badge badge-info badge-sm">{% translate "In Transit" %}</span>
+{% elif status == "at_port" %}
+  <span class="badge badge-warning badge-sm">{% translate "At Port" %}</span>
+{% elif status == "delivered" %}
+  <span class="badge badge-neutral badge-sm">{% translate "Delivered" %}</span>
+{% elif status %}
+  <span class="badge badge-ghost badge-sm">{{ status }}</span>
+{% else %}
+  <span class="text-base-content/40 text-sm">—</span>
+{% endif %}

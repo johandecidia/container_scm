@@ -1,0 +1,24 @@
+{% load i18n %}
+
+{% if containers %}
+  <div class="overflow-x-auto">
+    <table class="table table-zebra w-full">
+      <thead>
+        <tr>
+          <th>{% translate "Container #" %}</th>
+          <th>{% translate "Size" %}</th>
+          <th>{% translate "Status" %}</th>
+          <th>{% translate "Created" %}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="container-rows">
+        {% for container in containers %}
+          {% include "scm/containers/partials/container_row.html" %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  {% include "scm/components/table_empty_state.html" with message=_("No containers found.") %}
+{% endif %}

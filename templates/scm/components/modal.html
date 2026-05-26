@@ -1,0 +1,27 @@
+{% load i18n %}
+
+{% comment %}
+  Generic modal wrapper for HTMX-driven dialogs.
+
+  This component is NOT used directly; HTMX loads the specific form partial
+  into #modal-container. The form partial renders its own <dialog> tag.
+
+  Kept here as a reference skeleton for new modal forms:
+
+  <dialog id="{{ modal_id }}" class="modal modal-open">
+    <div class="modal-box">
+      <h3 class="font-bold text-lg mb-4">{{ modal_title }}</h3>
+      {% block modal_body %}{% endblock %}
+    </div>
+    <form method="dialog" class="modal-backdrop">
+      <button>{% translate "close" %}</button>
+    </form>
+  </dialog>
+
+  Pattern:
+    1. A button triggers hx-get="<view_url>" hx-target="#modal-container" hx-swap="innerHTML"
+    2. The view renders the form partial (e.g. container_form.html) which includes a <dialog class="modal modal-open">
+    3. On success the view responds with HX-Redirect or swaps the target element,
+       and closes the dialog via hx-on::after-request.
+    4. Cancel / backdrop click closes via the native <form method="dialog"> pattern.
+{% endcomment %}
