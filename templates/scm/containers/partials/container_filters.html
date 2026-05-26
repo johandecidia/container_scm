@@ -1,7 +1,7 @@
 {% load i18n %}
 
 <form
-  hx-get="{% url 'containers:list' team_slug %}"
+  hx-get="{% url 'containers:list' %}"
   hx-target="#container-table"
   hx-swap="outerHTML"
   hx-trigger="change, keyup delay:300ms from:input"

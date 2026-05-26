@@ -7,7 +7,7 @@
       <h2 class="text-xl font-semibold">{% translate "Containers" %}</h2>
       <button
         class="btn btn-primary btn-sm"
-        hx-get="{% url 'containers:create' team_slug %}"
+        hx-get="{% url 'containers:create' %}"
         hx-target="#modal-container"
         hx-swap="innerHTML"
       >

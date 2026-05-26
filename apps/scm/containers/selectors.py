@@ -7,7 +7,7 @@ from .models import Container
 
 
 def list_team_containers(team: Team) -> QuerySet[Container]:
-    return Container.for_team.filter(team=team).order_by("-created_at")
+    return Container.objects.filter(team=team).order_by("-created_at")
 
 
 def filter_team_containers(team: Team, query_params=None) -> QuerySet[Container]:
@@ -24,4 +24,4 @@ def filter_team_containers(team: Team, query_params=None) -> QuerySet[Container]
 
 
 def get_container_by_id(team: Team, container_id: int) -> Container:
-    return Container.for_team.get(team=team, pk=container_id)
+    return Container.objects.get(team=team, pk=container_id)

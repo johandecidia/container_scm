@@ -6,7 +6,7 @@
   hx-swap="outerHTML"
 >
   <td>
-    <a href="{% url 'containers:detail' team_slug container.pk %}" class="link link-hover font-medium">
+    <a href="{% url 'containers:detail' container.pk %}" class="link link-hover font-medium">
       {{ container.container_number }}
     </a>
   </td>
@@ -18,7 +18,7 @@
     <div class="flex justify-end gap-1">
       <button
         class="btn btn-ghost btn-xs"
-        hx-get="{% url 'containers:update' team_slug container.pk %}"
+        hx-get="{% url 'containers:update' container.pk %}"
         hx-target="#modal-container"
         hx-swap="innerHTML"
       >
@@ -26,7 +26,7 @@
       </button>
       <button
         class="btn btn-ghost btn-xs text-error"
-        hx-delete="{% url 'containers:delete' team_slug container.pk %}"
+        hx-delete="{% url 'containers:delete' container.pk %}"
         hx-confirm="{% translate 'Delete this container?' %}"
         hx-target="#container-row-{{ container.pk }}"
         hx-swap="outerHTML"

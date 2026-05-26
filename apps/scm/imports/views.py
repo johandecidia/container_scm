@@ -1,5 +1,14 @@
 # Import views — request handling, response rendering, form handling only.
-# Business logic belongs in services.py; queries belong in selectors.py.
-from django.shortcuts import render
+from django.http import HttpResponse
 
-from apps.teams.decorators import login_and_team_required
+
+def import_list(request, *args, **kwargs):
+    return HttpResponse(status=501)
+
+
+def import_create(request, *args, **kwargs):
+    return HttpResponse(status=501)
+
+
+def import_detail(request, *args, **kwargs):
+    return HttpResponse(status=501)

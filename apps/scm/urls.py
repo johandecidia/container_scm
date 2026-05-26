@@ -1,7 +1,5 @@
 from django.urls import include, path
 
-app_name = "scm"
-
 urlpatterns = [
     path("containers/", include("apps.scm.containers.urls")),
     path("shipments/", include("apps.scm.shipments.urls")),
