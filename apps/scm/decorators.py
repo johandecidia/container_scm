@@ -6,6 +6,7 @@ SCM URLs live at /scm/... without a team_slug path segment.
 `request.default_team` (set by TeamsMiddleware from session or
 the user's first team).
 """
+
 from functools import wraps
 
 from django.http import Http404, HttpResponseRedirect
@@ -18,6 +19,7 @@ def scm_login_required(view_func):
     Uses `request.default_team` so it works for /scm/ URLs that have no
     team_slug in the path.
     """
+
     @wraps(view_func)
     def _inner(request, *args, **kwargs):
         if not request.user.is_authenticated:

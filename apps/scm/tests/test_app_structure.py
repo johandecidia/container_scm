@@ -2,6 +2,7 @@
 Kort 1 — App-struktur
 Acceptanskriterier: SCM-apparna är registrerade och routing fungerar.
 """
+
 from django.apps import apps
 from django.test import SimpleTestCase
 from django.urls import reverse

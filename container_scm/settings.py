@@ -569,8 +569,8 @@ PROJECT_METADATA = {
     "NAME": gettext_lazy("Container Orchistration Layer"),
     "URL": "http://ratecore.io",
     "DESCRIPTION": gettext_lazy(
-        "Container Supply Chain Layer is an operational platform built for container trading, depot operations, and inbound logistics management.  The system connects procurement, shipment tracking, inventory, landed cost, reservation management, and dispatch planning into one unified operational layer. It provides real-time visibility into what containers are ordered, in transit, available, reserved, and ready for delivery.  Designed to integrate with ERP systems, depot systems, and shipping line tracki"
-    ),  # noqa: E501
+        "Container Supply Chain Layer is an operational platform built for container trading, depot operations, and inbound logistics management.  The system connects procurement, shipment tracking, inventory, landed cost, reservation management, and dispatch planning into one unified operational layer. It provides real-time visibility into what containers are ordered, in transit, available, reserved, and ready for delivery.  Designed to integrate with ERP systems, depot systems, and shipping line tracki"  # noqa: E501
+    ),
     "IMAGE": "https://upload.wikimedia.org/wikipedia/commons/2/20/PEO-pegasus_black.svg",
     "KEYWORDS": "SaaS, django",
     "CONTACT_EMAIL": "johan@decidia.se",

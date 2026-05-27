@@ -5,12 +5,13 @@ Acceptanskriterier:
   - Autentiserade team-members kan nå listan (200).
   - Användare kan inte nå en annan teams container (404).
 """
+
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
+from apps.scm.containers.models import Container
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
-from apps.scm.containers.models import Container
 from apps.users.models import CustomUser
 
 _TEST_STORAGES = {
@@ -40,9 +41,7 @@ class ContainerListPermissionTest(TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_user_without_team_gets_404(self):
-        teamless_user = CustomUser.objects.create_user(
-            username="noteam@example.com", password="pass"
-        )
+        teamless_user = CustomUser.objects.create_user(username="noteam@example.com", password="pass")
         client = Client()
         client.force_login(teamless_user)
         response = client.get(reverse("containers:list"))
@@ -60,9 +59,7 @@ class ContainerTeamIsolationTest(TestCase):
         cls.team.members.add(cls.user, through_defaults={"role": ROLE_MEMBER})
 
         cls.other_team = Team.objects.create(name="Other Team", slug="other-team")
-        cls.other_container = Container.objects.create(
-            team=cls.other_team, container_number="OTHER000001"
-        )
+        cls.other_container = Container.objects.create(team=cls.other_team, container_number="OTHER000001")
 
     def test_user_cannot_access_other_team_container_update(self):
         client = Client()
@@ -115,6 +112,4 @@ class ContainerCreateTest(TestCase):
         )
         # Should redirect after successful creation (non-HTMX)
         self.assertIn(response.status_code, [200, 302])
-        self.assertTrue(
-            Container.objects.filter(container_number="NEW000001", team=self.team).exists()
-        )
+        self.assertTrue(Container.objects.filter(container_number="NEW000001", team=self.team).exists())

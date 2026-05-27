@@ -2,6 +2,7 @@
 Kort 3 — Arkitekturregler
 Acceptanskriterier: Varje SCM-app har standardfiler och ARCHITECTURE.md finns.
 """
+
 from pathlib import Path
 
 from django.test import SimpleTestCase

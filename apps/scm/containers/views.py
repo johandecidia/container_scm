@@ -27,10 +27,14 @@ def container_list(request):
 def container_detail(request, container_id):
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
-    return render(request, "scm/containers/pages/container_detail.html", {
-        "container": container,
-        "team_slug": team.slug,
-    })
+    return render(
+        request,
+        "scm/containers/pages/container_detail.html",
+        {
+            "container": container,
+            "team_slug": team.slug,
+        },
+    )
 
 
 @scm_login_required
@@ -42,19 +46,27 @@ def container_create(request):
             create_container(team=team, **form.cleaned_data)
             if request.htmx:
                 containers = filter_team_containers(team=team, query_params=request.GET)
-                return render(request, "scm/containers/partials/container_table.html", {
-                    "containers": containers,
-                    "team_slug": team.slug,
-                })
+                return render(
+                    request,
+                    "scm/containers/partials/container_table.html",
+                    {
+                        "containers": containers,
+                        "team_slug": team.slug,
+                    },
+                )
             messages.success(request, _("Container created."))
             return redirect("containers:list")
         if request.htmx:
-            return render(request, "scm/containers/partials/container_form.html", {
-                "form": form,
-                "modal_title": _("New Container"),
-                "form_action": request.path,
-                "team_slug": team.slug,
-            })
+            return render(
+                request,
+                "scm/containers/partials/container_form.html",
+                {
+                    "form": form,
+                    "modal_title": _("New Container"),
+                    "form_action": request.path,
+                    "team_slug": team.slug,
+                },
+            )
     else:
         form = ContainerForm()
 
@@ -76,19 +88,27 @@ def container_update(request, container_id):
         if form.is_valid():
             container = update_container(container, **form.cleaned_data)
             if request.htmx:
-                return render(request, "scm/containers/partials/container_row.html", {
-                    "container": container,
-                    "team_slug": team.slug,
-                })
+                return render(
+                    request,
+                    "scm/containers/partials/container_row.html",
+                    {
+                        "container": container,
+                        "team_slug": team.slug,
+                    },
+                )
             messages.success(request, _("Container updated."))
             return redirect("containers:detail", container_id=container_id)
         if request.htmx:
-            return render(request, "scm/containers/partials/container_form.html", {
-                "form": form,
-                "modal_title": _("Edit Container"),
-                "form_action": request.path,
-                "team_slug": team.slug,
-            })
+            return render(
+                request,
+                "scm/containers/partials/container_form.html",
+                {
+                    "form": form,
+                    "modal_title": _("Edit Container"),
+                    "form_action": request.path,
+                    "team_slug": team.slug,
+                },
+            )
     else:
         form = ContainerForm(instance=container)
 
@@ -111,7 +131,11 @@ def container_delete(request, container_id):
             return HttpResponse(status=200)
         messages.success(request, _("Container deleted."))
         return redirect("containers:list")
-    return render(request, "scm/containers/pages/container_detail.html", {
-        "container": container,
-        "team_slug": team.slug,
-    })
+    return render(
+        request,
+        "scm/containers/pages/container_detail.html",
+        {
+            "container": container,
+            "team_slug": team.slug,
+        },
+    )

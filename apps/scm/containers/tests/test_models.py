@@ -2,12 +2,13 @@
 Kort 2 & 5 — BaseTeamModel-arv och Container-model.
 Acceptanskriterier: Container ärver BaseTeamModel och har rätt fält.
 """
+
 import datetime
 
 from django.test import TestCase
 
-from apps.teams.models import BaseTeamModel, Team
 from apps.scm.containers.models import Container
+from apps.teams.models import BaseTeamModel, Team
 from apps.teams.roles import ROLE_MEMBER
 from apps.users.models import CustomUser
 

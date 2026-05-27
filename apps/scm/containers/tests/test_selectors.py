@@ -2,15 +2,16 @@
 Kort 5 — Selector-test.
 Acceptanskriterier: Selectors returnerar bara det egna teamets data (team-isolering).
 """
+
 from django.test import TestCase
 
-from apps.teams.models import Team
 from apps.scm.containers.models import Container
 from apps.scm.containers.selectors import (
     filter_team_containers,
     get_container_by_id,
     list_team_containers,
 )
+from apps.teams.models import Team
 
 
 class ListTeamContainersTest(TestCase):
@@ -73,9 +74,7 @@ class GetContainerByIdTest(TestCase):
         cls.team = Team.objects.create(name="Lookup Team", slug="lookup-team")
         cls.other_team = Team.objects.create(name="Other Lookup Team", slug="other-lookup-team")
         cls.container = Container.objects.create(team=cls.team, container_number="LOOK0000001")
-        cls.other_container = Container.objects.create(
-            team=cls.other_team, container_number="OTHR0000001"
-        )
+        cls.other_container = Container.objects.create(team=cls.other_team, container_number="OTHR0000001")
 
     def test_get_container_by_id_own_team(self):
         result = get_container_by_id(team=self.team, container_id=self.container.pk)

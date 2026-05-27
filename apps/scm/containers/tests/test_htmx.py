@@ -4,14 +4,15 @@ Acceptanskriterier:
   - HTMX-request returnerar partial template (inte hel sida).
   - Templates finns på disk.
 """
+
 from pathlib import Path
 
 from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
+from apps.scm.containers.models import Container
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
-from apps.scm.containers.models import Container
 from apps.users.models import CustomUser
 
 _TEST_STORAGES = {
@@ -75,9 +76,7 @@ class ContainerHtmxTest(TestCase):
         self.assertIn("scm/containers/partials/container_form.html", template_names)
 
     def test_container_update_htmx_returns_row_on_success(self):
-        container = Container.objects.create(
-            team=self.team, container_number="HTMXUPD0001", status="planned"
-        )
+        container = Container.objects.create(team=self.team, container_number="HTMXUPD0001", status="planned")
         client = Client()
         client.force_login(self.user)
         response = client.post(
