@@ -16,11 +16,11 @@ _SORT_MAP = {
 
 
 def get_team_shipments(team: Team) -> QuerySet[Shipment]:
-    return Shipment.for_team.filter(team=team).select_related("created_by")
+    return Shipment.objects.filter(team=team).select_related("created_by")
 
 
 def get_team_shipment(team: Team, shipment_id: int) -> Shipment:
-    return Shipment.for_team.select_related("created_by").get(team=team, pk=shipment_id)
+    return Shipment.objects.select_related("created_by").get(team=team, pk=shipment_id)
 
 
 def filter_shipments(
