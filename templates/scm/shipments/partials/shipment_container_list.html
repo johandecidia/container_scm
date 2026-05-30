@@ -1,0 +1,42 @@
+{% load i18n %}
+
+<div id="shipment-container-list">
+  {% if containers %}
+    <table class="table table-sm w-full">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{% translate "Container" %}</th>
+          <th>{% translate "Type" %}</th>
+          <th>{% translate "Seal" %}</th>
+          <th>{% translate "Weight (kg)" %}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sc in containers %}
+          <tr>
+            <td class="text-base-content/50 text-sm">{{ sc.sequence }}</td>
+            <td class="font-mono font-medium">{{ sc.container.container_id }}</td>
+            <td class="text-sm text-base-content/60">{{ sc.container.equipment_type.description|default:"—" }}</td>
+            <td class="text-sm">{{ sc.seal_number|default:"—" }}</td>
+            <td class="text-sm">{{ sc.gross_weight_kg|default:"—" }}</td>
+            <td class="text-right">
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                hx-delete="{% url 'shipments:container_remove' shipment.pk sc.pk %}"
+                hx-confirm="{% translate 'Remove this container from the shipment?' %}"
+                hx-target="#shipment-container-list"
+                hx-swap="outerHTML"
+              >
+                <i class="fa fa-times"></i>
+              </button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="text-sm text-base-content/50 py-2">{% translate "No containers linked." %}</p>
+  {% endif %}
+</div>

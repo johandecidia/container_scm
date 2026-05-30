@@ -1,0 +1,56 @@
+{% load i18n %}
+
+{% if shipments %}
+  <div class="overflow-x-auto" id="shipment-table">
+    <table class="table table-zebra w-full">
+      <thead>
+        <tr>
+          <th>{% translate "Shipment" %}</th>
+          <th>{% translate "Status" %}</th>
+          <th>{% translate "Route" %}</th>
+          <th>{% translate "Carrier" %}</th>
+          <th>{% translate "ETD" %}</th>
+          <th>{% translate "ETA" %}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="shipment-rows">
+        {% for shipment in shipments %}
+          {% include "scm/shipments/partials/shipment_row.html" %}
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if page_obj.has_other_pages %}
+      <div class="flex justify-center mt-4 gap-1">
+        {% if page_obj.has_previous %}
+          <a
+            href="?page={{ page_obj.previous_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&sort={{ request.GET.sort }}"
+            hx-get="?page={{ page_obj.previous_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&sort={{ request.GET.sort }}"
+            hx-target="#shipment-table"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="btn btn-sm btn-ghost"
+          >«</a>
+        {% endif %}
+        <span class="btn btn-sm btn-ghost no-animation">
+          {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+          <a
+            href="?page={{ page_obj.next_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&sort={{ request.GET.sort }}"
+            hx-get="?page={{ page_obj.next_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&sort={{ request.GET.sort }}"
+            hx-target="#shipment-table"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="btn btn-sm btn-ghost"
+          >»</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+{% else %}
+  <div id="shipment-table">
+    {% include "scm/components/table_empty_state.html" with message=_("No shipments found.") %}
+  </div>
+{% endif %}

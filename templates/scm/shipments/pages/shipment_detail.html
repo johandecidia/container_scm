@@ -1,0 +1,177 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card mb-4">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <a href="{% url 'shipments:list' %}" class="text-sm text-base-content/60 hover:text-base-content">
+          ← {% translate "Shipments" %}
+        </a>
+        <h2 class="text-xl font-semibold mt-1">{{ shipment }}</h2>
+      </div>
+      <div class="flex gap-2">
+        <button
+          class="btn btn-outline btn-sm"
+          hx-get="{% url 'shipments:status_update' shipment.pk %}"
+          hx-target="#modal-container"
+          hx-swap="innerHTML"
+        >
+          {% translate "Change Status" %}
+        </button>
+        <button
+          class="btn btn-outline btn-sm"
+          hx-get="{% url 'shipments:update' shipment.pk %}"
+          hx-target="#modal-container"
+          hx-swap="innerHTML"
+        >
+          <i class="fa fa-edit"></i>
+          {% translate "Edit" %}
+        </button>
+        {% if shipment.status != "CANCELLED" %}
+          <button
+            class="btn btn-outline btn-error btn-sm"
+            hx-post="{% url 'shipments:cancel' shipment.pk %}"
+            hx-confirm="{% translate 'Cancel this shipment?' %}"
+            hx-target="body"
+          >
+            <i class="fa fa-ban"></i>
+            {% translate "Cancel" %}
+          </button>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Status badge #}
+    <div class="mb-4">
+      {% include "scm/shipments/partials/shipment_status_badge.html" with status=shipment.status %}
+      {% if shipment.tracking_status %}
+        <span class="text-xs text-base-content/50 ml-2">{{ shipment.tracking_status }}</span>
+      {% endif %}
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {% if shipment.shipment_number %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Shipment number" %}</p>
+          <p class="font-medium">{{ shipment.shipment_number }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.reference %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Reference" %}</p>
+          <p class="font-medium">{{ shipment.reference }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.customer_name %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Customer" %}</p>
+          <p class="font-medium">{{ shipment.customer_name }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.carrier %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Carrier" %}</p>
+          <p class="font-medium">{{ shipment.carrier }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.carrier_booking_reference %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Carrier booking ref." %}</p>
+          <p class="font-medium">{{ shipment.carrier_booking_reference }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.bill_of_lading_number %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Bill of lading" %}</p>
+          <p class="font-medium">{{ shipment.bill_of_lading_number }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.origin_port %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Origin port" %}</p>
+          <p class="font-medium">{{ shipment.origin_port }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.destination_port %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Destination port" %}</p>
+          <p class="font-medium">{{ shipment.destination_port }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.etd %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "ETD" %}</p>
+          <p class="font-medium">{{ shipment.etd|date:"Y-m-d" }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.eta %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "ETA" %}</p>
+          <p class="font-medium">{{ shipment.eta|date:"Y-m-d" }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.actual_departure_at %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Actual departure" %}</p>
+          <p class="font-medium">{{ shipment.actual_departure_at|date:"Y-m-d H:i" }}</p>
+        </div>
+      {% endif %}
+      {% if shipment.actual_arrival_at %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Actual arrival" %}</p>
+          <p class="font-medium">{{ shipment.actual_arrival_at|date:"Y-m-d H:i" }}</p>
+        </div>
+      {% endif %}
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Created" %}</p>
+        <p class="font-medium">
+          {{ shipment.created_at|date:"Y-m-d" }}
+          {% if shipment.created_by %}{% translate "by" %} {{ shipment.created_by }}{% endif %}
+        </p>
+      </div>
+    </div>
+
+    {% if shipment.notes %}
+      <div class="mt-4">
+        <p class="text-sm text-base-content/60 mb-1">{% translate "Notes" %}</p>
+        <p class="text-sm whitespace-pre-wrap">{{ shipment.notes }}</p>
+      </div>
+    {% endif %}
+  </section>
+
+  {# Containers section #}
+  <section class="app-card mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-lg font-semibold">{% translate "Containers" %}</h3>
+      <button
+        class="btn btn-outline btn-sm"
+        hx-get="{% url 'shipments:container_add' shipment.pk %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-plus"></i>
+        {% translate "Add Container" %}
+      </button>
+    </div>
+    {% include "scm/shipments/partials/shipment_container_list.html" %}
+  </section>
+
+  {# Timeline section #}
+  <section class="app-card">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-lg font-semibold">{% translate "Timeline" %}</h3>
+      <button
+        class="btn btn-ghost btn-xs"
+        hx-get="{% url 'shipments:timeline' shipment.pk %}"
+        hx-target="#shipment-timeline"
+        hx-swap="outerHTML"
+      >
+        <i class="fa fa-refresh"></i>
+      </button>
+    </div>
+    {% include "scm/shipments/partials/shipment_timeline.html" %}
+  </section>
+
+  <div id="modal-container"></div>
+{% endblock %}

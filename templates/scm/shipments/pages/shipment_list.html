@@ -1,0 +1,51 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-semibold">{% translate "Shipments" %}</h2>
+      <button
+        class="btn btn-primary btn-sm"
+        hx-get="{% url 'shipments:create' %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-plus w-4 h-4"></i>
+        {% translate "New Shipment" %}
+      </button>
+    </div>
+
+    {# Filter bar #}
+    <form
+      class="flex flex-wrap gap-2 mb-4"
+      hx-get="{% url 'shipments:list' %}"
+      hx-target="#shipment-table"
+      hx-swap="outerHTML"
+      hx-trigger="change, submit"
+      hx-push-url="true"
+    >
+      <select name="status" class="select select-bordered select-sm">
+        <option value="">{% translate "All statuses" %}</option>
+        {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <input
+        type="search"
+        name="search"
+        value="{{ request.GET.search }}"
+        placeholder="{% translate 'Search…' %}"
+        class="input input-bordered input-sm flex-1 min-w-48"
+      >
+      <button type="submit" class="btn btn-ghost btn-sm">{% translate "Filter" %}</button>
+    </form>
+
+    <div id="shipment-table">
+      {% include "scm/shipments/partials/shipment_table.html" %}
+    </div>
+  </section>
+
+  {# Modal mount point #}
+  <div id="modal-container"></div>
+{% endblock %}
