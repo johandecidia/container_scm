@@ -1,0 +1,344 @@
+[
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20GP",
+    "fields": {
+      "category": "GP",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' General Purpose",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": 2200,
+      "std_max_payload": 28280,
+      "std_cubic_capacity": "33.20",
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40GP",
+    "fields": {
+      "category": "GP",
+      "length_ft": 40,
+      "high_cube": false,
+      "description": "40' General Purpose",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": 3750,
+      "std_max_payload": 26730,
+      "std_cubic_capacity": "67.70",
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40HC",
+    "fields": {
+      "category": "GP",
+      "length_ft": 40,
+      "high_cube": true,
+      "description": "40' High Cube General Purpose",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": 2896,
+      "std_tare_weight": 3940,
+      "std_max_payload": 26540,
+      "std_cubic_capacity": "76.40",
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "45HC",
+    "fields": {
+      "category": "GP",
+      "length_ft": 45,
+      "high_cube": true,
+      "description": "45' High Cube General Purpose",
+      "image": null,
+      "std_external_length": 13716,
+      "std_external_width": 2438,
+      "std_external_height": 2896,
+      "std_tare_weight": 4800,
+      "std_max_payload": 25680,
+      "std_cubic_capacity": "86.10",
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20RF",
+    "fields": {
+      "category": "RF",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Reefer",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": 2900,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40RF",
+    "fields": {
+      "category": "RF",
+      "length_ft": 40,
+      "high_cube": false,
+      "description": "40' Reefer",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": 4500,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40HR",
+    "fields": {
+      "category": "RF",
+      "length_ft": 40,
+      "high_cube": true,
+      "description": "40' High Cube Reefer",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": 2896,
+      "std_tare_weight": 4800,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20OT",
+    "fields": {
+      "category": "OT",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Open Top",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": 2200,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40OT",
+    "fields": {
+      "category": "OT",
+      "length_ft": 40,
+      "high_cube": false,
+      "description": "40' Open Top",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": 3750,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20FR",
+    "fields": {
+      "category": "FR",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Flat Rack",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40FR",
+    "fields": {
+      "category": "FR",
+      "length_ft": 40,
+      "high_cube": false,
+      "description": "40' Flat Rack",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20FL",
+    "fields": {
+      "category": "FR",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Flat Rack Collapsible",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40FL",
+    "fields": {
+      "category": "FR",
+      "length_ft": 40,
+      "high_cube": false,
+      "description": "40' Flat Rack Collapsible",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20PL",
+    "fields": {
+      "category": "PL",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Platform",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "40PL",
+    "fields": {
+      "category": "PL",
+      "length_ft": 40,
+      "high_cube": false,
+      "description": "40' Platform",
+      "image": null,
+      "std_external_length": 12192,
+      "std_external_width": 2438,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20TK",
+    "fields": {
+      "category": "TK",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Tank",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20BK",
+    "fields": {
+      "category": "BK",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Bulk",
+      "image": null,
+      "std_external_length": 6058,
+      "std_external_width": 2438,
+      "std_external_height": 2591,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20VH",
+    "fields": {
+      "category": "VH",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' Vehicle",
+      "image": null,
+      "std_external_length": null,
+      "std_external_width": null,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  },
+  {
+    "model": "scm_containers.equipmenttype",
+    "pk": "20HH",
+    "fields": {
+      "category": "HH",
+      "length_ft": 20,
+      "high_cube": false,
+      "description": "20' High & Heavy",
+      "image": null,
+      "std_external_length": null,
+      "std_external_width": null,
+      "std_external_height": null,
+      "std_tare_weight": null,
+      "std_max_payload": null,
+      "std_cubic_capacity": null,
+      "is_active": true
+    }
+  }
+]
