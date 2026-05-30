@@ -1,62 +1,95 @@
-"""
-Kort 5 — Service-test.
-Acceptanskriterier: Services skapar och uppdaterar containers med korrekt team-tillhörighet.
-"""
+"""Tests for container services."""
 
 from django.test import TestCase
 
-from apps.scm.containers.models import Container
+from apps.scm.containers.models import Container, EquipmentType
 from apps.scm.containers.services import create_container, delete_container, update_container
+from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
+from apps.users.models import CustomUser
+
+OWNER = "CSQ"
+CAT = "U"
+SERIAL = "305418"
+
+
+def _et() -> EquipmentType:
+    return EquipmentType.objects.get_or_create(
+        iso_code="20GP",
+        defaults={"category": "GP", "length_ft": 20, "high_cube": False, "description": "20' GP"},
+    )[0]
+
+
+def _valid_data(owner=OWNER, serial=SERIAL) -> dict:
+    check = calculate_check_digit(owner, CAT, serial)
+    return {
+        "owner_code": owner,
+        "category_id": CAT,
+        "serial_number": serial,
+        "check_digit": check,
+        "equipment_type": _et(),
+    }
 
 
 class CreateContainerTest(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.team = Team.objects.create(name="Service Team", slug="service-team")
+        cls.team = Team.objects.create(name="Svc Team", slug="svc-team")
+        cls.user = CustomUser.objects.create_user(username="svc@example.com", password="pass")
 
-    def test_create_container_sets_team(self):
-        container = create_container(
-            team=self.team,
-            container_number="MSCU1234567",
-            carrier="MSC",
-            status="planned",
-        )
-        self.assertEqual(container.team, self.team)
-        self.assertEqual(container.container_number, "MSCU1234567")
-        self.assertEqual(container.carrier, "MSC")
+    def test_sets_team(self):
+        c = create_container(team=self.team, user=self.user, data=_valid_data())
+        self.assertEqual(c.team, self.team)
 
-    def test_create_container_persists_to_db(self):
-        container = create_container(team=self.team, container_number="SAVE0000001")
-        self.assertIsNotNone(container.pk)
-        self.assertTrue(Container.objects.filter(pk=container.pk).exists())
+    def test_sets_created_by(self):
+        c = create_container(team=self.team, user=self.user, data=_valid_data())
+        self.assertEqual(c.created_by, self.user)
+
+    def test_sets_updated_by_on_create(self):
+        c = create_container(team=self.team, user=self.user, data=_valid_data())
+        self.assertEqual(c.updated_by, self.user)
+
+    def test_persists_to_db(self):
+        c = create_container(team=self.team, user=self.user, data=_valid_data())
+        self.assertIsNotNone(c.pk)
+        self.assertTrue(Container.objects.filter(pk=c.pk).exists())
 
 
 class UpdateContainerTest(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.team = Team.objects.create(name="Update Team", slug="update-team")
+        cls.team = Team.objects.create(name="Upd Team", slug="upd-team")
+        cls.user = CustomUser.objects.create_user(username="upd@example.com", password="pass")
+        cls.other_user = CustomUser.objects.create_user(username="other@example.com", password="pass")
 
-    def test_update_container_changes_fields(self):
-        container = Container.objects.create(team=self.team, container_number="UPD00000001", status="planned")
-        updated = update_container(container, status="in_transit", carrier="MSC")
-        self.assertEqual(updated.status, "in_transit")
-        self.assertEqual(updated.carrier, "MSC")
+    def _make(self) -> Container:
+        return create_container(team=self.team, user=self.user, data=_valid_data())
 
-    def test_update_container_persists_to_db(self):
-        container = Container.objects.create(team=self.team, container_number="PERSIST0001", status="planned")
-        update_container(container, status="delivered")
-        container.refresh_from_db()
-        self.assertEqual(container.status, "delivered")
+    def test_updates_fields(self):
+        c = self._make()
+        updated = update_container(container=c, user=self.other_user, data={"current_location": "Oslo"})
+        self.assertEqual(updated.current_location, "Oslo")
+
+    def test_sets_updated_by(self):
+        c = self._make()
+        updated = update_container(container=c, user=self.other_user, data={"current_location": "Oslo"})
+        self.assertEqual(updated.updated_by, self.other_user)
+
+    def test_persists_to_db(self):
+        c = self._make()
+        update_container(container=c, user=self.other_user, data={"current_location": "Oslo"})
+        c.refresh_from_db()
+        self.assertEqual(c.current_location, "Oslo")
 
 
 class DeleteContainerTest(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.team = Team.objects.create(name="Delete Team", slug="delete-team")
+        cls.team = Team.objects.create(name="Del Team", slug="del-team")
+        cls.user = CustomUser.objects.create_user(username="del@example.com", password="pass")
 
-    def test_delete_container_removes_from_db(self):
-        container = Container.objects.create(team=self.team, container_number="DEL00000001")
-        pk = container.pk
-        delete_container(container)
+    def test_removes_from_db(self):
+        c = create_container(team=self.team, user=self.user, data=_valid_data())
+        pk = c.pk
+        delete_container(container=c, user=self.user)
         self.assertFalse(Container.objects.filter(pk=pk).exists())
