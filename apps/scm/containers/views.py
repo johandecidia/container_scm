@@ -1,6 +1,7 @@
 # Container views — request handling, response rendering, form handling only.
 # Business logic belongs in services.py; queries belong in selectors.py.
 from django.contrib import messages
+from django.core.paginator import Paginator
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
@@ -9,15 +10,31 @@ from apps.scm.decorators import scm_login_required
 
 from .forms import ContainerForm
 from .models import Container
-from .selectors import filter_team_containers
+from .selectors import filter_containers, get_active_equipment_types
 from .services import create_container, delete_container, update_container
+
+CONTAINERS_PER_PAGE = 25
 
 
 @scm_login_required
 def container_list(request):
     team = request.default_team
-    containers = filter_team_containers(team=team, query_params=request.GET)
-    context = {"containers": containers, "team_slug": team.slug}
+    containers_qs = filter_containers(
+        team=team,
+        status=request.GET.get("status"),
+        condition=request.GET.get("condition"),
+        equipment_type=request.GET.get("equipment_type"),
+        search=request.GET.get("search"),
+        sort=request.GET.get("sort", "newest"),
+    )
+    paginator = Paginator(containers_qs, CONTAINERS_PER_PAGE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    context = {
+        "containers": page_obj,
+        "page_obj": page_obj,
+        "equipment_types": get_active_equipment_types(),
+        "team_slug": team.slug,
+    }
     if request.htmx:
         return render(request, "scm/containers/partials/container_table.html", context)
     return render(request, "scm/containers/pages/container_list.html", context)
@@ -30,10 +47,7 @@ def container_detail(request, container_id):
     return render(
         request,
         "scm/containers/pages/container_detail.html",
-        {
-            "container": container,
-            "team_slug": team.slug,
-        },
+        {"container": container, "team_slug": team.slug},
     )
 
 
@@ -43,14 +57,18 @@ def container_create(request):
     if request.method == "POST":
         form = ContainerForm(request.POST)
         if form.is_valid():
-            create_container(team=team, **form.cleaned_data)
+            create_container(team=team, user=request.user, data=form.get_container_data())
             if request.htmx:
-                containers = filter_team_containers(team=team, query_params=request.GET)
+                containers_qs = filter_containers(team=team)
+                paginator = Paginator(containers_qs, CONTAINERS_PER_PAGE)
+                page_obj = paginator.get_page(1)
                 return render(
                     request,
                     "scm/containers/partials/container_table.html",
                     {
-                        "containers": containers,
+                        "containers": page_obj,
+                        "page_obj": page_obj,
+                        "equipment_types": get_active_equipment_types(),
                         "team_slug": team.slug,
                     },
                 )
@@ -86,15 +104,12 @@ def container_update(request, container_id):
     if request.method == "POST":
         form = ContainerForm(request.POST, instance=container)
         if form.is_valid():
-            container = update_container(container, **form.cleaned_data)
+            container = update_container(container=container, user=request.user, data=form.get_container_data())
             if request.htmx:
                 return render(
                     request,
                     "scm/containers/partials/container_row.html",
-                    {
-                        "container": container,
-                        "team_slug": team.slug,
-                    },
+                    {"container": container, "team_slug": team.slug},
                 )
             messages.success(request, _("Container updated."))
             return redirect("containers:detail", container_id=container_id)
@@ -126,7 +141,7 @@ def container_delete(request, container_id):
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
     if request.method in ("POST", "DELETE"):
-        delete_container(container)
+        delete_container(container=container, user=request.user)
         if request.htmx:
             return HttpResponse(status=200)
         messages.success(request, _("Container deleted."))
@@ -134,8 +149,5 @@ def container_delete(request, container_id):
     return render(
         request,
         "scm/containers/pages/container_detail.html",
-        {
-            "container": container,
-            "team_slug": team.slug,
-        },
+        {"container": container, "team_slug": team.slug},
     )
