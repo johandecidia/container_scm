@@ -5,11 +5,12 @@
     <table class="table table-zebra w-full">
       <thead>
         <tr>
-          <th>{% translate "Container #" %}</th>
-          <th>{% translate "Carrier" %}</th>
+          <th>{% translate "Container ID" %}</th>
+          <th>{% translate "Type" %}</th>
           <th>{% translate "Status" %}</th>
-          <th>{% translate "ETD" %}</th>
-          <th>{% translate "ETA" %}</th>
+          <th>{% translate "Condition" %}</th>
+          <th>{% translate "Location" %}</th>
+          <th>{% translate "Manufacturer" %}</th>
           <th></th>
         </tr>
       </thead>
@@ -19,6 +20,34 @@
         {% endfor %}
       </tbody>
     </table>
+
+    {% if page_obj.has_other_pages %}
+      <div class="flex justify-center mt-4 gap-1">
+        {% if page_obj.has_previous %}
+          <a
+            href="?page={{ page_obj.previous_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-get="?page={{ page_obj.previous_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-target="#container-table"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="btn btn-sm btn-ghost"
+          >«</a>
+        {% endif %}
+        <span class="btn btn-sm btn-ghost no-animation">
+          {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+          <a
+            href="?page={{ page_obj.next_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-get="?page={{ page_obj.next_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-target="#container-table"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="btn btn-sm btn-ghost"
+          >»</a>
+        {% endif %}
+      </div>
+    {% endif %}
   </div>
 {% else %}
   <div id="container-table">

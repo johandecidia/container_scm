@@ -4,14 +4,16 @@
   Usage: {% include "scm/components/status_badge.html" with status=container.status %}
 {% endcomment %}
 
-{% if status == "available" %}
+{% if status == "AVAILABLE" %}
   <span class="badge badge-success badge-sm">{% translate "Available" %}</span>
-{% elif status == "in_transit" %}
-  <span class="badge badge-info badge-sm">{% translate "In Transit" %}</span>
-{% elif status == "at_port" %}
-  <span class="badge badge-warning badge-sm">{% translate "At Port" %}</span>
-{% elif status == "delivered" %}
-  <span class="badge badge-neutral badge-sm">{% translate "Delivered" %}</span>
+{% elif status == "BOOKED" %}
+  <span class="badge badge-info badge-sm">{% translate "Booked" %}</span>
+{% elif status == "IN_TRANSIT" %}
+  <span class="badge badge-warning badge-sm">{% translate "In Transit" %}</span>
+{% elif status == "REPAIR" %}
+  <span class="badge badge-error badge-sm">{% translate "Under Repair" %}</span>
+{% elif status == "DECOMMISSIONED" %}
+  <span class="badge badge-neutral badge-sm">{% translate "Decommissioned" %}</span>
 {% elif status %}
   <span class="badge badge-ghost badge-sm">{{ status }}</span>
 {% else %}

@@ -6,14 +6,15 @@
   hx-swap="outerHTML"
 >
   <td>
-    <a href="{% url 'containers:detail' container.pk %}" class="link link-hover font-medium">
-      {{ container.container_number }}
+    <a href="{% url 'containers:detail' container.pk %}" class="link link-hover font-medium font-mono">
+      {{ container.container_id }}
     </a>
   </td>
-  <td>{{ container.carrier|default:"—" }}</td>
+  <td class="text-sm">{{ container.equipment_type.description|default:"—" }}</td>
   <td>{% include "scm/components/status_badge.html" with status=container.status %}</td>
-  <td class="text-sm text-base-content/60">{{ container.etd|date:"Y-m-d"|default:"—" }}</td>
-  <td class="text-sm text-base-content/60">{{ container.eta|date:"Y-m-d"|default:"—" }}</td>
+  <td class="text-sm">{{ container.get_condition_display }}</td>
+  <td class="text-sm text-base-content/60">{{ container.current_location|default:"—" }}</td>
+  <td class="text-sm text-base-content/60">{{ container.manufacturer|default:"—" }}</td>
   <td class="text-right">
     <div class="flex justify-end gap-1">
       <button
