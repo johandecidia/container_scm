@@ -1,0 +1,63 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card">
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-xl font-semibold">{% translate "Analytics" %}</h2>
+      {% if snapshot %}
+        <span class="text-sm text-base-content/60">
+          {% blocktranslate trimmed with date=snapshot.date %}
+            Last updated: {{ date }}
+          {% endblocktranslate %}
+        </span>
+      {% endif %}
+    </div>
+
+    {% if snapshot %}
+      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+
+        <div class="stat bg-base-200 rounded-box p-4">
+          <div class="stat-title">{% translate "Total Shipments" %}</div>
+          <div class="stat-value">{{ snapshot.total_shipments }}</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-box p-4">
+          <div class="stat-title">{% translate "Active Shipments" %}</div>
+          <div class="stat-value">{{ snapshot.active_shipments }}</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-box p-4">
+          <div class="stat-title">{% translate "Completed Shipments" %}</div>
+          <div class="stat-value">{{ snapshot.completed_shipments }}</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-box p-4">
+          <div class="stat-title">{% translate "Containers In Transit" %}</div>
+          <div class="stat-value">{{ snapshot.containers_in_transit }}</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-box p-4">
+          <div class="stat-title">{% translate "Containers Delivered" %}</div>
+          <div class="stat-value">{{ snapshot.containers_delivered }}</div>
+        </div>
+
+        <div class="stat bg-base-200 rounded-box p-4">
+          <div class="stat-title">{% translate "Avg Transit Days" %}</div>
+          <div class="stat-value">
+            {% if snapshot.avg_transit_days is not None %}
+              {{ snapshot.avg_transit_days }}
+            {% else %}
+              —
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+    {% else %}
+      <div class="text-center py-12 text-base-content/50">
+        {% translate "No analytics data yet. Data will appear once shipments are processed." %}
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}
