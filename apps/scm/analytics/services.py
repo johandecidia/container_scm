@@ -3,7 +3,6 @@
 import datetime
 from decimal import Decimal
 
-from django.db.models import Avg, ExpressionWrapper, F, FloatField
 from django.utils import timezone
 
 from apps.scm.containers.choices import ContainerStatus
@@ -53,26 +52,23 @@ def get_containers_delivered(team: Team) -> int:
 
 def get_average_transit_days(team: Team) -> Decimal | None:
     """Return mean transit duration in days for delivered shipments with both dates set."""
-    result = (
-        Shipment.objects.filter(
-            team=team,
-            status=Shipment.Status.DELIVERED,
-            actual_departure_at__isnull=False,
-            actual_arrival_at__isnull=False,
-        )
-        .annotate(
-            transit_seconds=ExpressionWrapper(
-                F("actual_arrival_at") - F("actual_departure_at"),
-                output_field=FloatField(),
-            )
-        )
-        .aggregate(avg_seconds=Avg("transit_seconds"))
-    )
-    avg_seconds = result.get("avg_seconds")
-    if avg_seconds is None:
+    shipments = Shipment.objects.filter(
+        team=team,
+        status=Shipment.Status.DELIVERED,
+        actual_departure_at__isnull=False,
+        actual_arrival_at__isnull=False,
+    ).only("actual_departure_at", "actual_arrival_at")
+
+    total_days = 0.0
+    count = 0
+    for s in shipments:
+        delta = s.actual_arrival_at - s.actual_departure_at
+        total_days += delta.total_seconds() / 86400
+        count += 1
+
+    if count == 0:
         return None
-    avg_days = avg_seconds / 86400
-    return Decimal(str(round(avg_days, 2)))
+    return Decimal(str(round(total_days / count, 2)))
 
 
 # ---------------------------------------------------------------------------
