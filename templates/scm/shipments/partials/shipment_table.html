@@ -51,6 +51,10 @@
   </div>
 {% else %}
   <div id="shipment-table">
-    {% include "scm/components/table_empty_state.html" with message=_("No shipments found.") %}
+    {% if request.GET.search or request.GET.status %}
+      {% include "scm/components/empty_state.html" with icon="fa-magnifying-glass" title=_("No shipments match your filters") message=_("Try adjusting or clearing your search criteria.") %}
+    {% else %}
+      {% include "scm/components/empty_state.html" with icon="fa-ship" title=_("No shipments yet") message=_("Create your first shipment to start tracking.") action_label=_("New Shipment") %}
+    {% endif %}
   </div>
 {% endif %}

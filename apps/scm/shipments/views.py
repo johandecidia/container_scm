@@ -9,7 +9,7 @@ from apps.scm.decorators import scm_login_required
 
 from .forms import ShipmentContainerForm, ShipmentForm, ShipmentStatusForm
 from .models import Shipment, ShipmentContainer
-from .selectors import filter_shipments, get_shipment_containers, get_shipment_events
+from .selectors import filter_shipments, get_shipment_containers, get_shipment_events, get_shipment_workspace
 from .services import (
     add_container_to_shipment,
     cancel_shipment,
@@ -48,12 +48,13 @@ def shipment_list(request):
 def shipment_detail(request, pk):
     team = request.default_team
     shipment = get_object_or_404(Shipment, pk=pk, team=team)
-    containers = get_shipment_containers(team=team, shipment=shipment)
-    events = get_shipment_events(team=team, shipment=shipment)
+    workspace = get_shipment_workspace(team=team, shipment=shipment)
     context = {
         "shipment": shipment,
-        "containers": containers,
-        "events": events,
+        "workspace": workspace,
+        # Keep containers/events for backward-compat with partials that use them directly
+        "containers": workspace.containers,
+        "events": workspace.events,
         "team_slug": team.slug,
     }
     return render(request, "scm/shipments/pages/shipment_detail.html", context)

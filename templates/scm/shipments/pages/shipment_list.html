@@ -2,20 +2,23 @@
 {% load i18n %}
 
 {% block app %}
-  <section class="app-card">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-xl font-semibold">{% translate "Shipments" %}</h2>
-      <button
-        class="btn btn-primary btn-sm"
-        hx-get="{% url 'shipments:create' %}"
-        hx-target="#modal-container"
-        hx-swap="innerHTML"
-      >
-        <i class="fa fa-plus w-4 h-4"></i>
-        {% translate "New Shipment" %}
-      </button>
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold">{% translate "Shipments" %}</h1>
+      <p class="text-sm text-base-content/60 mt-1">{% translate "Track end-to-end shipment lifecycle." %}</p>
     </div>
+    <button
+      class="btn btn-primary btn-sm"
+      hx-get="{% url 'shipments:create' %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      <i class="fa fa-plus w-4 h-4"></i>
+      {% translate "New Shipment" %}
+    </button>
+  </div>
 
+  <section class="app-card">
     {# Filter bar #}
     <form
       class="flex flex-wrap gap-2 mb-4"
@@ -35,10 +38,15 @@
         type="search"
         name="search"
         value="{{ request.GET.search }}"
-        placeholder="{% translate 'Search…' %}"
+        placeholder="{% translate 'Search shipments…' %}"
         class="input input-bordered input-sm flex-1 min-w-48"
       >
-      <button type="submit" class="btn btn-ghost btn-sm">{% translate "Filter" %}</button>
+      {% if request.GET.search or request.GET.status %}
+        <a href="{% url 'shipments:list' %}" class="btn btn-ghost btn-sm">
+          <i class="fa fa-xmark"></i>
+          {% translate "Clear" %}
+        </a>
+      {% endif %}
     </form>
 
     <div id="shipment-table">

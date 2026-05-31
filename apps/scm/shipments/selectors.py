@@ -1,5 +1,7 @@
 # Shipment selectors — all read/query operations.
 # Every function that returns team-owned data must accept `team` as first argument.
+from dataclasses import dataclass, field
+
 from django.db.models import Q, QuerySet
 
 from apps.teams.models import Team
@@ -63,4 +65,39 @@ def get_shipment_events(team: Team, shipment: Shipment) -> QuerySet[ShipmentEven
         ShipmentEvent.objects.filter(shipment=shipment, shipment__team=team)
         .select_related("created_by")
         .order_by("-occurred_at", "-created_at")
+    )
+
+
+@dataclass
+class ShipmentWorkspace:
+    shipment: Shipment
+    containers: list = field(default_factory=list)
+    events: list = field(default_factory=list)
+    tracking_subscriptions: list = field(default_factory=list)
+    latest_tracking_event: object = None  # TrackingEvent | None
+
+
+def get_shipment_workspace(team: Team, shipment: Shipment) -> ShipmentWorkspace:
+    """Gather all workspace data for a shipment detail view."""
+    from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
+
+    containers = list(get_shipment_containers(team=team, shipment=shipment))
+    events = list(get_shipment_events(team=team, shipment=shipment))
+    tracking_subscriptions = list(
+        TrackingSubscription.objects.filter(team=team, shipment=shipment)
+        .select_related("provider")
+        .order_by("-created_at")
+    )
+    latest_event = (
+        TrackingEvent.objects.filter(team=team, shipment=shipment)
+        .select_related("provider")
+        .order_by("-event_datetime", "-created_at")
+        .first()
+    )
+    return ShipmentWorkspace(
+        shipment=shipment,
+        containers=containers,
+        events=events,
+        tracking_subscriptions=tracking_subscriptions,
+        latest_tracking_event=latest_event,
     )
