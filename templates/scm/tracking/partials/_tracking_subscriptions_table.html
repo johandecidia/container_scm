@@ -1,0 +1,44 @@
+{% load i18n %}
+
+<div id="tracking-table">
+  {% if subscriptions %}
+    <div class="overflow-x-auto">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th>{% translate "Reference" %}</th>
+            <th>{% translate "Provider" %}</th>
+            <th>{% translate "Type" %}</th>
+            <th>{% translate "Status" %}</th>
+            <th>{% translate "Last synced" %}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for subscription in subscriptions %}
+            <tr>
+              <td class="font-mono">
+                <a href="{% url 'tracking:detail' subscription.pk %}" class="link link-hover">
+                  {{ subscription.tracking_reference }}
+                </a>
+              </td>
+              <td>{{ subscription.provider }}</td>
+              <td>{{ subscription.get_reference_type_display }}</td>
+              <td>{% include "scm/tracking/partials/_tracking_status_badge.html" %}</td>
+              <td class="text-sm text-base-content/60">
+                {{ subscription.last_synced_at|date:"Y-m-d H:i"|default:"—" }}
+              </td>
+              <td>
+                <a href="{% url 'tracking:detail' subscription.pk %}" class="btn btn-ghost btn-xs">
+                  {% translate "View" %}
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="text-sm text-base-content/50 py-8 text-center">{% translate "No tracking subscriptions yet." %}</p>
+  {% endif %}
+</div>

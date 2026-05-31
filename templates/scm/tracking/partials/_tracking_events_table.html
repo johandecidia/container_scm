@@ -1,0 +1,39 @@
+{% load i18n %}
+
+{% if events %}
+  <div class="overflow-x-auto">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>{% translate "Event" %}</th>
+          <th>{% translate "Location" %}</th>
+          <th>{% translate "Date/time" %}</th>
+          <th>{% translate "Provider" %}</th>
+          <th>{% translate "Description" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in events %}
+          <tr>
+            <td>
+              <span class="badge badge-sm badge-ghost">{{ event.get_event_type_display }}</span>
+            </td>
+            <td class="text-sm">
+              {{ event.location_name }}
+              {% if event.location_unlocode %}
+                <span class="text-base-content/50 text-xs">({{ event.location_unlocode }})</span>
+              {% endif %}
+            </td>
+            <td class="text-sm text-base-content/70">
+              {{ event.event_datetime|date:"Y-m-d H:i"|default:"—" }}
+            </td>
+            <td class="text-sm">{{ event.provider }}</td>
+            <td class="text-sm text-base-content/70">{{ event.description }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="text-sm text-base-content/50 py-4">{% translate "No tracking events yet." %}</p>
+{% endif %}

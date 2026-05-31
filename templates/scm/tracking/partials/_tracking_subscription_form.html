@@ -1,0 +1,33 @@
+{% load i18n %}
+
+<div class="modal modal-open">
+  <div class="modal-box">
+    <h3 class="font-bold text-lg mb-4">{{ modal_title }}</h3>
+    <form
+      method="post"
+      action="{{ form_action }}"
+      hx-post="{{ form_action }}"
+      hx-target="#tracking-table"
+      hx-swap="outerHTML"
+    >
+      {% csrf_token %}
+      {% for field in form %}
+        <div class="form-control mb-3">
+          <label class="label">
+            <span class="label-text">{{ field.label }}</span>
+          </label>
+          {{ field }}
+          {% if field.errors %}
+            <p class="text-error text-xs mt-1">{{ field.errors|join:", " }}</p>
+          {% endif %}
+          {% if field.help_text %}
+            <p class="text-xs text-base-content/50 mt-1">{{ field.help_text }}</p>
+          {% endif %}
+        </div>
+      {% endfor %}
+      <div class="modal-action">
+        <button type="submit" class="btn btn-primary btn-sm">{% translate "Save" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

@@ -1,0 +1,25 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-semibold">{% translate "Tracking" %}</h2>
+      <button
+        class="btn btn-primary btn-sm"
+        hx-get="{% url 'tracking:start' %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-plus w-4 h-4"></i>
+        {% translate "Start Tracking" %}
+      </button>
+    </div>
+
+    <div id="tracking-table">
+      {% include "scm/tracking/partials/_tracking_subscriptions_table.html" %}
+    </div>
+  </section>
+
+  <div id="modal-container"></div>
+{% endblock %}

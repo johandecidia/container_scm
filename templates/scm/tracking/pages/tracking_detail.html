@@ -1,0 +1,144 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card mb-4">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <a href="{% url 'tracking:list' %}" class="text-sm text-base-content/60 hover:text-base-content">
+          ← {% translate "Tracking" %}
+        </a>
+        <h2 class="text-xl font-semibold mt-1">{{ subscription }}</h2>
+      </div>
+      <div class="flex gap-2">
+        {% if subscription.status == "active" %}
+          <form method="post" action="{% url 'tracking:pause' subscription.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline btn-sm">{% translate "Pause" %}</button>
+          </form>
+        {% elif subscription.status == "paused" %}
+          <form method="post" action="{% url 'tracking:resume' subscription.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline btn-sm">{% translate "Resume" %}</button>
+          </form>
+        {% endif %}
+        {% if subscription.status not in "cancelled,completed" %}
+          <form method="post" action="{% url 'tracking:sync' subscription.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline btn-sm">
+              {% include "scm/tracking/partials/_tracking_sync_button.html" %}
+            </button>
+          </form>
+          <form method="post" action="{% url 'tracking:cancel' subscription.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline btn-error btn-sm">{% translate "Cancel" %}</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="mb-4">
+      {% include "scm/tracking/partials/_tracking_status_badge.html" %}
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Provider" %}</p>
+        <p class="font-medium">{{ subscription.provider }}</p>
+      </div>
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Tracking reference" %}</p>
+        <p class="font-medium font-mono">{{ subscription.tracking_reference }}</p>
+      </div>
+      <div>
+        <p class="text-sm text-base-content/60">{% translate "Reference type" %}</p>
+        <p class="font-medium">{{ subscription.get_reference_type_display }}</p>
+      </div>
+      {% if subscription.last_synced_at %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Last synced" %}</p>
+          <p class="font-medium">{{ subscription.last_synced_at|date:"Y-m-d H:i" }}</p>
+        </div>
+      {% endif %}
+      {% if subscription.consecutive_failures %}
+        <div>
+          <p class="text-sm text-base-content/60">{% translate "Consecutive failures" %}</p>
+          <p class="font-medium text-error">{{ subscription.consecutive_failures }}</p>
+        </div>
+      {% endif %}
+      {% if subscription.last_error_message %}
+        <div class="md:col-span-2">
+          <p class="text-sm text-base-content/60">{% translate "Last error" %}</p>
+          <p class="text-sm text-error">{{ subscription.last_error_message }}</p>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  {# Events section #}
+  <section class="app-card mb-4">
+    <h3 class="text-lg font-semibold mb-3">{% translate "Tracking Events" %}</h3>
+    {% include "scm/tracking/partials/_tracking_events_table.html" %}
+  </section>
+
+  {# Timeline section #}
+  <section class="app-card mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-lg font-semibold">{% translate "Timeline" %}</h3>
+      <button
+        class="btn btn-ghost btn-xs"
+        hx-get="{% url 'tracking:timeline' subscription.pk %}"
+        hx-target="#tracking-timeline"
+        hx-swap="outerHTML"
+      >
+        <i class="fa fa-refresh"></i>
+      </button>
+    </div>
+    <div id="tracking-timeline">
+      {% include "scm/tracking/partials/_tracking_timeline.html" %}
+    </div>
+  </section>
+
+  {# Sync history #}
+  <section class="app-card">
+    <h3 class="text-lg font-semibold mb-3">{% translate "Sync History" %}</h3>
+    {% if sync_runs %}
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>{% translate "Started" %}</th>
+              <th>{% translate "Status" %}</th>
+              <th>{% translate "Events created" %}</th>
+              <th>{% translate "Events updated" %}</th>
+              <th>{% translate "Error" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in sync_runs %}
+              <tr>
+                <td class="text-sm">{{ run.started_at|date:"Y-m-d H:i" }}</td>
+                <td>
+                  <span class="badge badge-sm
+                    {% if run.status == 'success' %}badge-success
+                    {% elif run.status == 'failed' %}badge-error
+                    {% elif run.status == 'started' %}badge-info
+                    {% else %}badge-ghost
+                    {% endif %}
+                  ">{{ run.get_status_display }}</span>
+                </td>
+                <td>{{ run.events_created }}</td>
+                <td>{{ run.events_updated }}</td>
+                <td class="text-xs text-error max-w-xs truncate">{{ run.error_message }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-sm text-base-content/50 py-4">{% translate "No sync runs yet." %}</p>
+    {% endif %}
+  </section>
+
+  <div id="modal-container"></div>
+{% endblock %}
