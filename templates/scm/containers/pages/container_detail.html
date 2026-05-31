@@ -2,15 +2,18 @@
 {% load i18n %}
 
 {% block app %}
-  <section class="app-card">
-    <div class="flex items-center justify-between mb-4">
+  {# Workspace header #}
+  <div class="mb-6">
+    <a href="{% url 'containers:list' %}" class="text-sm text-base-content/60 hover:text-base-content inline-flex items-center gap-1 mb-2">
+      <i class="fa fa-arrow-left text-xs"></i>
+      {% translate "Containers" %}
+    </a>
+    <div class="flex items-start justify-between gap-4">
       <div>
-        <a href="{% url 'containers:list' %}" class="text-sm text-base-content/60 hover:text-base-content">
-          ← {% translate "Containers" %}
-        </a>
-        <h2 class="text-xl font-semibold font-mono mt-1">{{ container.container_id }}</h2>
+        <h1 class="text-2xl font-bold font-mono">{{ container.container_id }}</h1>
+        <p class="text-sm text-base-content/60 mt-1">{{ container.equipment_type.description }}</p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 shrink-0">
         <button
           class="btn btn-outline btn-sm"
           hx-get="{% url 'containers:update' container.pk %}"
@@ -31,71 +34,149 @@
         </button>
       </div>
     </div>
+  </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div>
-        <p class="text-sm text-base-content/60">{% translate "Container ID" %}</p>
-        <p class="font-medium font-mono">{{ container.container_id }}</p>
-      </div>
-      <div>
-        <p class="text-sm text-base-content/60">{% translate "Equipment type" %}</p>
-        <p class="font-medium">{{ container.equipment_type.description }}</p>
-      </div>
-      <div>
-        <p class="text-sm text-base-content/60">{% translate "Status" %}</p>
-        {% include "scm/components/status_badge.html" with status=container.status %}
-      </div>
-      <div>
-        <p class="text-sm text-base-content/60">{% translate "Condition" %}</p>
-        <p class="font-medium">{{ container.get_condition_display }}</p>
-      </div>
-      {% if container.color_code %}
-        <div>
-          <p class="text-sm text-base-content/60">{% translate "Color" %}</p>
-          <p class="font-medium">{{ container.color_code }} ({{ container.get_color_system_display }})</p>
-        </div>
-      {% endif %}
-      {% if container.manufacture_date %}
-        <div>
-          <p class="text-sm text-base-content/60">{% translate "Manufacture date" %}</p>
-          <p class="font-medium">{{ container.manufacture_date|date:"Y-m-d" }}</p>
-        </div>
-      {% endif %}
-      {% if container.manufacturer %}
-        <div>
-          <p class="text-sm text-base-content/60">{% translate "Manufacturer" %}</p>
-          <p class="font-medium">{{ container.manufacturer }}</p>
-        </div>
-      {% endif %}
-      {% if container.manufacturer_id %}
-        <div>
-          <p class="text-sm text-base-content/60">{% translate "Manufacturer ID" %}</p>
-          <p class="font-medium">{{ container.manufacturer_id }}</p>
-        </div>
-      {% endif %}
-      {% if container.current_location %}
-        <div>
-          <p class="text-sm text-base-content/60">{% translate "Current location" %}</p>
-          <p class="font-medium">{{ container.current_location }}</p>
-        </div>
-      {% endif %}
-      <div>
-        <p class="text-sm text-base-content/60">{% translate "Created" %}</p>
-        <p class="font-medium">{{ container.created_at|date:"Y-m-d" }}{% if container.created_by %} {% translate "by" %} {{ container.created_by }}{% endif %}</p>
-      </div>
-      <div>
-        <p class="text-sm text-base-content/60">{% translate "Updated" %}</p>
-        <p class="font-medium">{{ container.updated_at|date:"Y-m-d" }}{% if container.updated_by %} {% translate "by" %} {{ container.updated_by }}{% endif %}</p>
-      </div>
+  {# Status + summary cards #}
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+    <div class="bg-base-200 rounded-box p-3">
+      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Status" %}</p>
+      {% include "scm/components/status_badge.html" with status=container.status %}
     </div>
+    <div class="bg-base-200 rounded-box p-3">
+      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Condition" %}</p>
+      <p class="font-medium text-sm">{{ container.get_condition_display }}</p>
+    </div>
+    <div class="bg-base-200 rounded-box p-3">
+      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Location" %}</p>
+      <p class="font-medium text-sm">{{ container.current_location|default:"—" }}</p>
+    </div>
+    <div class="bg-base-200 rounded-box p-3">
+      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Shipments" %}</p>
+      <p class="font-medium text-sm">{{ workspace.shipment_containers|length }}</p>
+    </div>
+  </div>
 
-    {% if container.notes %}
-      <div class="mt-4">
-        <p class="text-sm text-base-content/60 mb-1">{% translate "Notes" %}</p>
-        <p class="text-sm whitespace-pre-wrap">{{ container.notes }}</p>
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    {# Container details #}
+    <section class="app-card">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Container Details" %}</h2>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-3">
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Container ID" %}</dt>
+          <dd class="font-medium font-mono text-sm">{{ container.container_id }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Equipment Type" %}</dt>
+          <dd class="font-medium text-sm">{{ container.equipment_type.description }}</dd>
+        </div>
+        {% if container.color_code %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Colour" %}</dt>
+            <dd class="font-medium text-sm">{{ container.color_code }} ({{ container.get_color_system_display }})</dd>
+          </div>
+        {% endif %}
+        {% if container.manufacture_date %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Manufacture Date" %}</dt>
+            <dd class="font-medium text-sm">{{ container.manufacture_date|date:"Y-m-d" }}</dd>
+          </div>
+        {% endif %}
+        {% if container.manufacturer %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Manufacturer" %}</dt>
+            <dd class="font-medium text-sm">{{ container.manufacturer }}</dd>
+          </div>
+        {% endif %}
+        {% if container.manufacturer_id %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Manufacturer ID" %}</dt>
+            <dd class="font-medium text-sm">{{ container.manufacturer_id }}</dd>
+          </div>
+        {% endif %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Created" %}</dt>
+          <dd class="font-medium text-sm">
+            {{ container.created_at|date:"Y-m-d" }}{% if container.created_by %} {% translate "by" %} {{ container.created_by }}{% endif %}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Updated" %}</dt>
+          <dd class="font-medium text-sm">
+            {{ container.updated_at|date:"Y-m-d" }}{% if container.updated_by %} {% translate "by" %} {{ container.updated_by }}{% endif %}
+          </dd>
+        </div>
+      </dl>
+      {% if container.notes %}
+        <div class="mt-4 pt-4 border-t border-base-300">
+          <dt class="text-xs text-base-content/60 mb-1">{% translate "Notes" %}</dt>
+          <dd class="text-sm whitespace-pre-wrap">{{ container.notes }}</dd>
+        </div>
+      {% endif %}
+    </section>
+
+    {# Shipments section #}
+    <section class="app-card">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Shipments" %}</h2>
+      {% if workspace.shipment_containers %}
+        <ul class="divide-y divide-base-200">
+          {% for sc in workspace.shipment_containers %}
+            <li class="py-3 flex items-center justify-between gap-2">
+              <div>
+                <a href="{% url 'shipments:detail' sc.shipment.pk %}" class="font-medium text-sm link link-hover">
+                  {{ sc.shipment }}
+                </a>
+                <p class="text-xs text-base-content/50">
+                  {% if sc.loaded_at %}{% translate "Loaded" %} {{ sc.loaded_at|date:"Y-m-d" }}{% endif %}
+                  {% if sc.seal_number %} · {% translate "Seal" %}: {{ sc.seal_number }}{% endif %}
+                </p>
+              </div>
+              {% include "scm/shipments/partials/shipment_status_badge.html" with status=sc.shipment.status %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-base-content/50 py-4">{% translate "Not assigned to any shipment." %}</p>
+      {% endif %}
+    </section>
+  </div>
+
+  {# Tracking timeline #}
+  {% if workspace.tracking_subscriptions or workspace.latest_tracking_event %}
+    <section class="app-card mt-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">{% translate "Tracking" %}</h2>
+        <a href="{% url 'tracking:list' %}" class="btn btn-ghost btn-xs">{% translate "All tracking" %}</a>
       </div>
-    {% endif %}
-  </section>
+      {% if workspace.latest_tracking_event %}
+        <div class="bg-base-200 rounded-box p-3 mb-4">
+          <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Latest Event" %}</p>
+          <p class="font-medium text-sm">{{ workspace.latest_tracking_event.get_event_type_display }}</p>
+          {% if workspace.latest_tracking_event.description %}
+            <p class="text-sm text-base-content/70">{{ workspace.latest_tracking_event.description }}</p>
+          {% endif %}
+          <p class="text-xs text-base-content/50 mt-1">
+            {{ workspace.latest_tracking_event.event_datetime|date:"Y-m-d H:i"|default:"—" }}
+            {% if workspace.latest_tracking_event.provider %}· {{ workspace.latest_tracking_event.provider.name }}{% endif %}
+          </p>
+        </div>
+      {% endif %}
+      {% if workspace.tracking_subscriptions %}
+        <ul class="divide-y divide-base-200">
+          {% for sub in workspace.tracking_subscriptions %}
+            <li class="py-2 flex items-center justify-between gap-2">
+              <div>
+                <a href="{% url 'tracking:detail' sub.pk %}" class="text-sm font-mono link link-hover">
+                  {{ sub.tracking_reference }}
+                </a>
+                <p class="text-xs text-base-content/50">{{ sub.provider }}</p>
+              </div>
+              {% include "scm/tracking/partials/_tracking_status_badge.html" with subscription=sub %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </section>
+  {% endif %}
 
   <div id="modal-container"></div>
 {% endblock %}

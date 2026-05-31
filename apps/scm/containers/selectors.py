@@ -1,4 +1,6 @@
 # Container selectors — all read/query operations.
+from dataclasses import dataclass, field
+
 from django.db.models import Q, QuerySet
 
 from apps.teams.models import Team
@@ -58,3 +60,40 @@ def filter_containers(
 
     order_by = _SORT_MAP.get(sort or "newest", "-created_at")
     return qs.order_by(order_by)
+
+
+@dataclass
+class ContainerWorkspace:
+    container: Container
+    shipment_containers: list = field(default_factory=list)
+    tracking_subscriptions: list = field(default_factory=list)
+    latest_tracking_event: object = None  # TrackingEvent | None
+
+
+def get_container_workspace(team: Team, container: Container) -> ContainerWorkspace:
+    """Gather all workspace data for a container detail view."""
+    from apps.scm.shipments.models import ShipmentContainer
+    from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
+
+    shipment_containers = list(
+        ShipmentContainer.objects.filter(container=container, shipment__team=team)
+        .select_related("shipment")
+        .order_by("-created_at")
+    )
+    tracking_subscriptions = list(
+        TrackingSubscription.objects.filter(team=team, container=container)
+        .select_related("provider")
+        .order_by("-created_at")
+    )
+    latest_event = (
+        TrackingEvent.objects.filter(team=team, container=container)
+        .select_related("provider")
+        .order_by("-event_datetime", "-created_at")
+        .first()
+    )
+    return ContainerWorkspace(
+        container=container,
+        shipment_containers=shipment_containers,
+        tracking_subscriptions=tracking_subscriptions,
+        latest_tracking_event=latest_event,
+    )

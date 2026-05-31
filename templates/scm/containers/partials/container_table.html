@@ -51,6 +51,10 @@
   </div>
 {% else %}
   <div id="container-table">
-    {% include "scm/components/table_empty_state.html" with message=_("No containers found.") %}
+    {% if request.GET.search or request.GET.status or request.GET.condition or request.GET.equipment_type %}
+      {% include "scm/components/empty_state.html" with icon="fa-magnifying-glass" title=_("No containers match your filters") message=_("Try adjusting or clearing your search criteria.") %}
+    {% else %}
+      {% include "scm/components/empty_state.html" with icon="fa-box" title=_("No containers yet") message=_("Add your first container to start tracking your fleet.") action_htmx_get=containers_create_url action_label=_("Add Container") action_icon="fa-plus" %}
+    {% endif %}
   </div>
 {% endif %}

@@ -10,7 +10,7 @@ from apps.scm.decorators import scm_login_required
 
 from .forms import ContainerForm
 from .models import Container
-from .selectors import filter_containers, get_active_equipment_types
+from .selectors import filter_containers, get_active_equipment_types, get_container_workspace
 from .services import create_container, delete_container, update_container
 
 CONTAINERS_PER_PAGE = 25
@@ -44,10 +44,11 @@ def container_list(request):
 def container_detail(request, container_id):
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
+    workspace = get_container_workspace(team=team, container=container)
     return render(
         request,
         "scm/containers/pages/container_detail.html",
-        {"container": container, "team_slug": team.slug},
+        {"container": container, "workspace": workspace, "team_slug": team.slug},
     )
 
 

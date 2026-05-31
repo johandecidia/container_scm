@@ -116,4 +116,4 @@ class ContainerHtmxTest(TestCase):
         client.force_login(self.user)
         response = client.get(reverse("containers:list"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "No containers found")
+        self.assertContains(response, "No containers yet")
