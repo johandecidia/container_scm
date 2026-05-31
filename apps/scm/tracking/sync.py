@@ -27,11 +27,25 @@ def _get_next_sync_at():
     return timezone.now() + timezone.timedelta(minutes=DEFAULT_SYNC_INTERVAL_MINUTES)
 
 
+def _get_carrier_client_and_parser(provider_code: str):
+    """Look up the carrier client and parser from the registry.
+
+    Returns (client_instance, parser_instance) or raises if the carrier is unknown.
+    Raises UnknownCarrierError for unknown provider codes.
+    """
+    from apps.scm.integrations.carriers.registry import get_carrier_definition
+
+    definition = get_carrier_definition(provider_code)
+    client = definition.client_class()
+    parser = definition.parser_class()
+    return client, parser
+
+
 def sync_tracking_subscription(subscription: TrackingSubscription) -> bool:
     """Run a single sync cycle for a tracking subscription.
 
     1. Creates a TrackingSyncRun log entry.
-    2. Calls the appropriate carrier client (placeholder in this version).
+    2. Calls the appropriate carrier client via the carrier registry.
     3. Stores raw payload.
     4. Parses and upserts normalised events.
     5. Updates subscription sync state.
@@ -44,15 +58,43 @@ def sync_tracking_subscription(subscription: TrackingSubscription) -> bool:
     )
 
     try:
-        # --- Carrier call (placeholder) -----------------------------------
-        # In production this will call the appropriate carrier client, e.g.:
-        #   client = MaerskTrackingClient()
-        #   raw = client.fetch_tracking(subscription.tracking_reference, subscription.reference_type)
-        # For now we produce an empty payload so the workflow runs without real APIs.
-        raw_payload: dict = {}
-        parsed_events: list[dict] = []
+        # Resolve carrier client and parser from the registry.
+        try:
+            client, parser = _get_carrier_client_and_parser(subscription.provider.code)
+        except Exception as exc:  # noqa: BLE001
+            # Registry miss or carrier not yet implemented — log and continue with empty payload.
+            logger.warning(
+                "Could not resolve carrier adapter for provider %s (subscription %s): %s",
+                subscription.provider.code,
+                subscription.pk,
+                exc,
+            )
+            client = None
+            parser = None
 
-        # Store raw payload
+        # Fetch raw payload from carrier (placeholder if client not yet implemented).
+        raw_payload: dict = {}
+        if client is not None:
+            try:
+                raw_payload = client.fetch_tracking(
+                    container_number=subscription.tracking_reference
+                    if subscription.reference_type == TrackingSubscription.ReferenceType.CONTAINER_NUMBER
+                    else None,
+                    bill_of_lading_number=subscription.tracking_reference
+                    if subscription.reference_type == TrackingSubscription.ReferenceType.BILL_OF_LADING
+                    else None,
+                    booking_number=subscription.tracking_reference
+                    if subscription.reference_type == TrackingSubscription.ReferenceType.BOOKING_NUMBER
+                    else None,
+                )
+            except NotImplementedError:
+                logger.debug(
+                    "Carrier %s fetch_tracking not implemented yet — using empty payload.",
+                    subscription.provider.code,
+                )
+                raw_payload = {}
+
+        # Store raw payload.
         raw_payload_record = store_raw_payload(
             team=subscription.team,
             provider=subscription.provider,
@@ -61,7 +103,21 @@ def sync_tracking_subscription(subscription: TrackingSubscription) -> bool:
             parsed_successfully=True,
         )
 
-        # Upsert normalised events
+        # Parse and upsert normalised events.
+        parsed_events: list[dict] = []
+        if parser is not None and raw_payload:
+            try:
+                parsed_events = parser.parse_tracking_events(raw_payload)
+            except NotImplementedError:
+                logger.debug("Carrier %s parser not implemented yet.", subscription.provider.code)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Parser error for provider %s (subscription %s): %s",
+                    subscription.provider.code,
+                    subscription.pk,
+                    exc,
+                )
+
         events_created = 0
         events_updated = 0
         for event_data in parsed_events:
