@@ -580,7 +580,7 @@ PROJECT_METADATA = {
 # set this to True in production to have URLs generated with https instead of http
 USE_HTTPS_IN_ABSOLUTE_URLS = env.bool("USE_HTTPS_IN_ABSOLUTE_URLS", default=False)
 
-ADMINS = ["johan@decidia.se"]
+ADMINS = [("Johan", "johan@decidia.se")]
 
 # Add your google analytics ID to the environment to connect to Google Analytics
 GOOGLE_ANALYTICS_ID = env("GOOGLE_ANALYTICS_ID", default="")

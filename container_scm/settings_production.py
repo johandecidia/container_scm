@@ -5,6 +5,9 @@ from .settings import *  # noqa F401
 # A future release may remove it from here.
 DEBUG = False
 
+# Require SECRET_KEY from environment — no insecure default allowed in production.
+SECRET_KEY = env("SECRET_KEY")
+
 # fix ssl mixed content issues
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -14,16 +17,13 @@ SECURE_SSL_REDIRECT = True
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
-# HTTP Strict Transport Security settings
-# Without uncommenting the lines below, you will get security warnings when running ./manage.py check --deploy
-# https://docs.djangoproject.com/en/stable/ref/middleware/#http-strict-transport-security
+# Clickjacking protection — deny framing of the app entirely.
+X_FRAME_OPTIONS = "DENY"
 
-# # Increase this number once you're confident everything works https://stackoverflow.com/a/49168623/8207
-# SECURE_HSTS_SECONDS = 60
-# # Uncomment these two lines if you are sure that you don't host any subdomains over HTTP.
-# # You will get security warnings if you don't do this.
-# SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-# SECURE_HSTS_PRELOAD = True
+# HTTP Strict Transport Security — start conservative (60 s), increase after confirming SSL works.
+# https://docs.djangoproject.com/en/stable/ref/middleware/#http-strict-transport-security
+SECURE_HSTS_SECONDS = 60
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
 USE_HTTPS_IN_ABSOLUTE_URLS = True
 
@@ -53,4 +53,4 @@ DJANGO_VITE["default"]["dev_mode"] = False
 #     "MAILGUN_SENDER_DOMAIN": env("MAILGUN_SENDER_DOMAIN", default=None),
 # }
 
-ADMINS = ["johan@decidia.se"]
+ADMINS = [("Johan", "johan@decidia.se")]
