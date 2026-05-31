@@ -1,0 +1,62 @@
+{% load i18n %}
+
+{% comment %}
+  Reusable timeline component.
+
+  Usage:
+    {% include "scm/components/timeline.html" with timeline_items=items wrapper_id="my-timeline" %}
+
+  Each item in timeline_items should have:
+    - title (str)
+    - datetime (datetime | None)
+    - description (str, optional)
+    - location (str, optional)
+    - source (str, optional)
+    - event_type (str, optional) — used for dot colour
+
+  Optional context:
+    - wrapper_id: HTML id for the outer div (default: "scm-timeline")
+    - empty_message: override the empty-state text
+{% endcomment %}
+
+<div id="{{ wrapper_id|default:'scm-timeline' }}">
+  {% if timeline_items %}
+    <ul class="timeline timeline-vertical timeline-compact">
+      {% for item in timeline_items %}
+        <li>
+          {% if not forloop.first %}<hr>{% endif %}
+          <div class="timeline-middle">
+            <i class="fa fa-circle text-xs
+              {% if item.event_type == 'DELIVERED' or item.event_type == 'CREATED' %}text-success
+              {% elif item.event_type == 'DELAY' or item.event_type == 'CUSTOMS_HOLD' %}text-error
+              {% elif item.event_type == 'VESSEL_DEPARTED' or item.event_type == 'LOADED_ON_VESSEL' %}text-primary
+              {% elif item.event_type == 'GATE_IN' or item.event_type == 'DISCHARGED' %}text-info
+              {% else %}text-secondary
+              {% endif %}
+            "></i>
+          </div>
+          <div class="timeline-end mb-6">
+            {% if item.datetime %}
+              <time class="text-xs text-base-content/50">{{ item.datetime|date:"Y-m-d H:i" }}</time>
+            {% endif %}
+            <div class="font-semibold text-sm">{{ item.title }}</div>
+            {% if item.description %}
+              <div class="text-sm text-base-content/70">{{ item.description }}</div>
+            {% endif %}
+            {% if item.location %}
+              <div class="text-xs text-base-content/50 mt-1">
+                <i class="fa fa-map-marker-alt"></i> {{ item.location }}
+              </div>
+            {% endif %}
+            {% if item.source %}
+              <div class="text-xs text-base-content/40 mt-1">{{ item.source }}</div>
+            {% endif %}
+          </div>
+          {% if not forloop.last %}<hr>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    {% include "scm/components/empty_state.html" with icon="fa-timeline" title=_("No events yet") message=empty_message|default:_("Events will appear here once tracking begins.") %}
+  {% endif %}
+</div>
