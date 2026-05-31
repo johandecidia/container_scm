@@ -2,62 +2,125 @@
 {% load i18n %}
 
 {% block app %}
-  <section class="app-card">
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="text-xl font-semibold">{% translate "Analytics" %}</h2>
+  {# Page header #}
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold">{% translate "Overview" %}</h1>
+    <p class="text-sm text-base-content/60 mt-1">{% translate "Live supply chain status for your team." %}</p>
+  </div>
+
+  {# Live KPI cards #}
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 mb-8">
+    <a href="{% url 'shipments:list' %}?status=BOOKED&status=IN_TRANSIT" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
+      <div class="stat-figure text-primary/40">
+        <i class="fa fa-ship text-2xl"></i>
+      </div>
+      <div class="stat-title text-xs uppercase tracking-wide">{% translate "Active Shipments" %}</div>
+      <div class="stat-value text-primary">{{ live_stats.active_shipments }}</div>
+    </a>
+
+    <a href="{% url 'shipments:list' %}" class="stat rounded-box p-4 transition-colors
+      {% if live_stats.delayed_shipments > 0 %}bg-error/10 hover:bg-error/20{% else %}bg-base-200 hover:bg-base-300{% endif %}">
+      <div class="stat-figure {% if live_stats.delayed_shipments > 0 %}text-error/60{% else %}text-base-content/30{% endif %}">
+        <i class="fa fa-triangle-exclamation text-2xl"></i>
+      </div>
+      <div class="stat-title text-xs uppercase tracking-wide">{% translate "Delayed" %}</div>
+      <div class="stat-value {% if live_stats.delayed_shipments > 0 %}text-error{% endif %}">{{ live_stats.delayed_shipments }}</div>
+    </a>
+
+    <a href="{% url 'containers:list' %}?status=IN_TRANSIT" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
+      <div class="stat-figure text-warning/40">
+        <i class="fa fa-box text-2xl"></i>
+      </div>
+      <div class="stat-title text-xs uppercase tracking-wide">{% translate "In Transit" %}</div>
+      <div class="stat-value text-warning">{{ live_stats.containers_in_transit }}</div>
+    </a>
+
+    <a href="{% url 'containers:list' %}?status=AVAILABLE" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
+      <div class="stat-figure text-success/40">
+        <i class="fa fa-circle-check text-2xl"></i>
+      </div>
+      <div class="stat-title text-xs uppercase tracking-wide">{% translate "Available" %}</div>
+      <div class="stat-value text-success">{{ live_stats.containers_available }}</div>
+    </a>
+
+    <a href="{% url 'tracking:list' %}" class="stat rounded-box p-4 transition-colors
+      {% if live_stats.tracking_issues > 0 %}bg-error/10 hover:bg-error/20{% else %}bg-base-200 hover:bg-base-300{% endif %}">
+      <div class="stat-figure {% if live_stats.tracking_issues > 0 %}text-error/60{% else %}text-base-content/30{% endif %}">
+        <i class="fa fa-satellite-dish text-2xl"></i>
+      </div>
+      <div class="stat-title text-xs uppercase tracking-wide">{% translate "Tracking Issues" %}</div>
+      <div class="stat-value {% if live_stats.tracking_issues > 0 %}text-error{% endif %}">{{ live_stats.tracking_issues }}</div>
+    </a>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    {# Snapshot KPIs — historical #}
+    <section class="app-card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">{% translate "Snapshot KPIs" %}</h2>
+        {% if snapshot %}
+          <span class="text-xs text-base-content/50">
+            {% blocktranslate trimmed with date=snapshot.date %}
+              Last updated: {{ date }}
+            {% endblocktranslate %}
+          </span>
+        {% endif %}
+      </div>
       {% if snapshot %}
-        <span class="text-sm text-base-content/60">
-          {% blocktranslate trimmed with date=snapshot.date %}
-            Last updated: {{ date }}
-          {% endblocktranslate %}
-        </span>
-      {% endif %}
-    </div>
-
-    {% if snapshot %}
-      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
-
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">{% translate "Total Shipments" %}</div>
-          <div class="stat-value">{{ snapshot.total_shipments }}</div>
-        </div>
-
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">{% translate "Active Shipments" %}</div>
-          <div class="stat-value">{{ snapshot.active_shipments }}</div>
-        </div>
-
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">{% translate "Completed Shipments" %}</div>
-          <div class="stat-value">{{ snapshot.completed_shipments }}</div>
-        </div>
-
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">{% translate "Containers In Transit" %}</div>
-          <div class="stat-value">{{ snapshot.containers_in_transit }}</div>
-        </div>
-
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">{% translate "Containers Delivered" %}</div>
-          <div class="stat-value">{{ snapshot.containers_delivered }}</div>
-        </div>
-
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">{% translate "Avg Transit Days" %}</div>
-          <div class="stat-value">
-            {% if snapshot.avg_transit_days is not None %}
-              {{ snapshot.avg_transit_days }}
-            {% else %}
-              —
-            {% endif %}
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Total Shipments" %}</p>
+            <p class="text-2xl font-bold">{{ snapshot.total_shipments }}</p>
+          </div>
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Completed" %}</p>
+            <p class="text-2xl font-bold">{{ snapshot.completed_shipments }}</p>
+          </div>
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Delivered" %}</p>
+            <p class="text-2xl font-bold">{{ snapshot.containers_delivered }}</p>
+          </div>
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Avg Transit Days" %}</p>
+            <p class="text-2xl font-bold">
+              {% if snapshot.avg_transit_days is not None %}{{ snapshot.avg_transit_days }}{% else %}—{% endif %}
+            </p>
           </div>
         </div>
+      {% else %}
+        {% include "scm/components/empty_state.html" with icon="fa-chart-bar" title=_("No snapshot data yet") message=_("Analytics snapshots will appear once shipments are processed.") %}
+      {% endif %}
+    </section>
 
+    {# Latest Imports #}
+    <section class="app-card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">{% translate "Latest Imports" %}</h2>
+        <a href="{% url 'imports:list' %}" class="btn btn-ghost btn-xs">{% translate "View all" %}</a>
       </div>
-    {% else %}
-      <div class="text-center py-12 text-base-content/50">
-        {% translate "No analytics data yet. Data will appear once shipments are processed." %}
-      </div>
-    {% endif %}
-  </section>
+      {% if live_stats.recent_imports %}
+        <ul class="divide-y divide-base-200">
+          {% for job in live_stats.recent_imports %}
+            <li class="py-2 flex items-center justify-between gap-2">
+              <div>
+                <a href="{% url 'imports:detail' job.pk %}" class="text-sm font-medium link link-hover">
+                  {{ job.original_filename|default:job.pk }}
+                </a>
+                <p class="text-xs text-base-content/50">{{ job.created_at|date:"Y-m-d H:i" }}</p>
+              </div>
+              <span class="badge badge-sm
+                {% if job.status == 'COMPLETED' %}badge-success
+                {% elif job.status == 'FAILED' %}badge-error
+                {% elif job.status == 'IN_PROGRESS' %}badge-warning
+                {% else %}badge-ghost
+                {% endif %}
+              ">{{ job.get_status_display }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        {% include "scm/components/empty_state.html" with icon="fa-file-import" title=_("No imports yet") message=_("Import data from CSV or Excel files.") action_url="/scm/imports/upload/" action_label=_("Upload file") %}
+      {% endif %}
+    </section>
+  </div>
 {% endblock %}
