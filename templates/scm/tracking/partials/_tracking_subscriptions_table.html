@@ -39,6 +39,6 @@
       </table>
     </div>
   {% else %}
-    <p class="text-sm text-base-content/50 py-8 text-center">{% translate "No tracking subscriptions yet." %}</p>
+    {% include "scm/components/empty_state.html" with icon="fa-satellite-dish" title=_("No tracking subscriptions yet") message=_("Start tracking a shipment or container to monitor its progress.") action_htmx_get=tracking_start_url action_label=_("Start Tracking") action_icon="fa-plus" %}
   {% endif %}
 </div>
