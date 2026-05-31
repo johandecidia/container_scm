@@ -54,3 +54,26 @@ DJANGO_VITE["default"]["dev_mode"] = False
 # }
 
 ADMINS = [("Johan", "johan@decidia.se")]
+
+# ---------------------------------------------------------------------------
+# Production environment validation — fail fast on startup if required vars
+# are missing so the app never starts in a broken/insecure state.
+# ---------------------------------------------------------------------------
+import sys as _sys  # noqa: E402
+
+_issues: list[str] = []
+
+if not ALLOWED_HOSTS:
+    _issues.append("ALLOWED_HOSTS must be set to one or more hostnames")
+
+if not DATABASES.get("default", {}).get("NAME"):
+    _issues.append("DATABASE_URL (or individual DB vars) must be configured")
+
+# REDIS_URL is resolved into the REDIS_URL module-level variable in settings.py
+if not globals().get("REDIS_URL"):
+    _issues.append("REDIS_URL (or REDIS_TLS_URL / REDIS_HOST) must be configured")
+
+if _issues:
+    for _issue in _issues:
+        print(f"[PRODUCTION STARTUP ERROR] {_issue}", file=_sys.stderr)
+    _sys.exit(1)
