@@ -1,34 +1,12 @@
 {% load i18n %}
 
-<div id="tracking-timeline">
-  {% if timeline_items %}
-    <ul class="timeline timeline-vertical timeline-compact">
-      {% for item in timeline_items %}
-        <li>
-          {% if not forloop.first %}<hr>{% endif %}
-          <div class="timeline-middle">
-            <i class="fa fa-circle text-xs text-secondary"></i>
-          </div>
-          <div class="timeline-end mb-6">
-            {% if item.datetime %}
-              <time class="text-xs text-base-content/50">{{ item.datetime|date:"Y-m-d H:i" }}</time>
-            {% endif %}
-            <div class="font-semibold text-sm">{{ item.title }}</div>
-            {% if item.description %}
-              <div class="text-sm text-base-content/70">{{ item.description }}</div>
-            {% endif %}
-            {% if item.location %}
-              <div class="text-xs text-base-content/50 mt-1">
-                <i class="fa fa-map-marker"></i> {{ item.location }}
-              </div>
-            {% endif %}
-            <div class="text-xs text-base-content/40 mt-1">{{ item.source }}</div>
-          </div>
-          {% if not forloop.last %}<hr>{% endif %}
-        </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p class="text-sm text-base-content/50 py-4">{% translate "No tracking events yet." %}</p>
-  {% endif %}
-</div>
+{% comment %}
+  Tracking timeline partial — delegates to the shared timeline component.
+  Context: timeline_items (list of TrackingTimelineItem)
+{% endcomment %}
+
+{% include "scm/components/timeline.html" with
+  timeline_items=timeline_items
+  wrapper_id="tracking-timeline"
+  empty_message=_("No tracking events yet.")
+%}
