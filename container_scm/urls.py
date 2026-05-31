@@ -30,6 +30,7 @@ from wagtail.documents import urls as wagtaildocs_urls
 
 from apps.subscriptions.urls import team_urlpatterns as subscriptions_team_urls
 from apps.teams.urls import team_urlpatterns as single_team_urls
+from apps.utils.health_views import health, health_db, health_redis
 from apps.web.sitemaps import StaticViewSitemap
 from apps.web.urls import team_urlpatterns as web_team_urls
 
@@ -49,6 +50,10 @@ team_urlpatterns = [
 ]
 
 urlpatterns = [
+    # Health checks — must be first and require no auth
+    path("health/", health, name="health"),
+    path("health/db/", health_db, name="health-db"),
+    path("health/redis/", health_redis, name="health-redis"),
     path("admin/doc/", include("django.contrib.admindocs.urls")),
     # redirect Django admin login to main login page
     path("admin/login/", RedirectView.as_view(pattern_name="account_login")),
