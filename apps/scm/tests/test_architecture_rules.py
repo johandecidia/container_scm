@@ -14,6 +14,7 @@ SCM_APPS = [
     "imports",
     "integrations",
     "analytics",
+    "tracking",
 ]
 
 REQUIRED_FILES = [
