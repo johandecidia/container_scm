@@ -1,0 +1,33 @@
+{% load i18n %}
+
+{% comment %}
+  SCM global search widget.
+  Usage: {% include "scm/components/global_search.html" %}
+  Can be embedded in any SCM page header or nav area.
+{% endcomment %}
+
+<div
+  class="relative"
+  x-data="{ open: false }"
+  @click.outside="open = false"
+>
+  <div class="relative">
+    <i class="fa fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40 text-sm pointer-events-none"></i>
+    <input
+      type="search"
+      name="q"
+      placeholder="{% translate 'Search containers, shipments…' %}"
+      class="input input-bordered input-sm pl-9 w-64"
+      hx-get="{% url 'analytics:search' %}"
+      hx-trigger="keyup changed delay:300ms, search"
+      hx-target="#scm-search-results"
+      hx-swap="outerHTML"
+      @focus="open = true"
+      @keydown.escape="open = false"
+      autocomplete="off"
+    >
+  </div>
+  <div x-show="open" class="absolute top-full mt-1 z-50 w-full">
+    <div id="scm-search-results"></div>
+  </div>
+</div>
