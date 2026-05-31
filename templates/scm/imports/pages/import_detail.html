@@ -1,0 +1,170 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card">
+    {# Header #}
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-3">
+        <h2 class="text-xl font-semibold">
+          {% translate "Import" %} #{{ job.pk }}
+        </h2>
+        {% include "scm/imports/partials/import_status_badge.html" with status=job.status %}
+      </div>
+      <a href="{% url 'imports:list' %}" class="btn btn-ghost btn-sm">{% translate "Back" %}</a>
+    </div>
+
+    {# Summary #}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div class="stat bg-base-200 rounded-box p-3">
+        <div class="stat-title text-xs">{% translate "Type" %}</div>
+        <div class="stat-value text-base">{{ job.get_import_type_display }}</div>
+      </div>
+      <div class="stat bg-base-200 rounded-box p-3">
+        <div class="stat-title text-xs">{% translate "Total Rows" %}</div>
+        <div class="stat-value text-base">{{ summary.total_rows }}</div>
+      </div>
+      <div class="stat bg-base-200 rounded-box p-3">
+        <div class="stat-title text-xs">{% translate "Valid" %}</div>
+        <div class="stat-value text-base text-success">{{ summary.valid_rows }}</div>
+      </div>
+      <div class="stat bg-base-200 rounded-box p-3">
+        <div class="stat-title text-xs">{% translate "Invalid" %}</div>
+        <div class="stat-value text-base text-error">{{ summary.invalid_rows }}</div>
+      </div>
+    </div>
+
+    {# File info #}
+    <div class="text-sm text-base-content/60 mb-4">
+      <span class="font-medium">{% translate "File:" %}</span> {{ job.original_filename }}
+      &nbsp;·&nbsp;
+      <span class="font-medium">{% translate "Uploaded by:" %}</span> {{ job.created_by }}
+      &nbsp;·&nbsp;
+      {{ job.created_at|date:"d M Y H:i" }}
+    </div>
+
+    {# Action buttons #}
+    <div class="flex flex-wrap gap-2 mb-6">
+      {% if can_parse %}
+        <form method="post" action="{% url 'imports:parse' pk=job.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="fa fa-cogs w-4 h-4"></i>
+            {% translate "Parse File" %}
+          </button>
+        </form>
+      {% endif %}
+
+      {% if can_validate %}
+        <form method="post" action="{% url 'imports:validate' pk=job.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="fa fa-check-circle w-4 h-4"></i>
+            {% translate "Validate" %}
+          </button>
+        </form>
+      {% endif %}
+
+      {% if can_confirm %}
+        <form method="post" action="{% url 'imports:confirm' pk=job.pk %}">
+          {% csrf_token %}
+          <input type="hidden" name="update_existing" value="0">
+          <button type="submit" class="btn btn-success btn-sm">
+            <i class="fa fa-check w-4 h-4"></i>
+            {% translate "Confirm Import" %}
+          </button>
+        </form>
+        <form method="post" action="{% url 'imports:confirm' pk=job.pk %}">
+          {% csrf_token %}
+          <input type="hidden" name="update_existing" value="1">
+          <button type="submit" class="btn btn-warning btn-sm">
+            <i class="fa fa-refresh w-4 h-4"></i>
+            {% translate "Confirm Import (update existing)" %}
+          </button>
+        </form>
+      {% endif %}
+    </div>
+
+    {# Errors section #}
+    {% if errors %}
+      <div class="mb-6">
+        <h3 class="font-semibold mb-2">{% translate "Validation Issues" %}</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-xs w-full">
+            <thead>
+              <tr>
+                <th>{% translate "Row" %}</th>
+                <th>{% translate "Severity" %}</th>
+                <th>{% translate "Field" %}</th>
+                <th>{% translate "Message" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for error in errors %}
+                <tr>
+                  <td>{{ error.import_row.row_number|default:"—" }}</td>
+                  <td>
+                    {% if error.severity == "error" %}
+                      <span class="badge badge-error badge-xs">{% translate "Error" %}</span>
+                    {% elif error.severity == "warning" %}
+                      <span class="badge badge-warning badge-xs">{% translate "Warning" %}</span>
+                    {% else %}
+                      <span class="badge badge-info badge-xs">{{ error.severity }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-sm">{{ error.field_name|default:"—" }}</td>
+                  <td class="text-sm">{{ error.message }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    {# Rows preview #}
+    {% if rows %}
+      <h3 class="font-semibold mb-2">{% translate "Rows Preview" %}</h3>
+      <div class="overflow-x-auto">
+        <table class="table table-xs w-full">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>{% translate "Status" %}</th>
+              <th>{% translate "Data" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr class="{% if row.status == 'invalid' %}bg-error/10{% elif row.status == 'imported' %}bg-success/10{% endif %}">
+                <td>{{ row.row_number }}</td>
+                <td>
+                  {% if row.status == "valid" %}
+                    <span class="badge badge-success badge-xs">{% translate "Valid" %}</span>
+                  {% elif row.status == "invalid" %}
+                    <span class="badge badge-error badge-xs">{% translate "Invalid" %}</span>
+                  {% elif row.status == "imported" %}
+                    <span class="badge badge-success badge-xs">{% translate "Imported" %}</span>
+                  {% elif row.status == "skipped" %}
+                    <span class="badge badge-warning badge-xs">{% translate "Skipped" %}</span>
+                  {% else %}
+                    <span class="badge badge-ghost badge-xs">{{ row.status }}</span>
+                  {% endif %}
+                </td>
+                <td class="text-xs text-base-content/70">
+                  {% if row.validated_data %}
+                    {{ row.validated_data|truncatechars:120 }}
+                  {% elif row.mapped_data %}
+                    {{ row.mapped_data|truncatechars:120 }}
+                  {% else %}
+                    {{ row.raw_data|truncatechars:120 }}
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

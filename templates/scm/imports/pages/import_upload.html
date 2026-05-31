@@ -1,0 +1,42 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card max-w-lg">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-semibold">{% translate "New Import" %}</h2>
+      <a href="{% url 'imports:list' %}" class="btn btn-ghost btn-sm">
+        {% translate "Back" %}
+      </a>
+    </div>
+
+    <form method="post" enctype="multipart/form-data" class="space-y-4">
+      {% csrf_token %}
+      {% for field in form %}
+        <div class="form-control">
+          <label class="label" for="{{ field.id_for_label }}">
+            <span class="label-text">{{ field.label }}</span>
+          </label>
+          {{ field }}
+          {% if field.help_text %}
+            <label class="label">
+              <span class="label-text-alt text-base-content/60">{{ field.help_text }}</span>
+            </label>
+          {% endif %}
+          {% for error in field.errors %}
+            <label class="label">
+              <span class="label-text-alt text-error">{{ error }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      {% endfor %}
+      <div class="flex justify-end gap-2 pt-2">
+        <a href="{% url 'imports:list' %}" class="btn btn-ghost btn-sm">{% translate "Cancel" %}</a>
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="fa fa-upload w-4 h-4"></i>
+          {% translate "Upload" %}
+        </button>
+      </div>
+    </form>
+  </section>
+{% endblock %}
