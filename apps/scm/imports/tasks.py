@@ -2,20 +2,20 @@ from celery import shared_task
 
 
 @shared_task
-def process_import_job(job_id: int) -> None:
-    """Background task to process a data import job."""
+def async_parse_import_job(job_id: int) -> None:
+    """Parse an import job asynchronously (optional background alternative to inline parsing)."""
     from .models import ImportJob
+    from .services import parse_import_job
 
     job = ImportJob.objects.get(pk=job_id)
-    job.status = ImportJob.Status.PROCESSING
-    job.save(update_fields=["status", "updated_at"])
+    parse_import_job(job)
 
-    try:
-        # TODO: implement import processing logic
-        job.status = ImportJob.Status.COMPLETED
-        job.save(update_fields=["status", "updated_at"])
-    except Exception as exc:
-        job.status = ImportJob.Status.FAILED
-        job.error_message = str(exc)
-        job.save(update_fields=["status", "error_message", "updated_at"])
-        raise
+
+@shared_task
+def async_validate_import_job(job_id: int) -> None:
+    """Validate an import job asynchronously."""
+    from .models import ImportJob
+    from .services import validate_import_job
+
+    job = ImportJob.objects.get(pk=job_id)
+    validate_import_job(job)
