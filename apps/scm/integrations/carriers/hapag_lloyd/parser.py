@@ -1,9 +1,11 @@
-from apps.scm.integrations.carriers.base import TrackingParser
+from apps.scm.integrations.carriers.base import BaseCarrierParser
 
 
-class HapagLloydTrackingParser(TrackingParser):
+class HapagLloydParser(BaseCarrierParser):
     """Hapag-Lloyd payload parser (placeholder — full implementation pending API access)."""
 
-    def parse_events(self, payload: dict) -> list[dict]:
+    provider_code = "hapag_lloyd"
+
+    def parse_tracking_events(self, raw_payload: dict) -> list[dict]:
         # TODO: parse Hapag-Lloyd API response into normalised event dicts
-        return []
+        raise NotImplementedError("Hapag-Lloyd parser not yet implemented")

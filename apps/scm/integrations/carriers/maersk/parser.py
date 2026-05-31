@@ -1,9 +1,11 @@
-from apps.scm.integrations.carriers.base import TrackingParser
+from apps.scm.integrations.carriers.base import BaseCarrierParser
 
 
-class MaerskTrackingParser(TrackingParser):
-    """Maersk payload parser (placeholder — full implementation pending API access)."""
+class MaerskParser(BaseCarrierParser):
+    """Maersk payload parser (placeholder — DCSA-style; full implementation pending API access)."""
 
-    def parse_events(self, payload: dict) -> list[dict]:
-        # TODO: parse Maersk API response into normalised event dicts
-        return []
+    provider_code = "maersk"
+
+    def parse_tracking_events(self, raw_payload: dict) -> list[dict]:
+        # TODO: parse Maersk DCSA-style API response into normalised event dicts
+        raise NotImplementedError("Maersk parser not yet implemented")

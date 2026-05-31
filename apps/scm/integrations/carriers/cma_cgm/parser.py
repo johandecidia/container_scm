@@ -1,9 +1,11 @@
-from apps.scm.integrations.carriers.base import TrackingParser
+from apps.scm.integrations.carriers.base import BaseCarrierParser
 
 
-class CmaCgmTrackingParser(TrackingParser):
+class CmaCgmParser(BaseCarrierParser):
     """CMA CGM payload parser (placeholder — full implementation pending API access)."""
 
-    def parse_events(self, payload: dict) -> list[dict]:
+    provider_code = "cma_cgm"
+
+    def parse_tracking_events(self, raw_payload: dict) -> list[dict]:
         # TODO: parse CMA CGM API response into normalised event dicts
-        return []
+        raise NotImplementedError("CMA CGM parser not yet implemented")
