@@ -118,6 +118,14 @@ PROJECT_APPS = [
     "apps.chat",
     "apps.ai.apps.AiConfig",
     "apps.group_chat",
+    # SCM domain apps
+    "apps.scm.containers.apps.ContainersConfig",
+    "apps.scm.shipments.apps.ShipmentsConfig",
+    "apps.scm.rates.apps.RatesConfig",
+    "apps.scm.imports.apps.ImportsConfig",
+    "apps.scm.integrations.apps.IntegrationsConfig",
+    "apps.scm.analytics.apps.AnalyticsConfig",
+    "apps.scm.tracking.apps.TrackingConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + PEGASUS_APPS + PROJECT_APPS + WAGTAIL_APPS
@@ -387,6 +395,10 @@ STORAGES = {
     },
 }
 
+# CompressedManifestStaticFilesStorage requires a pre-built manifest which doesn't exist during tests
+if "test" in sys.argv:
+    STORAGES["staticfiles"]["BACKEND"] = "django.contrib.staticfiles.storage.StaticFilesStorage"
+
 MEDIA_ROOT = BASE_DIR / "media"
 MEDIA_URL = "/media/"
 
@@ -562,8 +574,8 @@ PROJECT_METADATA = {
     "NAME": gettext_lazy("Container Orchistration Layer"),
     "URL": "http://ratecore.io",
     "DESCRIPTION": gettext_lazy(
-        "Container Supply Chain Layer is an operational platform built for container trading, depot operations, and inbound logistics management.  The system connects procurement, shipment tracking, inventory, landed cost, reservation management, and dispatch planning into one unified operational layer. It provides real-time visibility into what containers are ordered, in transit, available, reserved, and ready for delivery.  Designed to integrate with ERP systems, depot systems, and shipping line tracki"
-    ),  # noqa: E501
+        "Container Supply Chain Layer is an operational platform built for container trading, depot operations, and inbound logistics management.  The system connects procurement, shipment tracking, inventory, landed cost, reservation management, and dispatch planning into one unified operational layer. It provides real-time visibility into what containers are ordered, in transit, available, reserved, and ready for delivery.  Designed to integrate with ERP systems, depot systems, and shipping line tracki"  # noqa: E501
+    ),
     "IMAGE": "https://upload.wikimedia.org/wikipedia/commons/2/20/PEO-pegasus_black.svg",
     "KEYWORDS": "SaaS, django",
     "CONTACT_EMAIL": "johan@decidia.se",
@@ -572,7 +584,7 @@ PROJECT_METADATA = {
 # set this to True in production to have URLs generated with https instead of http
 USE_HTTPS_IN_ABSOLUTE_URLS = env.bool("USE_HTTPS_IN_ABSOLUTE_URLS", default=False)
 
-ADMINS = ["johan@decidia.se"]
+ADMINS = [("Johan", "johan@decidia.se")]
 
 # Add your google analytics ID to the environment to connect to Google Analytics
 GOOGLE_ANALYTICS_ID = env("GOOGLE_ANALYTICS_ID", default="")
@@ -626,11 +638,14 @@ SENTRY_DSN = env("SENTRY_DSN", default="")
 
 if SENTRY_DSN:
     import sentry_sdk
+    from sentry_sdk.integrations.celery import CeleryIntegration
     from sentry_sdk.integrations.django import DjangoIntegration
 
     sentry_sdk.init(
         dsn=SENTRY_DSN,
-        integrations=[DjangoIntegration()],
+        integrations=[DjangoIntegration(), CeleryIntegration()],
+        environment=env("SENTRY_ENVIRONMENT", default="production"),
+        send_default_pii=False,
     )
 
 LOGGING = {

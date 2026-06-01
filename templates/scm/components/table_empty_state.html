@@ -1,0 +1,16 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/components/table_empty_state.html" with message=_("No items found.") action_url=url action_label=_("Add item") %}
+  action_url and action_label are optional.
+{% endcomment %}
+
+<div class="flex flex-col items-center justify-center py-12 text-base-content/50">
+  <i class="fa fa-inbox text-4xl mb-3"></i>
+  <p class="text-sm">{{ message|default:_("No items found.") }}</p>
+  {% if action_url %}
+    <a href="{{ action_url }}" class="btn btn-outline btn-sm mt-4">
+      {% if action_label %}{{ action_label }}{% else %}{% translate "Add item" %}{% endif %}
+    </a>
+  {% endif %}
+</div>

@@ -1,0 +1,31 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold">{% translate "Containers" %}</h1>
+      <p class="text-sm text-base-content/60 mt-1">{% translate "Manage your container fleet." %}</p>
+    </div>
+    <button
+      class="btn btn-primary btn-sm"
+      hx-get="{% url 'containers:create' %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      <i class="fa fa-plus w-4 h-4"></i>
+      {% translate "Add Container" %}
+    </button>
+  </div>
+
+  <section class="app-card">
+    {% include "scm/containers/partials/container_filters.html" %}
+
+    <div id="container-table">
+      {% include "scm/containers/partials/container_table.html" %}
+    </div>
+  </section>
+
+  {# Modal mount point #}
+  <div id="modal-container"></div>
+{% endblock %}

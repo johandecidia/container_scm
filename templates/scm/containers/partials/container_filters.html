@@ -1,0 +1,53 @@
+{% load i18n %}
+
+<form
+  hx-get="{% url 'containers:list' %}"
+  hx-target="#container-table"
+  hx-swap="outerHTML"
+  hx-trigger="change, keyup delay:300ms from:input[type=search]"
+  hx-push-url="true"
+  class="flex flex-wrap gap-2 mb-4"
+>
+  <input
+    type="search"
+    name="search"
+    value="{{ request.GET.search }}"
+    placeholder="{% translate 'Search containers…' %}"
+    class="input input-bordered input-sm w-full max-w-xs"
+  >
+
+  <select name="status" class="select select-bordered select-sm">
+    <option value="">{% translate "All statuses" %}</option>
+    <option value="AVAILABLE" {% if request.GET.status == "AVAILABLE" %}selected{% endif %}>{% translate "Available" %}</option>
+    <option value="BOOKED" {% if request.GET.status == "BOOKED" %}selected{% endif %}>{% translate "Booked" %}</option>
+    <option value="IN_TRANSIT" {% if request.GET.status == "IN_TRANSIT" %}selected{% endif %}>{% translate "In Transit" %}</option>
+    <option value="REPAIR" {% if request.GET.status == "REPAIR" %}selected{% endif %}>{% translate "Under Repair" %}</option>
+    <option value="DECOMMISSIONED" {% if request.GET.status == "DECOMMISSIONED" %}selected{% endif %}>{% translate "Decommissioned" %}</option>
+  </select>
+
+  <select name="condition" class="select select-bordered select-sm">
+    <option value="">{% translate "All conditions" %}</option>
+    <option value="NEW" {% if request.GET.condition == "NEW" %}selected{% endif %}>{% translate "New" %}</option>
+    <option value="GOOD" {% if request.GET.condition == "GOOD" %}selected{% endif %}>{% translate "Good" %}</option>
+    <option value="FAIR" {% if request.GET.condition == "FAIR" %}selected{% endif %}>{% translate "Fair" %}</option>
+    <option value="DAMAGED" {% if request.GET.condition == "DAMAGED" %}selected{% endif %}>{% translate "Damaged" %}</option>
+  </select>
+
+  <select name="equipment_type" class="select select-bordered select-sm">
+    <option value="">{% translate "All types" %}</option>
+    {% for et in equipment_types %}
+      <option value="{{ et.iso_code }}" {% if request.GET.equipment_type == et.iso_code %}selected{% endif %}>
+        {{ et.description }}
+      </option>
+    {% endfor %}
+  </select>
+
+  <select name="sort" class="select select-bordered select-sm">
+    <option value="newest" {% if request.GET.sort == "newest" or not request.GET.sort %}selected{% endif %}>{% translate "Newest" %}</option>
+    <option value="oldest" {% if request.GET.sort == "oldest" %}selected{% endif %}>{% translate "Oldest" %}</option>
+    <option value="container_id" {% if request.GET.sort == "container_id" %}selected{% endif %}>{% translate "Container ID" %}</option>
+    <option value="status" {% if request.GET.sort == "status" %}selected{% endif %}>{% translate "Status" %}</option>
+    <option value="condition" {% if request.GET.sort == "condition" %}selected{% endif %}>{% translate "Condition" %}</option>
+    <option value="equipment_type" {% if request.GET.sort == "equipment_type" %}selected{% endif %}>{% translate "Equipment type" %}</option>
+  </select>
+</form>

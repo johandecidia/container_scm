@@ -1,0 +1,127 @@
+from typing import cast
+
+from django import forms
+from django.utils.translation import gettext_lazy as _
+
+from .models import Container, EquipmentType
+from .utils import parse_container_id, validate_container_id
+
+
+class ContainerForm(forms.Form):
+    """Form for creating or editing a container.
+
+    The container's four ID components are entered via a single ``container_id_input``
+    field (e.g. ``MSCU1234567``) which is parsed and validated on clean.
+    """
+
+    container_id_input = forms.CharField(
+        label=_("Container ID"),
+        max_length=11,
+        help_text=_("Enter the full container ID, e.g. MSCU1234567"),
+        widget=forms.TextInput(attrs={"placeholder": "MSCU1234567", "class": "input input-bordered w-full"}),
+    )
+    equipment_type = forms.ModelChoiceField(
+        label=_("Equipment type"),
+        queryset=EquipmentType.objects.filter(is_active=True),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    status = forms.ChoiceField(
+        label=_("Status"),
+        choices=cast(list[tuple[str, str]], Container._meta.get_field("status").choices),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    condition = forms.ChoiceField(
+        label=_("Condition"),
+        choices=cast(list[tuple[str, str]], Container._meta.get_field("condition").choices),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    color_code = forms.CharField(
+        label=_("Color code"),
+        max_length=50,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+    color_system = forms.ChoiceField(
+        label=_("Color system"),
+        choices=cast(list[tuple[str, str]], Container._meta.get_field("color_system").choices),
+        required=False,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    manufacture_date = forms.DateField(
+        label=_("Manufacture date"),
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date", "class": "input input-bordered w-full"}),
+    )
+    manufacturer = forms.CharField(
+        label=_("Manufacturer"),
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+    manufacturer_id = forms.CharField(
+        label=_("Manufacturer ID"),
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+    current_location = forms.CharField(
+        label=_("Current location"),
+        max_length=200,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+    notes = forms.CharField(
+        label=_("Notes"),
+        required=False,
+        widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 3}),
+    )
+
+    def __init__(self, *args, instance: Container | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._instance = instance
+        if instance is not None:
+            self.fields["container_id_input"].initial = instance.container_id
+            self.fields["equipment_type"].initial = instance.equipment_type_id
+            self.fields["status"].initial = instance.status
+            self.fields["condition"].initial = instance.condition
+            self.fields["color_code"].initial = instance.color_code
+            self.fields["color_system"].initial = instance.color_system
+            self.fields["manufacture_date"].initial = instance.manufacture_date
+            self.fields["manufacturer"].initial = instance.manufacturer
+            self.fields["manufacturer_id"].initial = instance.manufacturer_id
+            self.fields["current_location"].initial = instance.current_location
+            self.fields["notes"].initial = instance.notes
+
+    def clean_container_id_input(self) -> dict:
+        raw = self.cleaned_data["container_id_input"]
+        parts = parse_container_id(raw)
+        try:
+            validate_container_id(
+                parts["owner_code"],
+                parts["category_id"],
+                parts["serial_number"],
+                parts["check_digit"],
+            )
+        except forms.ValidationError:
+            raise
+        return parts
+
+    def get_container_data(self) -> dict:
+        """Return a dict suitable for passing to create_container / update_container."""
+        parts = self.cleaned_data["container_id_input"]
+        return {
+            "owner_code": parts["owner_code"],
+            "category_id": parts["category_id"],
+            "serial_number": parts["serial_number"],
+            "check_digit": parts["check_digit"],
+            "equipment_type": self.cleaned_data["equipment_type"],
+            "status": self.cleaned_data["status"],
+            "condition": self.cleaned_data["condition"],
+            "color_code": self.cleaned_data.get("color_code", ""),
+            "color_system": self.cleaned_data.get("color_system", ""),
+            "manufacture_date": self.cleaned_data.get("manufacture_date"),
+            "manufacturer": self.cleaned_data.get("manufacturer", ""),
+            "manufacturer_id": self.cleaned_data.get("manufacturer_id", ""),
+            "current_location": self.cleaned_data.get("current_location", ""),
+            "notes": self.cleaned_data.get("notes", ""),
+        }

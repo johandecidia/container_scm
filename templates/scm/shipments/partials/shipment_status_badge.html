@@ -1,0 +1,23 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/shipments/partials/shipment_status_badge.html" with status=shipment.status %}
+{% endcomment %}
+
+{% if status == "DRAFT" %}
+  <span class="badge badge-ghost badge-sm">{% translate "Draft" %}</span>
+{% elif status == "BOOKED" %}
+  <span class="badge badge-info badge-sm">{% translate "Booked" %}</span>
+{% elif status == "IN_TRANSIT" %}
+  <span class="badge badge-warning badge-sm">{% translate "In Transit" %}</span>
+{% elif status == "ARRIVED" %}
+  <span class="badge badge-success badge-sm">{% translate "Arrived" %}</span>
+{% elif status == "DELIVERED" %}
+  <span class="badge badge-success badge-sm">{% translate "Delivered" %}</span>
+{% elif status == "CANCELLED" %}
+  <span class="badge badge-error badge-sm">{% translate "Cancelled" %}</span>
+{% elif status %}
+  <span class="badge badge-ghost badge-sm">{{ status }}</span>
+{% else %}
+  <span class="text-base-content/40 text-sm">—</span>
+{% endif %}

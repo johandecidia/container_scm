@@ -1,0 +1,21 @@
+{% load i18n %}
+{% comment %}
+  Usage: {% include "scm/imports/partials/import_status_badge.html" with status=job.status %}
+{% endcomment %}
+{% if status == "uploaded" %}
+  <span class="badge badge-neutral badge-sm">{% translate "Uploaded" %}</span>
+{% elif status == "parsing" or status == "validating" or status == "importing" %}
+  <span class="badge badge-info badge-sm">{% translate status %}</span>
+{% elif status == "parsed" %}
+  <span class="badge badge-info badge-sm">{% translate "Parsed" %}</span>
+{% elif status == "validated" %}
+  <span class="badge badge-warning badge-sm">{% translate "Validated" %}</span>
+{% elif status == "completed" %}
+  <span class="badge badge-success badge-sm">{% translate "Completed" %}</span>
+{% elif status == "failed" %}
+  <span class="badge badge-error badge-sm">{% translate "Failed" %}</span>
+{% elif status == "cancelled" %}
+  <span class="badge badge-ghost badge-sm">{% translate "Cancelled" %}</span>
+{% else %}
+  <span class="badge badge-ghost badge-sm">{{ status }}</span>
+{% endif %}
