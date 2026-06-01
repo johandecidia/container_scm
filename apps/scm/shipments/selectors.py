@@ -77,6 +77,77 @@ class ShipmentWorkspace:
     latest_tracking_event: object = None  # TrackingEvent | None
 
 
+def get_shipment_purchase_orders(team: Team, shipment: Shipment):
+    """Return purchase orders linked to this shipment via container → supplier delivery lines."""
+    from apps.scm.procurement.models import PurchaseOrder
+
+    container_ids = ShipmentContainer.objects.filter(shipment=shipment, shipment__team=team).values_list(
+        "container_id", flat=True
+    )
+    return (
+        PurchaseOrder.objects.filter(
+            team=team,
+            supplier_deliveries__lines__container_id__in=container_ids,
+        )
+        .distinct()
+        .order_by("-order_date", "po_number")
+    )
+
+
+def get_shipment_supplier_deliveries(team: Team, shipment: Shipment):
+    """Return supplier deliveries linked to this shipment via container."""
+    from apps.scm.supplier_deliveries.models import SupplierDelivery
+
+    container_ids = ShipmentContainer.objects.filter(shipment=shipment, shipment__team=team).values_list(
+        "container_id", flat=True
+    )
+    return (
+        SupplierDelivery.objects.filter(
+            team=team,
+            lines__container_id__in=container_ids,
+        )
+        .select_related("purchase_order")
+        .distinct()
+        .order_by("-created_at")
+    )
+
+
+def get_shipment_detail_context(team: Team, shipment_id: int) -> dict:
+    """Return all context data needed for the shipment detail view.
+
+    Gathers: shipment, containers, tracking events, purchase orders,
+    supplier deliveries, timeline events — all team-scoped.
+    """
+    from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
+
+    shipment = get_team_shipment(team=team, shipment_id=shipment_id)
+    containers = list(get_shipment_containers(team=team, shipment=shipment))
+    timeline_events = list(get_shipment_events(team=team, shipment=shipment))
+    tracking_subscriptions = list(
+        TrackingSubscription.objects.filter(team=team, shipment=shipment)
+        .select_related("provider")
+        .order_by("-created_at")
+    )
+    latest_tracking_event = (
+        TrackingEvent.objects.filter(team=team, shipment=shipment)
+        .select_related("provider")
+        .order_by("-event_datetime", "-created_at")
+        .first()
+    )
+    purchase_orders = list(get_shipment_purchase_orders(team=team, shipment=shipment))
+    supplier_deliveries = list(get_shipment_supplier_deliveries(team=team, shipment=shipment))
+
+    return {
+        "shipment": shipment,
+        "containers": containers,
+        "tracking_subscriptions": tracking_subscriptions,
+        "latest_tracking_event": latest_tracking_event,
+        "purchase_orders": purchase_orders,
+        "supplier_deliveries": supplier_deliveries,
+        "timeline_events": timeline_events,
+    }
+
+
 def get_shipment_workspace(team: Team, shipment: Shipment) -> ShipmentWorkspace:
     """Gather all workspace data for a shipment detail view."""
     from apps.scm.tracking.models import TrackingEvent, TrackingSubscription

@@ -81,7 +81,7 @@
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    {# Left column: details + containers #}
+    {# Left column: details + containers + POs + supplier deliveries #}
     <div class="lg:col-span-2 flex flex-col gap-6">
 
       {# Shipment details #}
@@ -156,6 +156,51 @@
         </div>
         {% include "scm/shipments/partials/shipment_container_list.html" %}
       </section>
+      {# Purchase Orders section #}
+      {% if purchase_orders %}
+        <section class="app-card">
+          <h2 class="text-lg font-semibold mb-4">{% translate "Purchase Orders" %}</h2>
+          <ul class="divide-y divide-base-200">
+            {% for po in purchase_orders %}
+              <li class="py-3 flex items-center justify-between gap-2">
+                <div>
+                  <p class="font-medium text-sm font-mono">{{ po.po_number }}</p>
+                  <p class="text-xs text-base-content/60">{{ po.supplier_name }}</p>
+                </div>
+                <div class="text-right">
+                  <span class="badge badge-sm badge-outline">{{ po.get_status_display }}</span>
+                  {% if po.expected_receipt_date %}
+                    <p class="text-xs text-base-content/50 mt-1">{% translate "Expected" %} {{ po.expected_receipt_date|date:"Y-m-d" }}</p>
+                  {% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+
+      {# Supplier Deliveries section #}
+      {% if supplier_deliveries %}
+        <section class="app-card">
+          <h2 class="text-lg font-semibold mb-4">{% translate "Supplier Deliveries" %}</h2>
+          <ul class="divide-y divide-base-200">
+            {% for delivery in supplier_deliveries %}
+              <li class="py-3 flex items-center justify-between gap-2">
+                <div>
+                  <p class="font-medium text-sm font-mono">{{ delivery.delivery_reference }}</p>
+                  <p class="text-xs text-base-content/60">{{ delivery.purchase_order.po_number }}</p>
+                </div>
+                <div class="text-right">
+                  <span class="badge badge-sm badge-outline">{{ delivery.get_status_display }}</span>
+                  {% if delivery.planned_arrival_date %}
+                    <p class="text-xs text-base-content/50 mt-1">{% translate "ETA" %} {{ delivery.planned_arrival_date|date:"Y-m-d" }}</p>
+                  {% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
     </div>
 
     {# Right column: timeline + tracking #}
