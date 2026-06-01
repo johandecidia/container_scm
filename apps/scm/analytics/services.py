@@ -62,6 +62,8 @@ def get_average_transit_days(team: Team) -> Decimal | None:
     total_days = 0.0
     count = 0
     for s in shipments:
+        if s.actual_arrival_at is None or s.actual_departure_at is None:
+            continue
         delta = s.actual_arrival_at - s.actual_departure_at
         total_days += delta.total_seconds() / 86400
         count += 1

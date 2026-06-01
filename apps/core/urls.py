@@ -1,3 +1,5 @@
+from django.urls import URLPattern, URLResolver
+
 app_name = "core"
 
-urlpatterns = []
+urlpatterns: list[URLPattern | URLResolver] = []

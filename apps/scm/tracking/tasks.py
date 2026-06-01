@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from celery import shared_task
 
@@ -35,7 +36,7 @@ def cleanup_old_tracking_raw_payloads(days: int = 90) -> int:
 
     from .models import TrackingRawPayload
 
-    cutoff = timezone.now() - timezone.timedelta(days=days)
+    cutoff = timezone.now() - timedelta(days=days)
     deleted_count, _ = TrackingRawPayload.objects.filter(received_at__lt=cutoff).delete()
     logger.info("cleanup_old_tracking_raw_payloads: deleted %d records older than %d days.", deleted_count, days)
     return deleted_count

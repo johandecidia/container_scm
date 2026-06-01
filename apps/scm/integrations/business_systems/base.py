@@ -1,5 +1,6 @@
 # Base classes for business system integrations.
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -41,8 +42,8 @@ class BaseBusinessSystemMapper:
 
     system_code: str = ""
 
-    def map_sales_order(self, raw: dict) -> dict:
+    def map_sales_order(self, raw: dict) -> Any:
         raise NotImplementedError(f"{self.__class__.__name__} must implement map_sales_order()")
 
-    def map_purchase_order(self, raw: dict) -> dict:
+    def map_purchase_order(self, raw: dict) -> Any:
         raise NotImplementedError(f"{self.__class__.__name__} must implement map_purchase_order()")

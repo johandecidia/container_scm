@@ -36,6 +36,8 @@ def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bo
     if existing_qs.exists():
         if update_existing:
             existing = existing_qs.first()
+            if existing is None:
+                return "skipped"
             existing.equipment_type = equipment_type
             if data.get("status"):
                 existing.status = data["status"]

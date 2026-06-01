@@ -1,7 +1,10 @@
 """Tests for import file upload (forms and services)."""
 
+from typing import cast
+
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.utils.datastructures import MultiValueDict
 
 from apps.scm.imports.forms import ImportUploadForm
 from apps.scm.imports.models import ImportJob
@@ -15,7 +18,7 @@ class ImportUploadFormTest(TestCase):
         f = SimpleUploadedFile(filename, content)
         return ImportUploadForm(
             data={"import_type": import_type},
-            files={"file": f},
+            files=cast(MultiValueDict, {"file": f}),
         )
 
     def test_valid_csv_accepted(self):

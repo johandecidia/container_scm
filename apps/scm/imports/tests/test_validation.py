@@ -3,13 +3,15 @@
 from django.test import TestCase
 
 from apps.scm.containers.models import Container
-from apps.scm.imports.models import ImportError, ImportRow
+from apps.scm.imports.models import ImportError, ImportJob, ImportRow
 from apps.scm.imports.validators import validate_import_row
 
 from .helpers import CAT, CHECK, CONTAINER_ID, OWNER, SERIAL, make_equipment_type, make_import_job, make_team, make_user
 
 
 class ContainerRowValidationTest(TestCase):
+    job: ImportJob
+
     @classmethod
     def setUpTestData(cls):
         cls.team = make_team(slug="val-team")

@@ -70,6 +70,9 @@ class ContainerModelInheritanceTest(TestCase):
 
 
 class ContainerModelTest(TestCase):
+    team: Team
+    et: EquipmentType
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="Model Team", slug="model-team")

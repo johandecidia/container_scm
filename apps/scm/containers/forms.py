@@ -1,3 +1,5 @@
+from typing import cast
+
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
@@ -25,12 +27,12 @@ class ContainerForm(forms.Form):
     )
     status = forms.ChoiceField(
         label=_("Status"),
-        choices=Container._meta.get_field("status").choices,
+        choices=cast(list[tuple[str, str]], Container._meta.get_field("status").choices),
         widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
     condition = forms.ChoiceField(
         label=_("Condition"),
-        choices=Container._meta.get_field("condition").choices,
+        choices=cast(list[tuple[str, str]], Container._meta.get_field("condition").choices),
         widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
     color_code = forms.CharField(
@@ -41,7 +43,7 @@ class ContainerForm(forms.Form):
     )
     color_system = forms.ChoiceField(
         label=_("Color system"),
-        choices=Container._meta.get_field("color_system").choices,
+        choices=cast(list[tuple[str, str]], Container._meta.get_field("color_system").choices),
         required=False,
         widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )

@@ -56,6 +56,9 @@ class CreateContainerTest(TestCase):
 
 
 class UpdateContainerTest(TestCase):
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="Upd Team", slug="upd-team")

@@ -60,6 +60,8 @@ def make_xlsx_file(rows: list[dict], filename: str = "test.xlsx") -> SimpleUploa
 
     wb = openpyxl.Workbook()
     ws = wb.active
+    if ws is None:
+        raise RuntimeError("openpyxl Workbook has no active sheet")
     if rows:
         headers = list(rows[0].keys())
         ws.append(headers)
@@ -80,7 +82,7 @@ def make_import_job(team: Team, user: CustomUser, import_type: str = ImportJob.I
         team=team,
         created_by=user,
         file=f,
-        original_filename=f.name,
+        original_filename=f.name or "",
         import_type=import_type,
         status=ImportJob.Status.UPLOADED,
     )

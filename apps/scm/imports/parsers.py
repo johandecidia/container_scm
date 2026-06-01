@@ -27,6 +27,8 @@ def _parse_xlsx(file_obj) -> list[dict[str, Any]]:
 
     wb = openpyxl.load_workbook(file_obj, read_only=True, data_only=True)
     ws = wb.active
+    if ws is None:
+        return []
     all_rows = list(ws.iter_rows(values_only=True))
     if not all_rows:
         return []

@@ -1,8 +1,15 @@
 # Shipment services — all business logic and write operations.
 # Views must not contain business logic; call these functions instead.
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
 
 from apps.scm.containers.models import Container
 from apps.teams.models import Team
@@ -137,7 +144,7 @@ def remove_container_from_shipment(
 def create_shipment_event(
     shipment: Shipment,
     event_type: str,
-    description: str,
+    description: StrOrPromise,
     user: CustomUser | None = None,
     metadata: dict | None = None,
     occurred_at=None,
