@@ -2,6 +2,8 @@
 # Each carrier module must implement BaseCarrierClient and a parser.
 from dataclasses import dataclass, field
 
+from .schemas import ContainerDiscoveryResult
+
 
 @dataclass
 class CarrierCapability:
@@ -17,6 +19,7 @@ class CarrierCapability:
     supports_dcsa: bool = False
     supports_schedules: bool = False
     supports_booking: bool = False
+    supports_discovery: bool = False
     requires_customer_approval: bool = False
     requires_account_number: bool = False
 
@@ -55,6 +58,22 @@ class BaseCarrierClient:
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement fetch_tracking()")
 
+    def discover_containers(
+        self,
+        *,
+        booking_number: str | None = None,
+        bill_of_lading_number: str | None = None,
+        shipment_reference: str | None = None,
+    ) -> list[ContainerDiscoveryResult]:
+        """Discover containers for a shipment via booking/BL/reference.
+
+        At least one reference must be provided.
+        Returns a list of ContainerDiscoveryResult — may be empty if no containers found.
+        Use an empty list for "not found"; never return None.
+        Raise an explicit exception on network/auth failures — never fail silently.
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} must implement discover_containers()")
+
 
 class BaseCarrierParser:
     """Base class for all carrier payload parsers.
@@ -86,24 +105,16 @@ class BaseCarrierParser:
 
 
 class CarrierDiscoveryProvider:
-    """Interface for carrier container discovery.
+    """Deprecated — use BaseCarrierClient.discover_containers() in new code.
 
-    Implementations search a carrier's API for a given container number.
-    Each supported carrier (Maersk, MSC, Hapag-Lloyd, etc.) will implement this.
+    Legacy interface for carrier container discovery.
     """
 
     provider_code: str = ""
     provider_name: str = ""
 
     def discover_container(self, container_number: str):
-        """Search the carrier for a container number.
-
-        Returns a ContainerDiscoveryResult if the container is found, or None
-        if the container is not known to this carrier.
-
-        Raise an explicit exception on network/auth failures — never return None
-        to signal an error; None means "not found at this carrier".
-        """
+        """Deprecated — search by container number was replaced by shipment-reference-based discovery."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement discover_container()")
 
 
