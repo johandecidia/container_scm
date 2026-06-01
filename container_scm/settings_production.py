@@ -14,6 +14,7 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # Django security checklist settings.
 # More details here: https://docs.djangoproject.com/en/stable/howto/deployment/checklist/
 SECURE_SSL_REDIRECT = True
+SECURE_REDIRECT_EXEMPT = [r"^health/"]
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
@@ -29,6 +30,8 @@ USE_HTTPS_IN_ABSOLUTE_URLS = True
 
 # If you don't want to use environment variables to set production hosts you can add them here
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
+# Railway healthchecks use this hostname — always allow it.
+ALLOWED_HOSTS.append("healthcheck.railway.app")
 
 CSRF_TRUSTED_ORIGINS = env.list(
     "CSRF_TRUSTED_ORIGINS",
@@ -63,7 +66,7 @@ import sys as _sys  # noqa: E402
 
 _issues: list[str] = []
 
-if not ALLOWED_HOSTS:
+if not env.list("ALLOWED_HOSTS", default=[]):
     _issues.append("ALLOWED_HOSTS must be set to one or more hostnames")
 
 if not DATABASES.get("default", {}).get("NAME"):
