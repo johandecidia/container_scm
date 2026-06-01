@@ -84,3 +84,66 @@ def retry_failed_integration_request(self, integration_id: int) -> None:
         integration.provider_code,
     )
     # TODO: implement per-carrier retry logic
+
+
+@shared_task
+def discover_containers_for_open_shipments_task(team_id: int) -> dict:
+    """Discover containers for all open shipments that lack containers.
+
+    Targets shipments that:
+      - belong to the given team
+      - are not in DELIVERED or CANCELLED status
+      - have no containers linked
+      - have at least one discovery reference (carrier_booking_reference,
+        bill_of_lading_number, or reference)
+
+    Returns a summary dict with total counts across all shipments processed.
+    """
+    from django.db.models import Q
+
+    from apps.scm.shipments.models import Shipment
+
+    from .carriers.discovery_service import discover_containers_for_shipment
+
+    shipments = (
+        Shipment.objects.filter(team_id=team_id)
+        .exclude(status__in=[Shipment.Status.DELIVERED, Shipment.Status.CANCELLED])
+        .filter(containers__isnull=True)
+        .filter(
+            Q(carrier_booking_reference__gt="") | Q(bill_of_lading_number__gt="") | Q(reference__gt=""),
+        )
+        .distinct()
+    )
+
+    totals = {
+        "shipments_processed": 0,
+        "shipments_skipped": 0,
+        "discovered_count": 0,
+        "containers_created": 0,
+        "containers_linked": 0,
+        "subscriptions_created": 0,
+        "errors": [],
+    }
+
+    for shipment in shipments:
+        summary = discover_containers_for_shipment(shipment)
+        if summary.get("skipped"):
+            totals["shipments_skipped"] += 1
+            continue
+
+        totals["shipments_processed"] += 1
+        totals["discovered_count"] += summary["discovered_count"]
+        totals["containers_created"] += summary["containers_created"]
+        totals["containers_linked"] += summary["containers_linked"]
+        totals["subscriptions_created"] += summary["subscriptions_created"]
+        totals["errors"].extend(summary["errors"])
+
+    logger.info(
+        "discover_containers_for_open_shipments_task team=%s: processed=%s discovered=%s created=%s linked=%s",
+        team_id,
+        totals["shipments_processed"],
+        totals["discovered_count"],
+        totals["containers_created"],
+        totals["containers_linked"],
+    )
+    return totals
