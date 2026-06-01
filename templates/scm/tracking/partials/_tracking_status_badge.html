@@ -1,0 +1,14 @@
+{% load i18n %}
+
+<span class="badge badge-sm
+  {% if subscription.status == 'active' %}badge-success
+  {% elif subscription.status == 'paused' %}badge-warning
+  {% elif subscription.status == 'syncing' %}badge-info
+  {% elif subscription.status == 'completed' %}badge-ghost
+  {% elif subscription.status == 'failed' %}badge-error
+  {% elif subscription.status == 'cancelled' %}badge-ghost
+  {% else %}badge-ghost
+  {% endif %}
+">
+  {{ subscription.get_status_display }}
+</span>

@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from apps.teams.models import Invitation, Team
@@ -8,6 +8,12 @@ from apps.users.models import CustomUser
 PASSWORD = "123"
 
 
+@override_settings(
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+)
 class TeamsAuthTest(TestCase):
     @classmethod
     def setUpClass(cls):

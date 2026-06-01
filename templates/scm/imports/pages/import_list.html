@@ -1,0 +1,60 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <section class="app-card">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-semibold">{% translate "Imports" %}</h2>
+      <a href="{% url 'imports:upload' %}" class="btn btn-primary btn-sm">
+        <i class="fa fa-upload w-4 h-4"></i>
+        {% translate "New Import" %}
+      </a>
+    </div>
+
+    {% if jobs %}
+      <div class="overflow-x-auto">
+        <table class="table table-zebra w-full">
+          <thead>
+            <tr>
+              <th>{% translate "ID" %}</th>
+              <th>{% translate "Type" %}</th>
+              <th>{% translate "File" %}</th>
+              <th>{% translate "Status" %}</th>
+              <th>{% translate "Rows" %}</th>
+              <th>{% translate "Created" %}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for job in jobs %}
+              <tr>
+                <td>#{{ job.pk }}</td>
+                <td>{{ job.get_import_type_display }}</td>
+                <td class="text-sm text-base-content/60 truncate max-w-xs">{{ job.original_filename }}</td>
+                <td>{% include "scm/imports/partials/import_status_badge.html" with status=job.status %}</td>
+                <td>
+                  {% if job.total_rows %}
+                    <span class="text-sm">{{ job.valid_rows }}/{{ job.total_rows }}</span>
+                    {% if job.invalid_rows %}
+                      <span class="text-error text-sm">({{ job.invalid_rows }} {% translate "errors" %})</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-base-content/40">—</span>
+                  {% endif %}
+                </td>
+                <td class="text-sm text-base-content/60">{{ job.created_at|date:"d M Y H:i" }}</td>
+                <td>
+                  <a href="{% url 'imports:detail' pk=job.pk %}" class="btn btn-ghost btn-xs">
+                    {% translate "View" %}
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {% include "scm/components/table_empty_state.html" with message=_("No imports yet. Upload a CSV or XLSX file to get started.") %}
+    {% endif %}
+  </section>
+{% endblock %}

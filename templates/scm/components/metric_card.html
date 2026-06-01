@@ -1,0 +1,27 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/components/metric_card.html" with label=_("Active Shipments") value=42 icon="fa-ship" color="primary" %}
+  Optional: color (primary, secondary, success, warning, error, info), icon, href, trend, trend_label
+{% endcomment %}
+
+{% if href %}
+  <a href="{{ href }}" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors block">
+{% else %}
+  <div class="stat bg-base-200 rounded-box p-4">
+{% endif %}
+  {% if icon %}
+    <div class="stat-figure text-{{ color|default:'base-content' }}/40">
+      <i class="fa {{ icon }} text-2xl"></i>
+    </div>
+  {% endif %}
+  <div class="stat-title text-xs uppercase tracking-wide">{{ label }}</div>
+  <div class="stat-value text-{{ color|default:'base-content' }}">{{ value }}</div>
+  {% if trend_label %}
+    <div class="stat-desc">{{ trend_label }}</div>
+  {% endif %}
+{% if href %}
+  </a>
+{% else %}
+  </div>
+{% endif %}

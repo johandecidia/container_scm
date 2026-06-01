@@ -1,0 +1,37 @@
+{% load i18n %}
+
+<div id="shipment-timeline">
+  {% if events %}
+    <ul class="timeline timeline-vertical timeline-compact">
+      {% for event in events %}
+        <li>
+          {% if not forloop.first %}<hr>{% endif %}
+          <div class="timeline-middle">
+            <i class="fa fa-circle text-xs
+              {% if event.event_type == 'CREATED' %}text-success
+              {% elif event.event_type == 'STATUS_CHANGED' %}text-info
+              {% elif event.event_type == 'CONTAINER_ADDED' %}text-primary
+              {% elif event.event_type == 'CONTAINER_REMOVED' %}text-warning
+              {% elif event.event_type == 'DELIVERED' %}text-success
+              {% elif event.event_type == 'CANCELLED' %}text-error
+              {% elif event.event_type == 'TRACKING_UPDATED' %}text-secondary
+              {% else %}text-base-content/40
+              {% endif %}
+            "></i>
+          </div>
+          <div class="timeline-end mb-6">
+            <time class="text-xs text-base-content/50">{{ event.occurred_at|date:"Y-m-d H:i" }}</time>
+            <div class="font-semibold text-sm">{{ event.get_event_type_display }}</div>
+            <div class="text-sm text-base-content/70">{{ event.description }}</div>
+            {% if event.created_by %}
+              <div class="text-xs text-base-content/50 mt-1">{{ event.created_by }}</div>
+            {% endif %}
+          </div>
+          {% if not forloop.last %}<hr>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="text-sm text-base-content/50 py-4">{% translate "No events yet." %}</p>
+  {% endif %}
+</div>

@@ -1,0 +1,60 @@
+{% load i18n %}
+
+{% if containers %}
+  <div class="overflow-x-auto" id="container-table">
+    <table class="table table-zebra w-full">
+      <thead>
+        <tr>
+          <th>{% translate "Container ID" %}</th>
+          <th>{% translate "Type" %}</th>
+          <th>{% translate "Status" %}</th>
+          <th>{% translate "Condition" %}</th>
+          <th>{% translate "Location" %}</th>
+          <th>{% translate "Manufacturer" %}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="container-rows">
+        {% for container in containers %}
+          {% include "scm/containers/partials/container_row.html" %}
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if page_obj.has_other_pages %}
+      <div class="flex justify-center mt-4 gap-1">
+        {% if page_obj.has_previous %}
+          <a
+            href="?page={{ page_obj.previous_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-get="?page={{ page_obj.previous_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-target="#container-table"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="btn btn-sm btn-ghost"
+          >«</a>
+        {% endif %}
+        <span class="btn btn-sm btn-ghost no-animation">
+          {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+          <a
+            href="?page={{ page_obj.next_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-get="?page={{ page_obj.next_page_number }}&search={{ request.GET.search }}&status={{ request.GET.status }}&condition={{ request.GET.condition }}&equipment_type={{ request.GET.equipment_type }}&sort={{ request.GET.sort }}"
+            hx-target="#container-table"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            class="btn btn-sm btn-ghost"
+          >»</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+{% else %}
+  <div id="container-table">
+    {% if request.GET.search or request.GET.status or request.GET.condition or request.GET.equipment_type %}
+      {% include "scm/components/empty_state.html" with icon="fa-magnifying-glass" title=_("No containers match your filters") message=_("Try adjusting or clearing your search criteria.") %}
+    {% else %}
+      {% include "scm/components/empty_state.html" with icon="fa-box" title=_("No containers yet") message=_("Add your first container to start tracking your fleet.") action_htmx_get=containers_create_url action_label=_("Add Container") action_icon="fa-plus" %}
+    {% endif %}
+  </div>
+{% endif %}

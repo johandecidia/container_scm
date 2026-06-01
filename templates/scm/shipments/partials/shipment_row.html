@@ -1,0 +1,46 @@
+{% load i18n %}
+
+<tr id="shipment-row-{{ shipment.pk }}" hx-target="this" hx-swap="outerHTML">
+  <td>
+    <a href="{% url 'shipments:detail' shipment.pk %}" class="link link-hover font-medium">
+      {{ shipment }}
+    </a>
+    {% if shipment.customer_name %}
+      <div class="text-xs text-base-content/60">{{ shipment.customer_name }}</div>
+    {% endif %}
+  </td>
+  <td>{% include "scm/shipments/partials/shipment_status_badge.html" with status=shipment.status %}</td>
+  <td class="text-sm text-base-content/70">
+    {% if shipment.origin_port or shipment.destination_port %}
+      {{ shipment.origin_port|default:"—" }} → {{ shipment.destination_port|default:"—" }}
+    {% else %}
+      —
+    {% endif %}
+  </td>
+  <td class="text-sm text-base-content/60">{{ shipment.carrier|default:"—" }}</td>
+  <td class="text-sm">{{ shipment.etd|date:"Y-m-d"|default:"—" }}</td>
+  <td class="text-sm">{{ shipment.eta|date:"Y-m-d"|default:"—" }}</td>
+  <td class="text-right">
+    <div class="flex justify-end gap-1">
+      <button
+        class="btn btn-ghost btn-xs"
+        hx-get="{% url 'shipments:update' shipment.pk %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-edit"></i>
+      </button>
+      {% if shipment.status != "CANCELLED" %}
+        <button
+          class="btn btn-ghost btn-xs text-error"
+          hx-post="{% url 'shipments:cancel' shipment.pk %}"
+          hx-confirm="{% translate 'Cancel this shipment?' %}"
+          hx-target="#shipment-row-{{ shipment.pk }}"
+          hx-swap="outerHTML"
+        >
+          <i class="fa fa-ban"></i>
+        </button>
+      {% endif %}
+    </div>
+  </td>
+</tr>

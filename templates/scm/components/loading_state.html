@@ -1,0 +1,11 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/components/loading_state.html" with message=_("Loading…") %}
+  Intended for use as an hx-indicator target or inside htmx-swapped regions.
+{% endcomment %}
+
+<div class="flex flex-col items-center justify-center py-12 text-base-content/50">
+  <span class="loading loading-spinner loading-md mb-3"></span>
+  <p class="text-sm">{{ message|default:_("Loading…") }}</p>
+</div>

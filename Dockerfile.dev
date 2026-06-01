@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.9.17 /uv /uvx /bin/
 
 ARG MY_UID=1000
 ARG MY_GID=1000

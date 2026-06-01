@@ -1,0 +1,38 @@
+{% load i18n %}
+
+{% comment %}
+  HTMX search results partial for SCM global search.
+  Context: results (list of SearchResult), query (str)
+{% endcomment %}
+
+<div id="scm-search-results">
+  {% if results %}
+    <ul class="menu menu-compact bg-base-100 rounded-box shadow-lg border border-base-300 w-full max-w-sm">
+      {% for result in results %}
+        <li>
+          <a href="{{ result.url }}" class="flex items-start gap-3 py-2">
+            <span class="mt-0.5 text-base-content/40">
+              {% if result.kind == "container" %}
+                <i class="fa fa-box w-4"></i>
+              {% elif result.kind == "shipment" %}
+                <i class="fa fa-ship w-4"></i>
+              {% else %}
+                <i class="fa fa-satellite-dish w-4"></i>
+              {% endif %}
+            </span>
+            <span>
+              <span class="font-medium font-mono text-sm">{{ result.title }}</span>
+              {% if result.subtitle %}
+                <span class="block text-xs text-base-content/50">{{ result.subtitle }}</span>
+              {% endif %}
+            </span>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% elif query %}
+    <div class="bg-base-100 rounded-box shadow-lg border border-base-300 w-full max-w-sm px-4 py-3">
+      <p class="text-sm text-base-content/50">{% translate "No results found." %}</p>
+    </div>
+  {% endif %}
+</div>

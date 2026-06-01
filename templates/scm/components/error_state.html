@@ -1,0 +1,19 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/components/error_state.html" with message=_("Something went wrong.") %}
+  Optional: message, retry_url
+{% endcomment %}
+
+<div class="flex flex-col items-center justify-center py-12 text-center">
+  <div class="text-error/60 mb-3">
+    <i class="fa fa-triangle-exclamation text-4xl"></i>
+  </div>
+  <p class="text-sm text-base-content/60">{{ message|default:_("Something went wrong. Please try again.") }}</p>
+  {% if retry_url %}
+    <a href="{{ retry_url }}" class="btn btn-ghost btn-sm mt-4">
+      <i class="fa fa-rotate-right"></i>
+      {% translate "Retry" %}
+    </a>
+  {% endif %}
+</div>

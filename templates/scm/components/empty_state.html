@@ -1,0 +1,32 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/components/empty_state.html" with icon="fa-box" title=_("No containers yet") message=_("Add your first container to get started.") action_url=url action_label=_("Add Container") %}
+  All parameters are optional.
+{% endcomment %}
+
+<div class="flex flex-col items-center justify-center py-16 text-center">
+  <div class="text-base-content/20 mb-4">
+    <i class="fa {{ icon|default:'fa-inbox' }} text-5xl"></i>
+  </div>
+  {% if title %}
+    <h3 class="font-semibold text-base-content/70 mb-1">{{ title }}</h3>
+  {% endif %}
+  <p class="text-sm text-base-content/50 max-w-xs">{{ message|default:_("No items found.") }}</p>
+  {% if action_url %}
+    <a href="{{ action_url }}" class="btn btn-primary btn-sm mt-6">
+      {% if action_icon %}<i class="fa {{ action_icon }}"></i>{% endif %}
+      {% if action_label %}{{ action_label }}{% else %}{% translate "Get started" %}{% endif %}
+    </a>
+  {% elif action_htmx_get %}
+    <button
+      class="btn btn-primary btn-sm mt-6"
+      hx-get="{{ action_htmx_get }}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      {% if action_icon %}<i class="fa {{ action_icon }}"></i>{% endif %}
+      {% if action_label %}{{ action_label }}{% else %}{% translate "Get started" %}{% endif %}
+    </button>
+  {% endif %}
+</div>

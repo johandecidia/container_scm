@@ -1,0 +1,28 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/components/page_header.html" with title="Containers" back_url=back_url back_label=_("Back") %}
+  Optional: back_url, back_label, subtitle
+{% endcomment %}
+
+<div class="mb-6">
+  {% if back_url %}
+    <a href="{{ back_url }}" class="text-sm text-base-content/60 hover:text-base-content inline-flex items-center gap-1 mb-2">
+      <i class="fa fa-arrow-left text-xs"></i>
+      {{ back_label|default:_("Back") }}
+    </a>
+  {% endif %}
+  <div class="flex items-start justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold">{{ title }}</h1>
+      {% if subtitle %}
+        <p class="text-sm text-base-content/60 mt-1">{{ subtitle }}</p>
+      {% endif %}
+    </div>
+    {% if actions %}
+      <div class="flex gap-2 shrink-0">
+        {{ actions }}
+      </div>
+    {% endif %}
+  </div>
+</div>

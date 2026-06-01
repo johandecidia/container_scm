@@ -2,7 +2,7 @@
 
 ## Architecture
 
-- This is a Django project built on Python 3.12.
+- This is a Django project built on Python 3.14.
 - User authentication uses `django-allauth`.
 - The front end is mostly standard Django views and templates.
 - HTMX and Alpine.js are used to provide single-page-app user experience with Django templates.
