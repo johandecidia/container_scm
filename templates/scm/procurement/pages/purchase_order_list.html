@@ -1,0 +1,54 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold">{% translate "Purchase Orders" %}</h1>
+      <p class="text-sm text-base-content/60 mt-1">{% translate "Purchase order visibility from Business Central." %}</p>
+    </div>
+  </div>
+
+  <section class="app-card">
+    {% if po_rows %}
+      <div class="overflow-x-auto">
+        <table class="table table-zebra w-full">
+          <thead>
+            <tr>
+              <th>{% translate "PO Number" %}</th>
+              <th>{% translate "Supplier" %}</th>
+              <th>{% translate "Status" %}</th>
+              <th class="text-right">{% translate "Ordered" %}</th>
+              <th class="text-right">{% translate "Shipped" %}</th>
+              <th class="text-right">{% translate "Received" %}</th>
+              <th class="text-right">{% translate "Remaining" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for po, f in po_rows %}
+              <tr>
+                <td>
+                  <a class="link link-primary font-medium" href="{% url 'procurement:purchase_order_detail' po.pk %}">
+                    {{ po.po_number }}
+                  </a>
+                </td>
+                <td>{{ po.supplier_name }}</td>
+                <td>
+                  <span class="badge badge-outline badge-sm">{{ po.get_status_display }}</span>
+                </td>
+                <td class="text-right tabular-nums">{{ f.ordered_qty }}</td>
+                <td class="text-right tabular-nums">{{ f.shipped_qty }}</td>
+                <td class="text-right tabular-nums">{{ f.received_qty }}</td>
+                <td class="text-right tabular-nums">{{ f.remaining_qty }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-base-content/60 text-sm py-6 text-center">
+        {% translate "No purchase orders found. Sync from Business Central to populate." %}
+      </p>
+    {% endif %}
+  </section>
+{% endblock %}
