@@ -201,8 +201,9 @@ def calculate_shipment_status(shipment: Shipment) -> str:
 
     # Arrival / delivery logic
     if shipment.actual_arrival_at is not None:
+        container_ids = shipment.shipment_containers.values_list("container_id", flat=True)
         deliveries = SupplierDelivery.objects.filter(
-            team=shipment.team, purchase_order__supplier_deliveries__shipment_containers__shipment=shipment
+            team=shipment.team, lines__container_id__in=container_ids
         ).distinct()
         if deliveries.exists():
             total = deliveries.count()
