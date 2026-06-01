@@ -151,6 +151,8 @@ class ShipmentEventModelTest(TestCase):
             "DELIVERED",
             "CANCELLED",
             "TRACKING_UPDATED",
+            "SUPPLIER_DELIVERY_LINKED",
+            "EXCEPTION",
             "NOTE_ADDED",
         }
         actual = {v for v, _ in ShipmentEvent.EventType.choices}
