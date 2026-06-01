@@ -85,6 +85,31 @@ class BaseCarrierParser:
 # ── Legacy aliases (kept for backwards-compat with existing maersk/hapag_lloyd/cma_cgm stubs) ──
 
 
+class CarrierDiscoveryProvider:
+    """Interface for carrier container discovery.
+
+    Implementations search a carrier's API for a given container number.
+    Each supported carrier (Maersk, MSC, Hapag-Lloyd, etc.) will implement this.
+    """
+
+    provider_code: str = ""
+    provider_name: str = ""
+
+    def discover_container(self, container_number: str):
+        """Search the carrier for a container number.
+
+        Returns a ContainerDiscoveryResult if the container is found, or None
+        if the container is not known to this carrier.
+
+        Raise an explicit exception on network/auth failures — never return None
+        to signal an error; None means "not found at this carrier".
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} must implement discover_container()")
+
+
+# ── Legacy aliases (kept for backwards-compat with existing maersk/hapag_lloyd/cma_cgm stubs) ──
+
+
 class TrackingClient(BaseCarrierClient):
     """Deprecated alias — use BaseCarrierClient in new code."""
 
