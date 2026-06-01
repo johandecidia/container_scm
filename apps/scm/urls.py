@@ -10,4 +10,5 @@ urlpatterns = [
     path("tracking/", include("apps.scm.tracking.urls")),
     path("procurement/", include("apps.scm.procurement.urls")),
     path("supplier-deliveries/", include("apps.scm.supplier_deliveries.urls")),
+    path("container-discovery/", include("apps.scm.container_discovery.urls")),
 ]
