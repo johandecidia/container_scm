@@ -1,0 +1,41 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'supplier_deliveries:list' %}">
+      &larr; {% translate "Supplier Deliveries" %}
+    </a>
+    <h1 class="text-2xl font-bold mt-2">{{ form_title }}</h1>
+  </div>
+
+  <section class="app-card max-w-2xl">
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="grid grid-cols-1 gap-4">
+        {% for field in form %}
+          <div class="form-control">
+            <label class="label" for="{{ field.id_for_label }}">
+              <span class="label-text font-medium">{{ field.label }}</span>
+              {% if field.field.required %}
+                <span class="label-text-alt text-error">*</span>
+              {% endif %}
+            </label>
+            {{ field }}
+            {% if field.errors %}
+              {% for error in field.errors %}
+                <p class="text-error text-xs mt-1">{{ error }}</p>
+              {% endfor %}
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="flex gap-3 mt-6">
+        <button type="submit" class="btn btn-primary">{% translate "Save" %}</button>
+        <a class="btn btn-ghost" href="{% url 'supplier_deliveries:list' %}">{% translate "Cancel" %}</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}

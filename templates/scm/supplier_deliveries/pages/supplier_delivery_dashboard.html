@@ -1,0 +1,47 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold">{% translate "Supplier Deliveries" %}</h1>
+      <p class="text-sm text-base-content/60 mt-1">{% translate "Delivery status overview." %}</p>
+    </div>
+    <a class="btn btn-primary btn-sm" href="{% url 'supplier_deliveries:list' %}">
+      {% translate "All Deliveries" %}
+    </a>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+    <div class="stat app-card">
+      <div class="stat-title">{% translate "Open" %}</div>
+      <div class="stat-value text-primary">{{ dashboard.open_count }}</div>
+      <div class="stat-desc">{% translate "Planned / Booked / In Production / Ready" %}</div>
+    </div>
+    <div class="stat app-card">
+      <div class="stat-title">{% translate "In Transit" %}</div>
+      <div class="stat-value text-info">{{ dashboard.in_transit_count }}</div>
+      <div class="stat-desc">{% translate "Currently in transit" %}</div>
+    </div>
+    <div class="stat app-card">
+      <div class="stat-title">{% translate "Partial" %}</div>
+      <div class="stat-value text-warning">{{ dashboard.partial_count }}</div>
+      <div class="stat-desc">{% translate "Shipped / In Transit / Arrived" %}</div>
+    </div>
+    <div class="stat app-card">
+      <div class="stat-title">{% translate "Completed" %}</div>
+      <div class="stat-value text-success">{{ dashboard.completed_count }}</div>
+      <div class="stat-desc">{% translate "Received" %}</div>
+    </div>
+    <div class="stat app-card">
+      <div class="stat-title">{% translate "Arriving Soon" %}</div>
+      <div class="stat-value">{{ dashboard.arriving_soon_count }}</div>
+      <div class="stat-desc">{% translate "Within 7 days" %}</div>
+    </div>
+    <div class="stat app-card">
+      <div class="stat-title">{% translate "Delayed" %}</div>
+      <div class="stat-value text-error">{{ dashboard.delayed_count }}</div>
+      <div class="stat-desc">{% translate "Past planned arrival date" %}</div>
+    </div>
+  </div>
+{% endblock %}

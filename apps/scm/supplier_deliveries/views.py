@@ -1,0 +1,109 @@
+"""Supplier delivery views — request handling and response rendering only.
+
+Business logic belongs in services.py; queries belong in selectors.py.
+"""
+
+from django.contrib import messages
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.translation import gettext_lazy as _
+
+from apps.scm.decorators import scm_login_required
+
+from .forms import SupplierDeliveryForm
+from .models import SupplierDelivery
+from .selectors import (
+    get_delivery_lines_for_delivery,
+    get_po_delivery_summary,
+    get_supplier_deliveries_for_team,
+    get_supplier_delivery_dashboard,
+)
+from .services import create_supplier_delivery, update_supplier_delivery
+
+
+@scm_login_required
+def supplier_delivery_list(request):
+    team = request.default_team
+    deliveries = get_supplier_deliveries_for_team(team=team)
+    context = {
+        "deliveries": deliveries,
+        "team_slug": team.slug,
+    }
+    return render(request, "scm/supplier_deliveries/pages/supplier_delivery_list.html", context)
+
+
+@scm_login_required
+def supplier_delivery_detail(request, delivery_id: int):
+    team = request.default_team
+    delivery = get_object_or_404(SupplierDelivery, team=team, pk=delivery_id)
+    lines = get_delivery_lines_for_delivery(team=team, delivery=delivery)
+    summary = get_po_delivery_summary(team=team, purchase_order=delivery.purchase_order)
+    context = {
+        "delivery": delivery,
+        "lines": lines,
+        "summary": summary,
+        "team_slug": team.slug,
+    }
+    return render(request, "scm/supplier_deliveries/pages/supplier_delivery_detail.html", context)
+
+
+@scm_login_required
+def supplier_delivery_create(request):
+    team = request.default_team
+    if request.method == "POST":
+        form = SupplierDeliveryForm(request.POST, team=team)
+        if form.is_valid():
+            data = form.get_delivery_data()
+            create_supplier_delivery(
+                team=team,
+                purchase_order=data["purchase_order"],
+                delivery_reference=data["delivery_reference"],
+                supplier=data.get("supplier", ""),
+                status=data["status"],
+                planned_ship_date=data.get("planned_ship_date"),
+                planned_arrival_date=data.get("planned_arrival_date"),
+                notes=data.get("notes", ""),
+            )
+            messages.success(request, _("Supplier delivery created."))
+            return redirect("supplier_deliveries:list")
+    else:
+        form = SupplierDeliveryForm(team=team)
+
+    context = {
+        "form": form,
+        "form_title": _("New Supplier Delivery"),
+        "team_slug": team.slug,
+    }
+    return render(request, "scm/supplier_deliveries/pages/supplier_delivery_form.html", context)
+
+
+@scm_login_required
+def supplier_delivery_update(request, delivery_id: int):
+    team = request.default_team
+    delivery = get_object_or_404(SupplierDelivery, team=team, pk=delivery_id)
+    if request.method == "POST":
+        form = SupplierDeliveryForm(request.POST, team=team, instance=delivery)
+        if form.is_valid():
+            update_supplier_delivery(delivery=delivery, data=form.get_delivery_data())
+            messages.success(request, _("Supplier delivery updated."))
+            return redirect("supplier_deliveries:detail", delivery_id=delivery_id)
+    else:
+        form = SupplierDeliveryForm(team=team, instance=delivery)
+
+    context = {
+        "form": form,
+        "delivery": delivery,
+        "form_title": _("Edit Supplier Delivery"),
+        "team_slug": team.slug,
+    }
+    return render(request, "scm/supplier_deliveries/pages/supplier_delivery_form.html", context)
+
+
+@scm_login_required
+def supplier_delivery_dashboard(request):
+    team = request.default_team
+    dashboard = get_supplier_delivery_dashboard(team=team)
+    context = {
+        "dashboard": dashboard,
+        "team_slug": team.slug,
+    }
+    return render(request, "scm/supplier_deliveries/pages/supplier_delivery_dashboard.html", context)

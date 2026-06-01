@@ -1,0 +1,59 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold">{% translate "Supplier Deliveries" %}</h1>
+      <p class="text-sm text-base-content/60 mt-1">{% translate "Deliveries against purchase orders." %}</p>
+    </div>
+    <a class="btn btn-primary btn-sm" href="{% url 'supplier_deliveries:create' %}">
+      {% translate "New Delivery" %}
+    </a>
+  </div>
+
+  <section class="app-card">
+    {% if deliveries %}
+      <div class="overflow-x-auto">
+        <table class="table table-zebra w-full">
+          <thead>
+            <tr>
+              <th>{% translate "Reference" %}</th>
+              <th>{% translate "Supplier" %}</th>
+              <th>{% translate "Purchase Order" %}</th>
+              <th>{% translate "Status" %}</th>
+              <th>{% translate "Planned Arrival" %}</th>
+              <th>{% translate "Actual Arrival" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for delivery in deliveries %}
+              <tr>
+                <td>
+                  <a class="link link-primary font-medium" href="{% url 'supplier_deliveries:detail' delivery.pk %}">
+                    {{ delivery.delivery_reference }}
+                  </a>
+                </td>
+                <td>{{ delivery.supplier|default:"—" }}</td>
+                <td>
+                  <a class="link link-neutral" href="{% url 'procurement:purchase_order_detail' delivery.purchase_order.pk %}">
+                    {{ delivery.purchase_order.po_number }}
+                  </a>
+                </td>
+                <td>
+                  <span class="badge badge-outline badge-sm">{{ delivery.get_status_display }}</span>
+                </td>
+                <td>{{ delivery.planned_arrival_date|default:"—" }}</td>
+                <td>{{ delivery.actual_arrival_date|default:"—" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-base-content/60 text-sm py-6 text-center">
+        {% translate "No supplier deliveries yet." %}
+      </p>
+    {% endif %}
+  </section>
+{% endblock %}

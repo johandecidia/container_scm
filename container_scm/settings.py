@@ -127,6 +127,7 @@ PROJECT_APPS = [
     "apps.scm.analytics.apps.AnalyticsConfig",
     "apps.scm.tracking.apps.TrackingConfig",
     "apps.scm.procurement.apps.ProcurementConfig",
+    "apps.scm.supplier_deliveries.apps.SupplierDeliveriesConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + PEGASUS_APPS + PROJECT_APPS + WAGTAIL_APPS
