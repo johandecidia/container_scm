@@ -1,7 +1,7 @@
 from django.contrib.messages import ERROR
 from django.contrib.messages.storage.base import Message
 from django.contrib.messages.test import MessagesTestMixin
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from apps.teams import roles
@@ -10,6 +10,12 @@ from apps.teams.roles import ROLE_ADMIN, ROLE_MEMBER
 from apps.users.models import CustomUser
 
 
+@override_settings(
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+)
 class TeamMemberManagementViewTest(MessagesTestMixin, TestCase):
     """
     Tests that exercise the various bits of view logic surrounding who is allowed to modify team memberships

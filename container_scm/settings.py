@@ -395,6 +395,10 @@ STORAGES = {
     },
 }
 
+# CompressedManifestStaticFilesStorage requires a pre-built manifest which doesn't exist during tests
+if "test" in sys.argv:
+    STORAGES["staticfiles"]["BACKEND"] = "django.contrib.staticfiles.storage.StaticFilesStorage"
+
 MEDIA_ROOT = BASE_DIR / "media"
 MEDIA_URL = "/media/"
 
