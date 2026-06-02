@@ -1,12 +1,27 @@
 # Shipment selectors — all read/query operations.
 # Every function that returns team-owned data must accept `team` as first argument.
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from django.db.models import Q, QuerySet
 
 from apps.teams.models import Team
 
 from .models import Shipment, ShipmentContainer, ShipmentEvent
+
+
+@dataclass
+class ShipmentTimelineItem:
+    """Unified timeline entry combining ShipmentEvents and TrackingEvents."""
+
+    occurred_at: datetime | None
+    title: str
+    description: str
+    source: str  # "shipment" or "tracking"
+    event_type: str
+    location: str = ""
+    created_by: object = None  # user or None
+
 
 _SORT_MAP = {
     "newest": "-created_at",
@@ -68,6 +83,55 @@ def get_shipment_events(team: Team, shipment: Shipment) -> QuerySet[ShipmentEven
     )
 
 
+def get_merged_shipment_timeline(team: Team, shipment: Shipment) -> list[ShipmentTimelineItem]:
+    """Return a merged, date-sorted timeline of shipment and tracking events.
+
+    Combines ShipmentEvents and TrackingEvents into a single list of
+    ShipmentTimelineItems, sorted newest first.
+    """
+    from apps.scm.tracking.models import TrackingEvent
+
+    items: list[ShipmentTimelineItem] = []
+
+    # ShipmentEvent entries
+    for event in get_shipment_events(team=team, shipment=shipment):
+        items.append(
+            ShipmentTimelineItem(
+                occurred_at=event.occurred_at,
+                title=event.get_event_type_display(),
+                description=event.description,
+                source="shipment",
+                event_type=event.event_type,
+                created_by=event.created_by,
+            )
+        )
+
+    # TrackingEvent entries
+    tracking_qs = (
+        TrackingEvent.objects.filter(team=team, shipment=shipment)
+        .select_related("provider")
+        .order_by("-event_datetime", "-created_at")
+    )
+    for event in tracking_qs:
+        location = event.location_name
+        if event.location_unlocode:
+            location = f"{location} ({event.location_unlocode})" if location else event.location_unlocode
+        items.append(
+            ShipmentTimelineItem(
+                occurred_at=event.event_datetime,
+                title=event.get_event_type_display(),
+                description=event.description or event.status,
+                source="tracking",
+                event_type=event.event_type,
+                location=location,
+            )
+        )
+
+    # Sort: newest first; None datetimes go to the end
+    items.sort(key=lambda i: (i.occurred_at is None, -(i.occurred_at.timestamp() if i.occurred_at else 0)))
+    return items
+
+
 @dataclass
 class ShipmentWorkspace:
     shipment: Shipment
@@ -122,7 +186,7 @@ def get_shipment_detail_context(team: Team, shipment_id: int) -> dict:
 
     shipment = get_team_shipment(team=team, shipment_id=shipment_id)
     containers = list(get_shipment_containers(team=team, shipment=shipment))
-    timeline_events = list(get_shipment_events(team=team, shipment=shipment))
+    timeline_events = get_merged_shipment_timeline(team=team, shipment=shipment)
     tracking_subscriptions = list(
         TrackingSubscription.objects.filter(team=team, shipment=shipment)
         .select_related("provider")

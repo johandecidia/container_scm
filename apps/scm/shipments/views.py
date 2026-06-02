@@ -11,6 +11,7 @@ from .forms import ShipmentContainerForm, ShipmentForm, ShipmentStatusForm
 from .models import Shipment, ShipmentContainer
 from .selectors import (
     filter_shipments,
+    get_merged_shipment_timeline,
     get_shipment_containers,
     get_shipment_detail_context,
     get_shipment_events,
@@ -271,7 +272,7 @@ def shipment_container_remove(request, pk, sc_pk):
 def shipment_timeline_partial(request, pk):
     team = request.default_team
     shipment = get_object_or_404(Shipment, pk=pk, team=team)
-    events = get_shipment_events(team=team, shipment=shipment)
+    events = get_merged_shipment_timeline(team=team, shipment=shipment)
     return render(
         request,
         "scm/shipments/partials/shipment_timeline.html",

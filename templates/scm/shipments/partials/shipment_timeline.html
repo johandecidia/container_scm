@@ -8,24 +8,34 @@
           {% if not forloop.first %}<hr>{% endif %}
           <div class="timeline-middle">
             <i class="fa fa-circle text-xs
-              {% if event.event_type == 'CREATED' %}text-success
+              {% if event.source == 'tracking' %}text-secondary
+              {% elif event.event_type == 'CREATED' %}text-success
               {% elif event.event_type == 'STATUS_CHANGED' %}text-info
               {% elif event.event_type == 'CONTAINER_ADDED' %}text-primary
               {% elif event.event_type == 'CONTAINER_REMOVED' %}text-warning
               {% elif event.event_type == 'DELIVERED' %}text-success
               {% elif event.event_type == 'CANCELLED' %}text-error
-              {% elif event.event_type == 'TRACKING_UPDATED' %}text-secondary
               {% else %}text-base-content/40
               {% endif %}
             "></i>
           </div>
           <div class="timeline-end mb-6">
-            <time class="text-xs text-base-content/50">{{ event.occurred_at|date:"Y-m-d H:i" }}</time>
-            <div class="font-semibold text-sm">{{ event.get_event_type_display }}</div>
-            <div class="text-sm text-base-content/70">{{ event.description }}</div>
-            {% if event.created_by %}
-              <div class="text-xs text-base-content/50 mt-1">{{ event.created_by }}</div>
+            <time class="text-xs text-base-content/50">{{ event.occurred_at|date:"Y-m-d H:i"|default:"—" }}</time>
+            <div class="font-semibold text-sm">{{ event.title }}</div>
+            {% if event.description %}
+              <div class="text-sm text-base-content/70">{{ event.description }}</div>
             {% endif %}
+            {% if event.location %}
+              <div class="text-xs text-base-content/50">{{ event.location }}</div>
+            {% endif %}
+            <div class="flex items-center gap-2 mt-1">
+              {% if event.source == 'tracking' %}
+                <span class="badge badge-xs badge-secondary badge-outline">{% translate "Tracking" %}</span>
+              {% endif %}
+              {% if event.created_by %}
+                <span class="text-xs text-base-content/50">{{ event.created_by }}</span>
+              {% endif %}
+            </div>
           </div>
           {% if not forloop.last %}<hr>{% endif %}
         </li>
