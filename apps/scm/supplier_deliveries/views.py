@@ -13,6 +13,8 @@ from .forms import SupplierDeliveryForm
 from .models import SupplierDelivery
 from .selectors import (
     get_delivery_lines_for_delivery,
+    get_delivery_total_qty,
+    get_linked_shipments_for_delivery,
     get_po_delivery_summary,
     get_supplier_deliveries_for_team,
     get_supplier_delivery_dashboard,
@@ -37,10 +39,14 @@ def supplier_delivery_detail(request, delivery_id: int):
     delivery = get_object_or_404(SupplierDelivery, team=team, pk=delivery_id)
     lines = get_delivery_lines_for_delivery(team=team, delivery=delivery)
     summary = get_po_delivery_summary(team=team, purchase_order=delivery.purchase_order)
+    linked_shipments = get_linked_shipments_for_delivery(team=team, delivery=delivery)
+    delivery_qty = get_delivery_total_qty(delivery=delivery)
     context = {
         "delivery": delivery,
         "lines": lines,
         "summary": summary,
+        "linked_shipments": linked_shipments,
+        "delivery_qty": delivery_qty,
         "team_slug": team.slug,
     }
     return render(request, "scm/supplier_deliveries/pages/supplier_delivery_detail.html", context)

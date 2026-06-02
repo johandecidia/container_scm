@@ -65,9 +65,36 @@
     </section>
   </div>
 
+  {# Linked Shipments #}
+  {% if linked_shipments %}
+    <section class="app-card mb-6">
+      <h2 class="font-semibold mb-3">{% translate "Linked Shipments" %}</h2>
+      <ul class="divide-y divide-base-200">
+        {% for shipment in linked_shipments %}
+          <li class="py-3 flex items-center justify-between gap-2">
+            <div>
+              <a class="link link-primary font-medium text-sm" href="{% url 'shipments:detail' shipment.pk %}">
+                {{ shipment }}
+              </a>
+              {% if shipment.origin_port or shipment.destination_port %}
+                <p class="text-xs text-base-content/60">{{ shipment.origin_port|default:"?" }} → {{ shipment.destination_port|default:"?" }}</p>
+              {% endif %}
+            </div>
+            <span class="badge badge-outline badge-sm">{{ shipment.get_status_display }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
   {# Delivery Lines #}
   <section class="app-card">
-    <h2 class="font-semibold mb-3">{% translate "Delivery Lines" %}</h2>
+    <h2 class="font-semibold mb-3">
+      {% translate "Delivery Lines" %}
+      {% if delivery_qty %}
+        <span class="text-sm font-normal text-base-content/60 ml-2">{% translate "Total" %}: {{ delivery_qty }}</span>
+      {% endif %}
+    </h2>
     {% if lines %}
       <div class="overflow-x-auto">
         <table class="table table-zebra w-full text-sm">

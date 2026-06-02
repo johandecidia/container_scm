@@ -39,6 +39,36 @@ def get_delivery_lines_for_delivery(team: Team, delivery: SupplierDelivery):
     )
 
 
+def get_delivery_total_qty(delivery: SupplierDelivery) -> Decimal:
+    """Return total qty across all lines for a single delivery."""
+    result = SupplierDeliveryLine.objects.filter(delivery=delivery).aggregate(total=Sum("delivery_qty"))
+    return result["total"] or Decimal("0")
+
+
+def get_linked_shipments_for_delivery(team: Team, delivery: SupplierDelivery):
+    """Return shipments linked to this delivery via container → shipment_containers.
+
+    A delivery is linked to a shipment when one of its delivery lines has a container
+    that is also listed in a ShipmentContainer for the same team.
+    """
+    from apps.scm.shipments.models import Shipment
+
+    container_ids = SupplierDeliveryLine.objects.filter(
+        team=team,
+        delivery=delivery,
+        container__isnull=False,
+    ).values_list("container_id", flat=True)
+
+    return (
+        Shipment.objects.filter(
+            team=team,
+            shipment_containers__container_id__in=container_ids,
+        )
+        .distinct()
+        .order_by("-created_at")
+    )
+
+
 def get_po_delivery_summary(team: Team, purchase_order: PurchaseOrder) -> dict:
     """Aggregate delivery quantities across all deliveries for a purchase order.
 

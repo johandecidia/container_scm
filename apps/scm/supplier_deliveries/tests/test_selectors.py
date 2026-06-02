@@ -7,6 +7,8 @@ from django.test import TestCase
 from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus
 from apps.scm.supplier_deliveries.models import SupplierDelivery, SupplierDeliveryLine, SupplierDeliveryStatus
 from apps.scm.supplier_deliveries.selectors import (
+    get_delivery_total_qty,
+    get_linked_shipments_for_delivery,
     get_po_delivery_summary,
     get_supplier_deliveries_for_team,
     get_supplier_delivery_dashboard,
@@ -125,6 +127,72 @@ class GetPODeliverySummaryTest(TestCase):
         self.assertEqual(summary["ordered_qty"], Decimal("500"))
         self.assertEqual(summary["shipped_qty"], Decimal("0"))
         self.assertEqual(summary["remaining_qty"], Decimal("500"))
+
+
+class GetDeliveryTotalQtyTest(TestCase):
+    def test_sums_delivery_lines(self):
+        team = _team("sd-sel-total-qty")
+        po = _po(team, po_number="PO-TQ", external_id="bc-tq-po")
+        line = _po_line(team, po, ordered_qty=500)
+        delivery = _delivery(team, po, reference="DEL-TQ")
+        _delivery_line(team, delivery, line, qty=200)
+        _delivery_line(team, delivery, line, qty=150)
+        self.assertEqual(get_delivery_total_qty(delivery), Decimal("350"))
+
+    def test_returns_zero_for_empty_delivery(self):
+        team = _team("sd-sel-total-empty")
+        po = _po(team, po_number="PO-TQE", external_id="bc-tqe-po")
+        delivery = _delivery(team, po, reference="DEL-TQE")
+        self.assertEqual(get_delivery_total_qty(delivery), Decimal("0"))
+
+
+class GetLinkedShipmentsForDeliveryTest(TestCase):
+    def test_returns_shipment_linked_via_container(self):
+        from apps.scm.containers.models import Container, EquipmentType
+        from apps.scm.shipments.models import Shipment, ShipmentContainer
+
+        team = _team("sd-sel-linked-ship")
+        po = _po(team, po_number="PO-LS", external_id="bc-ls-po")
+        line = _po_line(team, po, ordered_qty=300)
+        delivery = _delivery(team, po, reference="DEL-LS")
+
+        eq_type = EquipmentType.objects.get_or_create(
+            iso_code="22G1",
+            defaults={
+                "category": "GP",
+                "length_ft": 20,
+                "description": "20GP",
+            },
+        )[0]
+        container = Container.objects.create(
+            team=team,
+            owner_code="MSC",
+            category_id="U",
+            serial_number="123456",
+            check_digit=6,
+            equipment_type=eq_type,
+        )
+        SupplierDeliveryLine.objects.create(
+            team=team,
+            delivery=delivery,
+            purchase_order_line=line,
+            delivery_qty=100,
+            container=container,
+        )
+
+        shipment = Shipment.objects.create(team=team, status="DRAFT")
+        ShipmentContainer.objects.create(shipment=shipment, container=container)
+
+        result = list(get_linked_shipments_for_delivery(team, delivery))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], shipment)
+
+    def test_returns_empty_when_no_containers(self):
+        team = _team("sd-sel-linked-empty")
+        po = _po(team, po_number="PO-LSE", external_id="bc-lse-po")
+        delivery = _delivery(team, po, reference="DEL-LSE")
+        result = list(get_linked_shipments_for_delivery(team, delivery))
+        self.assertEqual(result, [])
 
 
 class GetSupplierDeliveryDashboardTest(TestCase):
