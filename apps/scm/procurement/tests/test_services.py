@@ -15,6 +15,7 @@ from apps.scm.procurement.services import (
     create_purchase_order_event,
     import_purchase_orders_from_bc,
 )
+from apps.scm.supplier_deliveries.models import SupplierDelivery, SupplierDeliveryLine, SupplierDeliveryStatus
 from apps.teams.models import Team
 
 
@@ -120,7 +121,7 @@ class FulfillmentEngineTest(TestCase):
         return po
 
     def test_fulfillment_example_from_spec(self):
-        """Spec example: ordered=100, shipped=40, received=10."""
+        """Spec example: ordered=100, shipped=40, received=10 — no arrived deliveries."""
         team = _team(slug="fulfil-team")
         po = self._make_po_with_lines(team, ordered=100, shipped=40, received=10)
         result = calculate_purchase_order_fulfillment(po)
@@ -130,6 +131,30 @@ class FulfillmentEngineTest(TestCase):
         self.assertEqual(result["received_qty"], Decimal("10"))
         self.assertEqual(result["remaining_qty"], Decimal("90"))
         self.assertEqual(result["arrived_qty"], Decimal("0"))
+
+    def test_fulfillment_arrived_qty_from_supplier_deliveries(self):
+        """arrived_qty is calculated from supplier deliveries with ARRIVED status."""
+        team = _team(slug="arrived-team")
+        po = self._make_po_with_lines(team, ordered=100, shipped=60, received=10)
+        po_line = po.lines.first()
+
+        delivery = SupplierDelivery.objects.create(
+            team=team,
+            purchase_order=po,
+            delivery_reference="DEL-001",
+            status=SupplierDeliveryStatus.ARRIVED,
+        )
+        SupplierDeliveryLine.objects.create(
+            team=team,
+            delivery=delivery,
+            purchase_order_line=po_line,
+            delivery_qty=Decimal("25"),
+        )
+
+        result = calculate_purchase_order_fulfillment(po)
+        self.assertEqual(result["arrived_qty"], Decimal("25"))
+        # in_transit = shipped - received - arrived = 60 - 10 - 25 = 25
+        self.assertEqual(result["in_transit_qty"], Decimal("25"))
 
     def test_fulfillment_empty_order(self):
         team = _team(slug="empty-team")

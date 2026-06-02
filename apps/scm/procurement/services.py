@@ -85,13 +85,15 @@ def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[di
 
 
 def calculate_purchase_order_fulfillment(purchase_order: PurchaseOrder) -> dict[str, Decimal]:
-    """Aggregate qty figures for a purchase order from its lines.
+    """Aggregate qty figures for a purchase order from its lines and supplier deliveries.
 
     Returns:
         Dict with ordered_qty, shipped_qty, in_transit_qty, arrived_qty,
         received_qty, remaining_qty — all as Decimal.
     """
     from django.db.models import Sum
+
+    from apps.scm.supplier_deliveries.models import SupplierDeliveryLine, SupplierDeliveryStatus
 
     aggregates = purchase_order.lines.aggregate(
         total_ordered=Sum("ordered_qty"),
@@ -103,10 +105,15 @@ def calculate_purchase_order_fulfillment(purchase_order: PurchaseOrder) -> dict[
     shipped = aggregates["total_shipped"] or Decimal("0")
     received = aggregates["total_received"] or Decimal("0")
 
-    in_transit = max(shipped - received, Decimal("0"))
+    # arrived = goods that have arrived at destination but not yet formally received in ERP
+    arrived_agg = SupplierDeliveryLine.objects.filter(
+        delivery__purchase_order=purchase_order,
+        delivery__status=SupplierDeliveryStatus.ARRIVED,
+    ).aggregate(total=Sum("delivery_qty"))
+    arrived = arrived_agg["total"] or Decimal("0")
+
+    in_transit = max(shipped - received - arrived, Decimal("0"))
     remaining = max(ordered - received, Decimal("0"))
-    # arrived_qty requires shipment/tracking integration — set to 0 until then
-    arrived = Decimal("0")
 
     return {
         "ordered_qty": ordered,
