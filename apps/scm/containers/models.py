@@ -8,6 +8,14 @@ from .choices import ColorSystem, ContainerCategory, ContainerCondition, Contain
 from .utils import validate_container_id
 
 
+class PlannedContainerStatus(models.TextChoices):
+    PLANNED = "planned", _("Planned")
+    DETECTED = "detected", _("Detected")
+    IN_TRANSIT = "in_transit", _("In Transit")
+    ARRIVED = "arrived", _("Arrived")
+    CANCELLED = "cancelled", _("Cancelled")
+
+
 def equipment_type_image_path(instance, filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1]
     return f"equipment_types/{instance.iso_code}.{ext}"
@@ -162,3 +170,63 @@ class Container(BaseTeamModel):
         self.category_id = self.category_id.upper()
         self.full_clean()
         return super().save(*args, **kwargs)
+
+
+class PlannedContainer(BaseTeamModel):
+    """A container number that is planned/expected but may not yet exist at the carrier.
+
+    Used in the container discovery workflow: planned numbers are polled against
+    carrier APIs until they are detected, then transitioned to tracking.
+    """
+
+    container_number = models.CharField(
+        _("container number"),
+        max_length=11,
+        help_text=_("Full ISO 6346 container number, e.g. MCUU1234561"),
+    )
+    status = models.CharField(
+        _("status"),
+        max_length=20,
+        choices=PlannedContainerStatus.choices,
+        default=PlannedContainerStatus.PLANNED,
+    )
+    carrier = models.CharField(_("carrier"), max_length=100, blank=True)
+    shipment = models.ForeignKey(
+        "scm_shipments.Shipment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="planned_containers",
+        verbose_name=_("shipment"),
+    )
+    # Linked actual Container once detected and validated
+    container = models.ForeignKey(
+        Container,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="planned_entries",
+        verbose_name=_("container"),
+    )
+    detected_at = models.DateTimeField(_("detected at"), null=True, blank=True)
+    last_checked_at = models.DateTimeField(_("last checked at"), null=True, blank=True)
+    notes = models.TextField(_("notes"), blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["team", "status"]),
+            models.Index(fields=["team", "container_number"]),
+            models.Index(fields=["last_checked_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "container_number"],
+                name="unique_planned_container_per_team",
+            )
+        ]
+        verbose_name = _("Planned Container")
+        verbose_name_plural = _("Planned Containers")
+
+    def __str__(self) -> str:
+        return f"{self.container_number} ({self.get_status_display()})"

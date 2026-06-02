@@ -1,0 +1,39 @@
+{% load i18n %}
+
+<div class="modal modal-open">
+  <div class="modal-box">
+    <h3 class="font-bold text-lg mb-4">{% translate "Add Planned Container Number" %}</h3>
+    <form method="post" action="{% url 'containers:discovery_add' %}"
+          hx-post="{% url 'containers:discovery_add' %}"
+          hx-target="body"
+          hx-push-url="{% url 'containers:discovery_dashboard' %}">
+      {% csrf_token %}
+      <div class="flex flex-col gap-4">
+        <div>
+          <label class="label"><span class="label-text">{{ form.container_number.label }}</span></label>
+          {{ form.container_number }}
+          {% if form.container_number.help_text %}
+            <p class="text-xs text-base-content/50 mt-1">{{ form.container_number.help_text }}</p>
+          {% endif %}
+          {% for err in form.container_number.errors %}
+            <p class="text-error text-xs mt-1">{{ err }}</p>
+          {% endfor %}
+        </div>
+        <div>
+          <label class="label"><span class="label-text">{{ form.carrier.label }}</span></label>
+          {{ form.carrier }}
+        </div>
+        <div>
+          <label class="label"><span class="label-text">{{ form.notes.label }}</span></label>
+          {{ form.notes }}
+        </div>
+      </div>
+      <div class="modal-action">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">
+          {% translate "Cancel" %}
+        </button>
+        <button type="submit" class="btn btn-primary">{% translate "Add" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

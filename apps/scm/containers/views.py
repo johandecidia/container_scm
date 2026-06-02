@@ -8,8 +8,14 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.scm.decorators import scm_login_required
 
-from .forms import ContainerForm
-from .models import Container
+from .discovery import (
+    add_planned_container,
+    cancel_planned_container,
+    get_planned_containers,
+    run_discovery_for_team,
+)
+from .forms import ContainerForm, PlannedContainerForm
+from .models import Container, PlannedContainer, PlannedContainerStatus
 from .selectors import filter_containers, get_active_equipment_types, get_container_workspace
 from .services import create_container, delete_container, update_container
 
@@ -152,3 +158,76 @@ def container_delete(request, container_id):
         "scm/containers/pages/container_detail.html",
         {"container": container, "team_slug": team.slug},
     )
+
+
+# ---------------------------------------------------------------------------
+# Container discovery views
+# ---------------------------------------------------------------------------
+
+
+@scm_login_required
+def planned_container_dashboard(request):
+    """Dashboard showing planned containers by status."""
+    team = request.default_team
+    status_filter = request.GET.get("status")
+    planned_containers = get_planned_containers(team=team, status=status_filter or None)
+    counts = {
+        "planned": PlannedContainer.objects.filter(team=team, status=PlannedContainerStatus.PLANNED).count(),
+        "detected": PlannedContainer.objects.filter(team=team, status=PlannedContainerStatus.DETECTED).count(),
+        "in_transit": PlannedContainer.objects.filter(team=team, status=PlannedContainerStatus.IN_TRANSIT).count(),
+        "arrived": PlannedContainer.objects.filter(team=team, status=PlannedContainerStatus.ARRIVED).count(),
+        "cancelled": PlannedContainer.objects.filter(team=team, status=PlannedContainerStatus.CANCELLED).count(),
+    }
+    context = {
+        "planned_containers": planned_containers,
+        "counts": counts,
+        "status_filter": status_filter,
+        "status_choices": PlannedContainerStatus.choices,
+        "team_slug": team.slug,
+    }
+    return render(request, "scm/containers/pages/planned_container_dashboard.html", context)
+
+
+@scm_login_required
+def planned_container_add(request):
+    """Add a container number to the planned pool."""
+    team = request.default_team
+    if request.method == "POST":
+        form = PlannedContainerForm(request.POST)
+        if form.is_valid():
+            add_planned_container(
+                team=team,
+                container_number=form.cleaned_data["container_number"],
+                carrier=form.cleaned_data.get("carrier", ""),
+                notes=form.cleaned_data.get("notes", ""),
+            )
+            messages.success(request, _("Planned container added."))
+            return redirect("containers:discovery_dashboard")
+    else:
+        form = PlannedContainerForm()
+    context = {"form": form, "team_slug": team.slug}
+    return render(request, "scm/containers/partials/planned_container_form.html", context)
+
+
+@scm_login_required
+def planned_container_cancel(request, pk):
+    """Cancel a planned container."""
+    team = request.default_team
+    planned = get_object_or_404(PlannedContainer, pk=pk, team=team)
+    if request.method == "POST":
+        cancel_planned_container(planned=planned)
+        messages.success(request, _("Planned container cancelled."))
+    return redirect("containers:discovery_dashboard")
+
+
+@scm_login_required
+def planned_container_run_discovery(request):
+    """Manually trigger a discovery run for all planned containers."""
+    team = request.default_team
+    if request.method == "POST":
+        summary = run_discovery_for_team(team=team)
+        messages.success(
+            request,
+            _(f"Discovery complete: checked {summary['checked']}, detected {summary['detected']}."),
+        )
+    return redirect("containers:discovery_dashboard")

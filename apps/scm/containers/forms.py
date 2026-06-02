@@ -125,3 +125,28 @@ class ContainerForm(forms.Form):
             "current_location": self.cleaned_data.get("current_location", ""),
             "notes": self.cleaned_data.get("notes", ""),
         }
+
+
+class PlannedContainerForm(forms.Form):
+    """Simple form for adding a container number to the planned pool."""
+
+    container_number = forms.CharField(
+        label=_("Container Number"),
+        max_length=11,
+        help_text=_("Full container number, e.g. MCUU1000001"),
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full font-mono", "placeholder": "MCUU1000001"}),
+    )
+    carrier = forms.CharField(
+        label=_("Carrier"),
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+    notes = forms.CharField(
+        label=_("Notes"),
+        required=False,
+        widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
+    )
+
+    def clean_container_number(self) -> str:
+        return self.cleaned_data["container_number"].upper().strip()
