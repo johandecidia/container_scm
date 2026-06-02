@@ -165,12 +165,22 @@ def update_shipment_eta(
     )
 
     if eta_date != old_eta:
+        from apps.scm.tracking.models import ETAHistory
+
         create_shipment_event(
             shipment=shipment,
             event_type=ShipmentEvent.EventType.ETA_UPDATED,
             description=f"ETA updated to {eta_date} (source: {source}, confidence: {confidence}).",
             user=user,
             metadata={"eta": str(eta_date) if eta_date else None, "source": source, "confidence": confidence},
+        )
+        ETAHistory.objects.create(
+            team=shipment.team,
+            shipment=shipment,
+            previous_eta=old_eta,
+            new_eta=eta_date,
+            changed_at=shipment.eta_last_updated,
+            source=source,
         )
 
     return shipment

@@ -235,6 +235,46 @@ class TrackingRawPayload(BaseTeamModel):
         return f"{self.get_payload_type_display()} from {self.provider} at {self.received_at}"
 
 
+class ETAHistory(BaseTeamModel):
+    """Records every ETA change for a shipment to allow drift analysis.
+
+    Append-only — never update existing records.
+    """
+
+    shipment = models.ForeignKey(
+        "scm_shipments.Shipment",
+        on_delete=models.CASCADE,
+        related_name="eta_history",
+        verbose_name=_("shipment"),
+    )
+    container = models.ForeignKey(
+        "scm_containers.Container",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="eta_history",
+        verbose_name=_("container"),
+    )
+    previous_eta = models.DateField(_("previous ETA"), null=True, blank=True)
+    new_eta = models.DateField(_("new ETA"), null=True, blank=True)
+    changed_at = models.DateTimeField(_("changed at"))
+    source = models.CharField(_("source"), max_length=100, blank=True)
+    raw_payload = models.JSONField(_("raw payload"), default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-changed_at"]
+        indexes = [
+            models.Index(fields=["team", "shipment"]),
+            models.Index(fields=["team", "container"]),
+            models.Index(fields=["changed_at"]),
+        ]
+        verbose_name = _("ETA History")
+        verbose_name_plural = _("ETA History")
+
+    def __str__(self) -> str:
+        return f"ETA change for {self.shipment}: {self.previous_eta} → {self.new_eta} at {self.changed_at}"
+
+
 class TrackingSyncRun(BaseTeamModel):
     """Logs each sync attempt for a tracking subscription."""
 
