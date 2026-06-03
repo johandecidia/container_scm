@@ -3,7 +3,6 @@
 import datetime
 import json
 
-from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
@@ -113,8 +112,14 @@ def saved_filter_create(request):
 @require_POST
 @scm_login_required
 def saved_filter_delete(request, pk: int):
-    """Delete a saved filter. Returns 204 No Content."""
+    """Delete a saved filter and return the updated list partial."""
     team = request.default_team
     saved_filter = get_object_or_404(SavedFilter, pk=pk, team=team, user=request.user)
+    view_key = saved_filter.view_key
     saved_filter.delete()
-    return HttpResponse(status=204)
+    saved_filters = get_saved_filters(team, request.user, view_key)
+    return render(
+        request,
+        "scm/analytics/partials/saved_filters_list.html",
+        {"saved_filters": saved_filters, "view_key": view_key},
+    )

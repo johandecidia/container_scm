@@ -49,7 +49,9 @@
       {% endif %}
     </form>
 
-    <div id="shipment-table">
+    {% include "scm/analytics/partials/saved_filters_panel.html" with saved_filters=saved_filters view_key=view_key %}
+
+    <div id="shipment-table" class="mt-4">
       {% include "scm/shipments/partials/shipment_table.html" %}
     </div>
   </section>

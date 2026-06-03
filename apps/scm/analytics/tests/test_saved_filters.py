@@ -171,7 +171,7 @@ class SavedFilterDeleteViewTest(TestCase):
     def test_deletes_own_filter(self):
         c = self._client()
         response = c.post(reverse("analytics:saved_filter_delete", kwargs={"pk": self.saved_filter.pk}))
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 200)
         self.assertFalse(SavedFilter.objects.filter(pk=self.saved_filter.pk).exists())
 
     def test_cannot_delete_other_teams_filter(self):

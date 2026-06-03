@@ -1,0 +1,61 @@
+{% load i18n %}
+
+{% comment %}
+  Saved filters collapsible panel.
+  Usage: {% include "scm/analytics/partials/saved_filters_panel.html" with saved_filters=saved_filters view_key=view_key %}
+  Requires: saved_filters (QuerySet[SavedFilter]), view_key (str)
+{% endcomment %}
+
+<div
+  class="border-t border-base-300 mt-3 pt-3"
+  x-data="{ open: false, name: '' }"
+>
+  <div class="flex items-center gap-2">
+    <button
+      type="button"
+      class="btn btn-ghost btn-xs gap-1"
+      @click="open = !open"
+      :aria-expanded="open"
+    >
+      <i class="fa fa-bookmark text-base-content/50"></i>
+      {% translate "Saved filters" %}
+      <i class="fa text-xs" :class="open ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+    </button>
+  </div>
+
+  <div x-show="open" x-transition class="mt-2 space-y-2">
+    {# Saved filter list — replaced by HTMX on create / delete #}
+    {% include "scm/analytics/partials/saved_filters_list.html" with saved_filters=saved_filters view_key=view_key %}
+
+    {# Save current filter form #}
+    <form
+      hx-post="{% url 'analytics:saved_filter_create' %}"
+      hx-target="#saved-filters-{{ view_key }}"
+      hx-swap="outerHTML"
+      hx-vals='js:{"params": JSON.stringify(Object.fromEntries(new URLSearchParams(window.location.search))), "view_key": "{{ view_key }}"}'
+      class="flex gap-2 items-center mt-2"
+    >
+      {% csrf_token %}
+      <input
+        type="hidden"
+        name="view_key"
+        value="{{ view_key }}"
+      >
+      <input
+        type="text"
+        name="name"
+        x-model="name"
+        placeholder="{% translate 'Filter name…' %}"
+        class="input input-bordered input-xs flex-1 min-w-32"
+        maxlength="100"
+      >
+      <button
+        type="submit"
+        class="btn btn-ghost btn-xs"
+        :disabled="!name.trim()"
+      >
+        <i class="fa fa-save mr-1"></i>{% translate "Save" %}
+      </button>
+    </form>
+  </div>
+</div>

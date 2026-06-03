@@ -20,8 +20,9 @@
 
   <section class="app-card">
     {% include "scm/containers/partials/container_filters.html" %}
+    {% include "scm/analytics/partials/saved_filters_panel.html" with saved_filters=saved_filters view_key=view_key %}
 
-    <div id="container-table">
+    <div id="container-table" class="mt-4">
       {% include "scm/containers/partials/container_table.html" %}
     </div>
   </section>

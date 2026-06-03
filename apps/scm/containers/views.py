@@ -6,6 +6,8 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
 
+from apps.scm.analytics.models import SavedFilter
+from apps.scm.analytics.selectors import get_saved_filters
 from apps.scm.decorators import scm_login_required
 
 from .discovery import (
@@ -35,10 +37,13 @@ def container_list(request):
     )
     paginator = Paginator(containers_qs, CONTAINERS_PER_PAGE)
     page_obj = paginator.get_page(request.GET.get("page"))
+    saved_filters = get_saved_filters(team, request.user, SavedFilter.ViewKey.CONTAINERS)
     context = {
         "containers": page_obj,
         "page_obj": page_obj,
         "equipment_types": get_active_equipment_types(),
+        "saved_filters": saved_filters,
+        "view_key": SavedFilter.ViewKey.CONTAINERS,
         "team_slug": team.slug,
     }
     if request.htmx:

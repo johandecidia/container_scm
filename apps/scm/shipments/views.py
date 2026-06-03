@@ -5,6 +5,8 @@ from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
 
+from apps.scm.analytics.models import SavedFilter
+from apps.scm.analytics.selectors import get_saved_filters
 from apps.scm.decorators import scm_login_required
 
 from .forms import ShipmentContainerForm, ShipmentForm, ShipmentStatusForm
@@ -40,10 +42,13 @@ def shipment_list(request):
     )
     paginator = Paginator(shipments_qs, SHIPMENTS_PER_PAGE)
     page_obj = paginator.get_page(request.GET.get("page"))
+    saved_filters = get_saved_filters(team, request.user, SavedFilter.ViewKey.SHIPMENTS)
     context = {
         "shipments": page_obj,
         "page_obj": page_obj,
         "status_choices": Shipment.Status.choices,
+        "saved_filters": saved_filters,
+        "view_key": SavedFilter.ViewKey.SHIPMENTS,
         "team_slug": team.slug,
     }
     if request.htmx:
