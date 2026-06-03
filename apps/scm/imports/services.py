@@ -1,6 +1,8 @@
 # Import services — all business logic and write operations.
 from django.utils import timezone
 
+from apps.scm.audit_log.models import SCMAuditLog
+from apps.scm.audit_log.services import log_scm_action
 from apps.scm.monitoring import get_scm_logger, log_import_completed, log_import_failed, log_import_started
 from apps.teams.models import Team
 from apps.users.models import CustomUser
@@ -17,7 +19,7 @@ logger = get_scm_logger(__name__)
 def create_import_job(team: Team, created_by: CustomUser, file, import_type: str) -> ImportJob:
     """Create a new ImportJob from an uploaded file."""
     original_filename = getattr(file, "name", "") or ""
-    return ImportJob.objects.create(
+    job = ImportJob.objects.create(
         team=team,
         created_by=created_by,
         file=file,
@@ -25,6 +27,16 @@ def create_import_job(team: Team, created_by: CustomUser, file, import_type: str
         import_type=import_type,
         status=ImportJob.Status.UPLOADED,
     )
+    log_scm_action(
+        team=team,
+        action=SCMAuditLog.Action.IMPORT_STARTED,
+        object_type="ImportJob",
+        object_id=str(job.pk),
+        object_repr=f"Import {import_type} ({original_filename})",
+        metadata={"import_type": import_type, "filename": original_filename},
+        actor=created_by,
+    )
+    return job
 
 
 def parse_import_job(job: ImportJob) -> ImportJob:

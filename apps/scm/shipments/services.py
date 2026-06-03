@@ -11,6 +11,8 @@ from django.utils.translation import gettext_lazy as _
 if TYPE_CHECKING:
     from django_stubs_ext import StrOrPromise
 
+from apps.scm.audit_log.models import SCMAuditLog
+from apps.scm.audit_log.services import log_scm_action
 from apps.scm.containers.models import Container
 from apps.teams.models import Team
 from apps.users.models import CustomUser
@@ -26,6 +28,15 @@ def create_shipment(team: Team, user: CustomUser, data: dict) -> Shipment:
         event_type=ShipmentEvent.EventType.CREATED,
         description=_("Shipment created."),
         user=user,
+    )
+    log_scm_action(
+        team=team,
+        action=SCMAuditLog.Action.SHIPMENT_CREATED,
+        object_type="Shipment",
+        object_id=str(shipment.pk),
+        object_repr=str(shipment),
+        metadata={"status": shipment.status},
+        actor=user,
     )
     return shipment
 
@@ -77,6 +88,15 @@ def change_shipment_status(shipment: Shipment, user: CustomUser, new_status: str
         description=f"Status changed from {old_status} to {new_status}.",
         user=user,
         metadata={"old_status": old_status, "new_status": new_status},
+    )
+    log_scm_action(
+        team=shipment.team,
+        action=SCMAuditLog.Action.SHIPMENT_STATUS_CHANGED,
+        object_type="Shipment",
+        object_id=str(shipment.pk),
+        object_repr=str(shipment),
+        metadata={"old_status": old_status, "new_status": new_status},
+        actor=user,
     )
     return shipment
 
