@@ -1,4 +1,4 @@
-# SCM global search — team-scoped search across containers and shipments.
+# SCM global search — team-scoped search across containers, shipments, POs and deliveries.
 from dataclasses import dataclass
 
 from django.db.models import Q
@@ -8,24 +8,26 @@ from apps.teams.models import Team
 
 @dataclass
 class SearchResult:
-    kind: str  # "container" | "shipment" | "tracking"
+    kind: str  # "container" | "shipment" | "tracking" | "purchase_order" | "supplier_delivery"
     title: str
     subtitle: str
     url: str
 
 
 def search_scm(team: Team, query: str) -> list[SearchResult]:
-    """Search containers, shipments and tracking subscriptions for *query*, scoped to *team*.
+    """Search SCM objects for *query*, scoped to *team*.
 
-    Searches:
-    - containers: container_id (owner_code + serial_number), current_location
-    - shipments: shipment_number, reference, carrier_booking_reference, bill_of_lading_number, customer_name, carrier
-    - tracking subscriptions: tracking_reference
+    Searches containers, shipments, tracking subscriptions,
+    purchase orders, and supplier deliveries.
+    Returns at most 10 results per kind.
+    Empty query always returns an empty list.
     """
     from django.urls import reverse
 
     from apps.scm.containers.models import Container
+    from apps.scm.procurement.models import PurchaseOrder
     from apps.scm.shipments.models import Shipment
+    from apps.scm.supplier_deliveries.models import SupplierDelivery
     from apps.scm.tracking.models import TrackingSubscription
 
     results: list[SearchResult] = []
@@ -91,6 +93,40 @@ def search_scm(team: Team, query: str) -> list[SearchResult]:
                 title=sub.tracking_reference,
                 subtitle=str(sub.provider) if sub.provider_id else "",
                 url=reverse("tracking:detail", kwargs={"pk": sub.pk}),
+            )
+        )
+
+    # Purchase orders
+    purchase_orders = PurchaseOrder.objects.filter(team=team).filter(
+        Q(po_number__icontains=q) | Q(supplier_no__icontains=q) | Q(supplier_name__icontains=q)
+    )[:10]
+
+    for po in purchase_orders:
+        results.append(
+            SearchResult(
+                kind="purchase_order",
+                title=po.po_number,
+                subtitle=po.supplier_name,
+                url=reverse("procurement:purchase_order_detail", kwargs={"purchase_order_id": po.pk}),
+            )
+        )
+
+    # Supplier deliveries
+    deliveries = (
+        SupplierDelivery.objects.filter(team=team)
+        .filter(
+            Q(delivery_reference__icontains=q) | Q(supplier__icontains=q) | Q(purchase_order__po_number__icontains=q)
+        )
+        .select_related("purchase_order")[:10]
+    )
+
+    for delivery in deliveries:
+        results.append(
+            SearchResult(
+                kind="supplier_delivery",
+                title=delivery.delivery_reference,
+                subtitle=f"PO: {delivery.purchase_order.po_number} — {delivery.get_status_display()}",
+                url=reverse("supplier_deliveries:detail", kwargs={"delivery_id": delivery.pk}),
             )
         )
 
