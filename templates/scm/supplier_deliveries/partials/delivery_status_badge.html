@@ -1,0 +1,17 @@
+{% load i18n %}
+
+{% comment %}
+  Delivery status badge — returned by HTMX mark_received action.
+  Context: delivery (SupplierDelivery)
+{% endcomment %}
+
+<span
+  id="delivery-status-{{ delivery.pk }}"
+  class="badge badge-outline badge-sm
+    {% if delivery.status == 'received' %}badge-success
+    {% elif delivery.status == 'cancelled' %}badge-error
+    {% elif delivery.status == 'in_transit' or delivery.status == 'shipped' %}badge-warning
+    {% else %}badge-ghost{% endif %}"
+>
+  {{ delivery.get_status_display }}
+</span>

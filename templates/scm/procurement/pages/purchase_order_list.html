@@ -46,9 +46,7 @@
         </table>
       </div>
     {% else %}
-      <p class="text-base-content/60 text-sm py-6 text-center">
-        {% translate "No purchase orders found. Sync from Business Central to populate." %}
-      </p>
+      {% include "scm/components/empty_state.html" with icon="fa-file-invoice" title=_("No purchase orders yet") message=_("Import purchase orders from Business Central to start tracking fulfillment.") action_url="/scm/imports/upload/" action_label=_("Import data") %}
     {% endif %}
   </section>
 {% endblock %}

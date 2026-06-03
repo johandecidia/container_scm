@@ -6,11 +6,12 @@ Business logic belongs in services.py; queries belong in selectors.py.
 from django.contrib import messages
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
+from django.views.decorators.http import require_POST
 
 from apps.scm.decorators import scm_login_required
 
 from .forms import SupplierDeliveryForm
-from .models import SupplierDelivery
+from .models import SupplierDelivery, SupplierDeliveryStatus
 from .selectors import (
     get_delivery_lines_for_delivery,
     get_delivery_total_qty,
@@ -19,7 +20,7 @@ from .selectors import (
     get_supplier_deliveries_for_team,
     get_supplier_delivery_dashboard,
 )
-from .services import create_supplier_delivery, update_supplier_delivery
+from .services import create_supplier_delivery, mark_supplier_delivery_received, update_supplier_delivery
 
 
 @scm_login_required
@@ -102,6 +103,24 @@ def supplier_delivery_update(request, delivery_id: int):
         "team_slug": team.slug,
     }
     return render(request, "scm/supplier_deliveries/pages/supplier_delivery_form.html", context)
+
+
+@require_POST
+@scm_login_required
+def supplier_delivery_mark_received(request, delivery_id: int):
+    """HTMX inline action — mark a supplier delivery as received.
+
+    Returns a badge partial reflecting the new status.
+    """
+    team = request.default_team
+    delivery = get_object_or_404(SupplierDelivery, pk=delivery_id, team=team)
+    if delivery.status not in (SupplierDeliveryStatus.RECEIVED, SupplierDeliveryStatus.CANCELLED):
+        mark_supplier_delivery_received(delivery)
+    return render(
+        request,
+        "scm/supplier_deliveries/partials/delivery_status_badge.html",
+        {"delivery": delivery},
+    )
 
 
 @scm_login_required

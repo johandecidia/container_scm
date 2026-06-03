@@ -41,19 +41,31 @@
                   </a>
                 </td>
                 <td>
-                  <span class="badge badge-outline badge-sm">{{ delivery.get_status_display }}</span>
+                  {% include "scm/supplier_deliveries/partials/delivery_status_badge.html" %}
                 </td>
                 <td>{{ delivery.planned_arrival_date|default:"—" }}</td>
                 <td>{{ delivery.actual_arrival_date|default:"—" }}</td>
+                <td>
+                  {% if delivery.status != 'received' and delivery.status != 'cancelled' %}
+                    <form
+                      hx-post="{% url 'supplier_deliveries:mark_received' delivery.pk %}"
+                      hx-target="#delivery-status-{{ delivery.pk }}"
+                      hx-swap="outerHTML"
+                    >
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-ghost btn-xs" title="{% translate 'Mark as received' %}">
+                        <i class="fa fa-check-circle text-success"></i>
+                      </button>
+                    </form>
+                  {% endif %}
+                </td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     {% else %}
-      <p class="text-base-content/60 text-sm py-6 text-center">
-        {% translate "No supplier deliveries yet." %}
-      </p>
+      {% include "scm/components/empty_state.html" with icon="fa-truck" title=_("No supplier deliveries yet") message=_("Create a supplier delivery against a purchase order to track inbound shipments.") action_url="/scm/supplier-deliveries/deliveries/create/" action_label=_("New Delivery") %}
     {% endif %}
   </section>
 {% endblock %}
