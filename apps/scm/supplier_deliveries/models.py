@@ -52,6 +52,12 @@ class SupplierDelivery(BaseTeamModel):
         verbose_name = _("Supplier Delivery")
         verbose_name_plural = _("Supplier Deliveries")
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "delivery_reference"],
+                name="unique_supplier_delivery_ref_per_team",
+            ),
+        ]
         indexes = [
             models.Index(fields=["team", "status"]),
             models.Index(fields=["team", "purchase_order"]),
