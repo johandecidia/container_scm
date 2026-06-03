@@ -1,6 +1,7 @@
 # Import services — all business logic and write operations.
 from django.utils import timezone
 
+from apps.scm.monitoring import get_scm_logger, log_import_completed, log_import_failed, log_import_started
 from apps.teams.models import Team
 from apps.users.models import CustomUser
 
@@ -9,6 +10,8 @@ from .models import ImportJob, ImportRow
 from .parsers import create_import_rows, parse_file
 from .schemas import validate_row_data
 from .validators import validate_all_rows
+
+logger = get_scm_logger(__name__)
 
 
 def create_import_job(team: Team, created_by: CustomUser, file, import_type: str) -> ImportJob:
@@ -26,6 +29,7 @@ def create_import_job(team: Team, created_by: CustomUser, file, import_type: str
 
 def parse_import_job(job: ImportJob) -> ImportJob:
     """Parse the uploaded file, create rows, apply mapping, run Pydantic validation."""
+    log_import_started(logger, job.pk, job.import_type, job.team_id)
     job.status = ImportJob.Status.PARSING
     job.started_at = timezone.now()
     job.save(update_fields=["status", "started_at", "updated_at"])
@@ -36,10 +40,12 @@ def parse_import_job(job: ImportJob) -> ImportJob:
         _pydantic_validate_rows(job)
         job.status = ImportJob.Status.PARSED
         job.save(update_fields=["status", "updated_at"])
+        log_import_completed(logger, job.pk, job.import_type, job.team_id, job.total_rows or 0, 0)
     except Exception as exc:
         job.status = ImportJob.Status.FAILED
         job.metadata["parse_error"] = str(exc)
         job.save(update_fields=["status", "metadata", "updated_at"])
+        log_import_failed(logger, job.pk, job.import_type, job.team_id, str(exc))
         raise
     return job
 
