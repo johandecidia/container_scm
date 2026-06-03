@@ -4,6 +4,7 @@ Business logic belongs in services.py; queries belong in selectors.py.
 """
 
 from django.contrib import messages
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
@@ -22,13 +23,18 @@ from .selectors import (
 )
 from .services import create_supplier_delivery, mark_supplier_delivery_received, update_supplier_delivery
 
+DELIVERIES_PER_PAGE = 50
+
 
 @scm_login_required
 def supplier_delivery_list(request):
     team = request.default_team
-    deliveries = get_supplier_deliveries_for_team(team=team)
+    deliveries_qs = get_supplier_deliveries_for_team(team=team)
+    paginator = Paginator(deliveries_qs, DELIVERIES_PER_PAGE)
+    page_obj = paginator.get_page(request.GET.get("page"))
     context = {
-        "deliveries": deliveries,
+        "deliveries": page_obj,
+        "page_obj": page_obj,
         "team_slug": team.slug,
     }
     return render(request, "scm/supplier_deliveries/pages/supplier_delivery_list.html", context)

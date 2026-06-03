@@ -39,6 +39,11 @@ class PurchaseOrder(BaseTeamModel):
         verbose_name_plural = _("Purchase Orders")
         unique_together = [("team", "external_id")]
         ordering = ["-order_date", "po_number"]
+        indexes = [
+            models.Index(fields=["team", "status"]),
+            models.Index(fields=["team", "-order_date"]),
+            models.Index(fields=["team", "supplier_no"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.po_number} — {self.supplier_name}"

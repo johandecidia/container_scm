@@ -7,7 +7,12 @@ from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderLine
 
 def get_team_purchase_orders(team: Team):
     """Return all purchase orders for the given team, newest first."""
-    return PurchaseOrder.objects.filter(team=team).select_related("team").order_by("-order_date", "po_number")
+    return (
+        PurchaseOrder.objects.filter(team=team)
+        .select_related("team")
+        .prefetch_related("lines")
+        .order_by("-order_date", "po_number")
+    )
 
 
 def get_purchase_order_for_team(team: Team, purchase_order_id: int) -> PurchaseOrder:

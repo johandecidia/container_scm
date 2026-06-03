@@ -52,6 +52,11 @@ class SupplierDelivery(BaseTeamModel):
         verbose_name = _("Supplier Delivery")
         verbose_name_plural = _("Supplier Deliveries")
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["team", "status"]),
+            models.Index(fields=["team", "purchase_order"]),
+            models.Index(fields=["team", "-created_at"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.delivery_reference} — {self.purchase_order.po_number}"

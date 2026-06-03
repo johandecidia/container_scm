@@ -3,6 +3,7 @@
 Business logic belongs in services.py; queries belong in selectors.py.
 """
 
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, render
 
 from apps.scm.decorators import scm_login_required
@@ -14,14 +15,19 @@ from .selectors import (
 )
 from .services import calculate_purchase_order_fulfillment
 
+PURCHASE_ORDERS_PER_PAGE = 50
+
 
 @scm_login_required
 def purchase_order_list(request):
     team = request.default_team
-    purchase_orders = list(get_team_purchase_orders(team=team))
-    po_rows = [(po, calculate_purchase_order_fulfillment(po)) for po in purchase_orders]
+    po_qs = get_team_purchase_orders(team=team)
+    paginator = Paginator(po_qs, PURCHASE_ORDERS_PER_PAGE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    po_rows = [(po, calculate_purchase_order_fulfillment(po)) for po in page_obj]
     context = {
         "po_rows": po_rows,
+        "page_obj": page_obj,
         "team_slug": team.slug,
     }
     return render(request, "scm/procurement/pages/purchase_order_list.html", context)

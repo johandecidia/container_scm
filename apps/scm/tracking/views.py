@@ -1,6 +1,7 @@
 # Tracking views — request handling, response rendering, form handling only.
 # Business logic belongs in services.py; queries belong in selectors.py.
 from django.contrib import messages
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
 
@@ -21,14 +22,19 @@ from .services import (
 )
 from .timeline import get_tracking_timeline_items_for_shipment
 
+SUBSCRIPTIONS_PER_PAGE = 50
+
 
 @scm_login_required
 def tracking_list(request):
     """List all tracking subscriptions for the current team."""
     team = request.default_team
-    subscriptions = get_team_tracking_subscriptions(team=team)
+    subscriptions_qs = get_team_tracking_subscriptions(team=team)
+    paginator = Paginator(subscriptions_qs, SUBSCRIPTIONS_PER_PAGE)
+    page_obj = paginator.get_page(request.GET.get("page"))
     context = {
-        "subscriptions": subscriptions,
+        "subscriptions": page_obj,
+        "page_obj": page_obj,
         "status_choices": TrackingSubscription.Status.choices,
         "team_slug": team.slug,
     }
