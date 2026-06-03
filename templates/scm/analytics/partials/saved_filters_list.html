@@ -1,0 +1,34 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/analytics/partials/saved_filters_list.html" with saved_filters=filters view_key="shipments" %}
+  Also returned by HTMX from saved_filter_create / saved_filter_delete.
+{% endcomment %}
+
+<ul class="space-y-1" id="saved-filters-{{ view_key }}">
+  {% for f in saved_filters %}
+    <li class="flex items-center justify-between gap-2 py-1">
+      <a
+        href="?{{ f.params|urlencode }}"
+        class="text-sm link link-hover truncate flex-1"
+        title="{{ f.name }}"
+      >
+        <i class="fa fa-bookmark mr-1 text-base-content/40"></i>{{ f.name }}
+      </a>
+      <form
+        hx-post="{% url 'analytics:saved_filter_delete' f.pk %}"
+        hx-target="#saved-filters-{{ view_key }}"
+        hx-swap="outerHTML"
+        hx-confirm="{% translate 'Delete this saved filter?' %}"
+        class="inline"
+      >
+        {% csrf_token %}
+        <button type="submit" class="btn btn-ghost btn-xs text-error" aria-label="{% translate 'Delete' %}">
+          <i class="fa fa-trash"></i>
+        </button>
+      </form>
+    </li>
+  {% empty %}
+    <li class="text-sm text-base-content/50 py-1">{% translate "No saved filters yet." %}</li>
+  {% endfor %}
+</ul>
