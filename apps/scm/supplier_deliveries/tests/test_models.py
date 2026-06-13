@@ -1,5 +1,6 @@
 """Tests for supplier delivery models."""
 
+from django.db import IntegrityError
 from django.test import TestCase
 
 from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus
@@ -126,3 +127,53 @@ class SupplierDeliveryLineModelTest(TestCase):
             article="ITEM-001",
         )
         self.assertIn("DEL-001", str(dl))
+
+    def test_line_reverse_relation_on_delivery(self):
+        team = _team("sd-line-rev-team")
+        po = _po(team, po_number="PO-SDREV", external_id="bc-sdrev-001")
+        line = _po_line(team, po)
+        delivery = _delivery(team, po, "DEL-SDREV")
+        dl = SupplierDeliveryLine.objects.create(
+            team=team, delivery=delivery, purchase_order_line=line, delivery_qty=100
+        )
+        self.assertIn(dl, delivery.lines.all())
+
+
+class SupplierDeliveryConstraintsTest(TestCase):
+    def test_unique_delivery_reference_per_team(self):
+        team = _team("sd-unique-team")
+        po = _po(team, po_number="PO-UNIQ", external_id="bc-sd-uniq-001")
+        _delivery(team, po, "DEL-UNIQUE")
+        with self.assertRaises(IntegrityError):
+            SupplierDelivery.objects.create(
+                team=team,
+                purchase_order=po,
+                delivery_reference="DEL-UNIQUE",
+            )
+
+    def test_same_reference_different_teams_allowed(self):
+        team1 = _team("sd-team-alpha")
+        team2 = _team("sd-team-beta")
+        po1 = _po(team1, po_number="PO-SDREF1", external_id="bc-sdref-001")
+        po2 = _po(team2, po_number="PO-SDREF2", external_id="bc-sdref-002")
+        _delivery(team1, po1, "DEL-SHARED")
+        d2 = _delivery(team2, po2, "DEL-SHARED")
+        self.assertIsNotNone(d2.pk)
+
+    def test_deleting_delivery_cascades_lines(self):
+        team = _team("sd-cascade-team")
+        po = _po(team, po_number="PO-CASCADE-SD", external_id="bc-sd-casc-001")
+        line = _po_line(team, po)
+        delivery = _delivery(team, po, "DEL-CASCADE")
+        SupplierDeliveryLine.objects.create(team=team, delivery=delivery, purchase_order_line=line, delivery_qty=100)
+        pk = delivery.pk
+        delivery.delete()
+        self.assertEqual(SupplierDeliveryLine.objects.filter(delivery_id=pk).count(), 0)
+
+    def test_deleting_po_cascades_deliveries(self):
+        team = _team("sd-po-cascade-team")
+        po = _po(team, po_number="PO-PO-CASCADE", external_id="bc-po-casc-001")
+        _delivery(team, po, "DEL-PO-CASCADE")
+        pk = po.pk
+        po.delete()
+        self.assertEqual(SupplierDelivery.objects.filter(purchase_order_id=pk).count(), 0)

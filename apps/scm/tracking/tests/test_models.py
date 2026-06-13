@@ -1,11 +1,13 @@
 """Tests for tracking models."""
 
 from django.test import TestCase
+from django.utils import timezone
 
 from apps.scm.containers.models import Container, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.scm.shipments.models import Shipment
 from apps.scm.tracking.models import (
+    ETAHistory,
     TrackingEvent,
     TrackingProvider,
     TrackingRawPayload,
@@ -193,3 +195,80 @@ class TrackingSyncRunModelTest(TestCase):
             subscription=self.subscription,
         )
         self.assertIsNotNone(run.pk)
+
+    def test_default_status_started(self):
+        run = TrackingSyncRun.objects.create(
+            team=self.team,
+            provider=self.provider,
+            subscription=self.subscription,
+        )
+        self.assertEqual(run.status, TrackingSyncRun.Status.STARTED)
+
+    def test_deleting_subscription_cascades_sync_runs(self):
+        team = _team("sync-cascade-team")
+        provider = TrackingProvider.objects.create(
+            code="SYNC_CASCADE_PROV",
+            name="Sync Cascade Provider",
+            provider_type=TrackingProvider.ProviderType.API,
+        )
+        subscription = TrackingSubscription.objects.create(
+            team=team, provider=provider, tracking_reference="CASCADE-SYNC"
+        )
+        TrackingSyncRun.objects.create(team=team, provider=provider, subscription=subscription)
+        pk = subscription.pk
+        subscription.delete()
+        self.assertEqual(TrackingSyncRun.objects.filter(subscription_id=pk).count(), 0)
+
+
+class ETAHistoryModelTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = _team("eta-hist-team")
+        cls.shipment = Shipment.objects.create(team=cls.team, shipment_number="SHP-ETA-HIST")
+
+    def test_create_eta_history(self):
+        history = ETAHistory.objects.create(
+            team=self.team,
+            shipment=self.shipment,
+            changed_at=timezone.now(),
+        )
+        self.assertIsNotNone(history.pk)
+        self.assertEqual(history.team, self.team)
+        self.assertEqual(history.shipment, self.shipment)
+
+    def test_previous_and_new_eta_optional(self):
+        from datetime import date
+
+        history = ETAHistory.objects.create(
+            team=self.team,
+            shipment=self.shipment,
+            previous_eta=None,
+            new_eta=date(2025, 9, 1),
+            changed_at=timezone.now(),
+        )
+        self.assertIsNone(history.previous_eta)
+        self.assertEqual(str(history.new_eta), "2025-09-01")
+
+    def test_str_contains_shipment_reference(self):
+        history = ETAHistory.objects.create(
+            team=self.team,
+            shipment=self.shipment,
+            changed_at=timezone.now(),
+        )
+        self.assertIn("SHP-ETA-HIST", str(history))
+
+    def test_reverse_relation_on_shipment(self):
+        history = ETAHistory.objects.create(
+            team=self.team,
+            shipment=self.shipment,
+            changed_at=timezone.now(),
+        )
+        self.assertIn(history, self.shipment.eta_history.all())
+
+    def test_deleting_shipment_cascades_eta_history(self):
+        team = _team("eta-cascade-team")
+        shipment = Shipment.objects.create(team=team, shipment_number="SHP-ETA-CASCADE")
+        ETAHistory.objects.create(team=team, shipment=shipment, changed_at=timezone.now())
+        pk = shipment.pk
+        shipment.delete()
+        self.assertEqual(ETAHistory.objects.filter(shipment_id=pk).count(), 0)
