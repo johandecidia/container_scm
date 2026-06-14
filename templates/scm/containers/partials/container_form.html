@@ -2,11 +2,12 @@
 
 <dialog id="container-modal" class="modal modal-open">
   <div class="modal-box max-w-2xl">
+    <button type="button" class="btn btn-sm btn-ghost absolute left-2 top-2" aria-label="{% translate 'Close modal' %}" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
     <form method="post"
       hx-post="{{ form_action }}"
       hx-target="#container-table"
       hx-swap="outerHTML"
-      hx-on::after-request="if(event.detail.successful) document.getElementById('container-modal').close()"
+      hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''"
     >
       {% csrf_token %}
       <h3 class="font-bold text-lg mb-4">{{ modal_title }}</h3>
@@ -98,7 +99,7 @@
       </div>
 
       <div class="modal-action">
-        <button type="button" class="btn btn-ghost" onclick="document.getElementById('container-modal').close()">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">
           {% translate "Cancel" %}
         </button>
         <button type="submit" class="btn btn-primary">
@@ -107,7 +108,5 @@
       </div>
     </form>
   </div>
-  <form method="dialog" class="modal-backdrop">
-    <button>{% translate "close" %}</button>
-  </form>
+  <div class="modal-backdrop" onclick="document.getElementById('modal-container').innerHTML=''"></div>
 </dialog>
