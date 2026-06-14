@@ -3,7 +3,8 @@
 from typing import cast
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import Client, TestCase
+from django.urls import reverse
 from django.utils.datastructures import MultiValueDict
 
 from apps.scm.imports.forms import ImportUploadForm
@@ -84,3 +85,52 @@ class CreateImportJobServiceTest(TestCase):
         f = make_csv_file([], filename="my_data.csv")
         job = create_import_job(self.team, self.user, f, ImportJob.ImportType.CONTAINERS)
         self.assertEqual(job.original_filename, "my_data.csv")
+
+
+class ImportUploadViewPreselectionTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="presel-team")
+        cls.user = make_user("presel@example.com")
+        cls.team.members.add(cls.user)
+
+    def _client(self):
+        c = Client()
+        c.force_login(self.user)
+        session = c.session
+        session["team_id"] = self.team.pk
+        session.save()
+        return c
+
+    def _get_initial_import_type(self, response) -> str:
+        return response.context["form"].initial.get("import_type", "")
+
+    def test_purchase_orders_param_preselects_purchase_orders(self):
+        c = self._client()
+        resp = c.get(reverse("imports:upload") + "?import_type=purchase_orders")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._get_initial_import_type(resp), ImportJob.ImportType.PURCHASE_ORDERS)
+
+    def test_containers_param_preselects_containers(self):
+        c = self._client()
+        resp = c.get(reverse("imports:upload") + "?import_type=containers")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._get_initial_import_type(resp), ImportJob.ImportType.CONTAINERS)
+
+    def test_no_param_uses_empty_initial(self):
+        c = self._client()
+        resp = c.get(reverse("imports:upload"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._get_initial_import_type(resp), "")
+
+    def test_invalid_param_falls_back_safely(self):
+        c = self._client()
+        resp = c.get(reverse("imports:upload") + "?import_type=invalid_type")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._get_initial_import_type(resp), "")
+
+    def test_purchase_orders_page_import_link_includes_param(self):
+        c = self._client()
+        resp = c.get(reverse("procurement:purchase_order_list"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "import_type=purchase_orders")

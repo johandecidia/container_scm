@@ -46,7 +46,7 @@
         </table>
       </div>
     {% else %}
-      {% include "scm/components/empty_state.html" with icon="fa-file-invoice" title=_("No purchase orders yet") message=_("Import purchase orders from Business Central to start tracking fulfillment.") action_url="/scm/imports/upload/" action_label=_("Import data") %}
+      {% include "scm/components/empty_state.html" with icon="fa-file-invoice" title=_("No purchase orders yet") message=_("Import purchase orders from Business Central to start tracking fulfillment.") action_url="/scm/imports/upload/?import_type=purchase_orders" action_label=_("Import data") %}
     {% endif %}
   </section>
 {% endblock %}
