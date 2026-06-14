@@ -112,3 +112,53 @@ class PurchaseOrderDetailViewTest(TestCase):
         client.force_login(self.user)
         response = client.get(url)
         self.assertEqual(response.status_code, 404)
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
+class PurchaseOrderListEmptyStateTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="Empty PO Team", slug="empty-po-team")
+        cls.user = CustomUser.objects.create_user(username="proc-empty@example.com", password="pass")
+        cls.team.members.add(cls.user, through_defaults={"role": ROLE_MEMBER})
+
+    def test_list_empty_state_returns_200(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("procurement:purchase_order_list"))
+        self.assertEqual(response.status_code, 200)
+        # no POs created for this team — page_obj should be empty
+        po_rows = response.context["po_rows"]
+        self.assertEqual(len(po_rows), 0)
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
+class PurchaseOrderListContentTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="Content PO Team", slug="content-po-team")
+        cls.other_team = Team.objects.create(name="Other PO Team", slug="other-content-po-team")
+        cls.user = CustomUser.objects.create_user(username="proc-content@example.com", password="pass")
+        cls.team.members.add(cls.user, through_defaults={"role": ROLE_MEMBER})
+        cls.po = _make_po(cls.team, po_number="PO-LIST-001", external_id="bc-list-po-001")
+        _make_po(cls.other_team, po_number="PO-OTHER-LIST", external_id="bc-other-list-po")
+
+    def test_list_shows_own_po_number(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("procurement:purchase_order_list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "PO-LIST-001")
+
+    def test_list_does_not_show_other_team_po(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("procurement:purchase_order_list"))
+        self.assertNotContains(response, "PO-OTHER-LIST")
+
+    def test_anonymous_user_is_redirected(self):
+        client = Client()
+        response = client.get(reverse("procurement:purchase_order_list"))
+        self.assertIn(response.status_code, [302, 403])
+        if response.status_code == 302:
+            self.assertIn("/login/", response.get("Location", ""))
