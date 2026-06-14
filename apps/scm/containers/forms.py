@@ -3,7 +3,7 @@ from typing import cast
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
-from .models import Container, EquipmentType
+from .models import Container, ContainerLocation, EquipmentType
 from .utils import parse_container_id, validate_container_id
 
 
@@ -64,11 +64,12 @@ class ContainerForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
     )
-    current_location = forms.CharField(
+    current_location = forms.ModelChoiceField(
         label=_("Current location"),
-        max_length=200,
+        queryset=ContainerLocation.objects.none(),
         required=False,
-        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+        empty_label=_("— No location —"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
     notes = forms.CharField(
         label=_("Notes"),
@@ -76,9 +77,17 @@ class ContainerForm(forms.Form):
         widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 3}),
     )
 
-    def __init__(self, *args, instance: Container | None = None, **kwargs):
+    def __init__(self, *args, instance: Container | None = None, team=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._instance = instance
+        if team is not None:
+            self.fields["current_location"].queryset = ContainerLocation.objects.filter(
+                team=team, is_active=True
+            ).order_by("name")
+        elif instance is not None and instance.team_id:
+            self.fields["current_location"].queryset = ContainerLocation.objects.filter(
+                team_id=instance.team_id, is_active=True
+            ).order_by("name")
         if instance is not None:
             self.fields["container_id_input"].initial = instance.container_id
             self.fields["equipment_type"].initial = instance.equipment_type_id
@@ -89,7 +98,7 @@ class ContainerForm(forms.Form):
             self.fields["manufacture_date"].initial = instance.manufacture_date
             self.fields["manufacturer"].initial = instance.manufacturer
             self.fields["manufacturer_id"].initial = instance.manufacturer_id
-            self.fields["current_location"].initial = instance.current_location
+            self.fields["current_location"].initial = instance.current_location_id
             self.fields["notes"].initial = instance.notes
 
     def clean_container_id_input(self) -> dict:
@@ -122,7 +131,7 @@ class ContainerForm(forms.Form):
             "manufacture_date": self.cleaned_data.get("manufacture_date"),
             "manufacturer": self.cleaned_data.get("manufacturer", ""),
             "manufacturer_id": self.cleaned_data.get("manufacturer_id", ""),
-            "current_location": self.cleaned_data.get("current_location", ""),
+            "current_location": self.cleaned_data.get("current_location"),
             "notes": self.cleaned_data.get("notes", ""),
         }
 
@@ -150,3 +159,31 @@ class PlannedContainerForm(forms.Form):
 
     def clean_container_number(self) -> str:
         return self.cleaned_data["container_number"].upper().strip()
+
+
+class ContainerLocationForm(forms.ModelForm):
+    """Form for creating or editing a ContainerLocation."""
+
+    class Meta:
+        model = ContainerLocation
+        fields = [
+            "name",
+            "location_type",
+            "country",
+            "city",
+            "address",
+            "external_reference",
+            "owner_name",
+            "notes",
+            "is_active",
+        ]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "location_type": forms.Select(attrs={"class": "select select-bordered w-full"}),
+            "country": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "city": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "address": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
+            "external_reference": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "owner_name": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "notes": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
+        }

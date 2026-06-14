@@ -15,4 +15,9 @@ urlpatterns = [
     path("discovery/add/", views.planned_container_add, name="discovery_add"),
     path("discovery/run/", views.planned_container_run_discovery, name="discovery_run"),
     path("discovery/<int:pk>/cancel/", views.planned_container_cancel, name="discovery_cancel"),
+    # Container locations
+    path("locations/", views.container_location_list, name="location_list"),
+    path("locations/create/", views.container_location_create, name="location_create"),
+    path("locations/<int:location_id>/edit/", views.container_location_update, name="location_update"),
+    path("locations/<int:location_id>/deactivate/", views.container_location_deactivate, name="location_deactivate"),
 ]

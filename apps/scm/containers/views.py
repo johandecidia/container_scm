@@ -16,10 +16,15 @@ from .discovery import (
     get_planned_containers,
     run_discovery_for_team,
 )
-from .forms import ContainerForm, PlannedContainerForm
-from .models import Container, PlannedContainer, PlannedContainerStatus
-from .selectors import filter_containers, get_active_equipment_types, get_container_workspace
-from .services import create_container, delete_container, update_container
+from .forms import ContainerForm, ContainerLocationForm, PlannedContainerForm
+from .models import Container, ContainerLocation, PlannedContainer, PlannedContainerStatus
+from .selectors import (
+    filter_containers,
+    get_active_equipment_types,
+    get_container_workspace,
+    get_team_locations_with_counts,
+)
+from .services import create_container, create_location, delete_container, update_container, update_location
 
 CONTAINERS_PER_PAGE = 25
 
@@ -32,16 +37,24 @@ def container_list(request):
         status=request.GET.get("status"),
         condition=request.GET.get("condition"),
         equipment_type=request.GET.get("equipment_type"),
+        location_type=request.GET.get("location_type"),
+        location_id=request.GET.get("location_id"),
+        missing_location=request.GET.get("missing_location") == "1",
         search=request.GET.get("search"),
         sort=request.GET.get("sort", "newest"),
     )
     paginator = Paginator(containers_qs, CONTAINERS_PER_PAGE)
     page_obj = paginator.get_page(request.GET.get("page"))
     saved_filters = get_saved_filters(team, request.user, SavedFilter.ViewKey.CONTAINERS)
+    from .choices import LocationType
+    from .selectors import get_team_locations
+
     context = {
         "containers": page_obj,
         "page_obj": page_obj,
         "equipment_types": get_active_equipment_types(),
+        "locations": get_team_locations(team),
+        "location_types": LocationType.choices,
         "saved_filters": saved_filters,
         "view_key": SavedFilter.ViewKey.CONTAINERS,
         "team_slug": team.slug,
@@ -67,7 +80,7 @@ def container_detail(request, container_id):
 def container_create(request):
     team = request.default_team
     if request.method == "POST":
-        form = ContainerForm(request.POST)
+        form = ContainerForm(request.POST, team=team)
         if form.is_valid():
             create_container(team=team, user=request.user, data=form.get_container_data())
             if request.htmx:
@@ -98,7 +111,7 @@ def container_create(request):
                 },
             )
     else:
-        form = ContainerForm()
+        form = ContainerForm(team=team)
 
     context = {
         "form": form,
@@ -114,7 +127,7 @@ def container_update(request, container_id):
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
     if request.method == "POST":
-        form = ContainerForm(request.POST, instance=container)
+        form = ContainerForm(request.POST, instance=container, team=team)
         if form.is_valid():
             container = update_container(container=container, user=request.user, data=form.get_container_data())
             if request.htmx:
@@ -137,7 +150,7 @@ def container_update(request, container_id):
                 },
             )
     else:
-        form = ContainerForm(instance=container)
+        form = ContainerForm(instance=container, team=team)
 
     context = {
         "form": form,
@@ -236,3 +249,104 @@ def planned_container_run_discovery(request):
             _(f"Discovery complete: checked {summary['checked']}, detected {summary['detected']}."),
         )
     return redirect("containers:discovery_dashboard")
+
+
+# ---------------------------------------------------------------------------
+# Container location views
+# ---------------------------------------------------------------------------
+
+
+@scm_login_required
+def container_location_list(request):
+    """List all container locations with container counts."""
+    team = request.default_team
+    locations = get_team_locations_with_counts(team)
+    return render(
+        request,
+        "scm/containers/pages/container_location_list.html",
+        {"locations": locations, "team_slug": team.slug},
+    )
+
+
+@scm_login_required
+def container_location_create(request):
+    """Create a new container location."""
+    team = request.default_team
+    if request.method == "POST":
+        form = ContainerLocationForm(request.POST)
+        if form.is_valid():
+            create_location(team=team, data=form.cleaned_data)
+            if request.htmx:
+                locations = get_team_locations_with_counts(team)
+                return render(
+                    request,
+                    "scm/containers/partials/container_location_table.html",
+                    {"locations": locations, "team_slug": team.slug},
+                )
+            messages.success(request, _("Location created."))
+            return redirect("containers:location_list")
+        if request.htmx:
+            return render(
+                request,
+                "scm/containers/partials/container_location_form.html",
+                {"form": form, "modal_title": _("New Location"), "form_action": request.path, "team_slug": team.slug},
+            )
+    else:
+        form = ContainerLocationForm()
+    return render(
+        request,
+        "scm/containers/partials/container_location_form.html",
+        {"form": form, "modal_title": _("New Location"), "form_action": request.path, "team_slug": team.slug},
+    )
+
+
+@scm_login_required
+def container_location_update(request, location_id):
+    """Edit an existing container location."""
+    team = request.default_team
+    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
+    if request.method == "POST":
+        form = ContainerLocationForm(request.POST, instance=location)
+        if form.is_valid():
+            update_location(location=location, data=form.cleaned_data)
+            if request.htmx:
+                locations = get_team_locations_with_counts(team)
+                return render(
+                    request,
+                    "scm/containers/partials/container_location_table.html",
+                    {"locations": locations, "team_slug": team.slug},
+                )
+            messages.success(request, _("Location updated."))
+            return redirect("containers:location_list")
+        if request.htmx:
+            return render(
+                request,
+                "scm/containers/partials/container_location_form.html",
+                {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
+            )
+    else:
+        form = ContainerLocationForm(instance=location)
+    return render(
+        request,
+        "scm/containers/partials/container_location_form.html",
+        {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
+    )
+
+
+@scm_login_required
+def container_location_deactivate(request, location_id):
+    """Toggle active state of a container location."""
+    team = request.default_team
+    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
+    if request.method == "POST":
+        location.is_active = not location.is_active
+        location.save(update_fields=["is_active"])
+        if request.htmx:
+            locations = get_team_locations_with_counts(team)
+            return render(
+                request,
+                "scm/containers/partials/container_location_table.html",
+                {"locations": locations, "team_slug": team.slug},
+            )
+        messages.success(request, _("Location updated."))
+    return redirect("containers:location_list")

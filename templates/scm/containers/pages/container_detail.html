@@ -48,7 +48,12 @@
     </div>
     <div class="bg-base-200 rounded-box p-3">
       <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Location" %}</p>
-      <p class="font-medium text-sm">{{ container.current_location|default:"—" }}</p>
+      {% if container.current_location %}
+        <p class="font-medium text-sm">{{ container.current_location.name }}</p>
+        <p class="text-xs text-base-content/50">{{ container.current_location.get_location_type_display }}</p>
+      {% else %}
+        <p class="font-medium text-sm">—</p>
+      {% endif %}
     </div>
     <div class="bg-base-200 rounded-box p-3">
       <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Shipments" %}</p>
@@ -175,6 +180,74 @@
           {% endfor %}
         </ul>
       {% endif %}
+    </section>
+  {% endif %}
+
+  {# Location details #}
+  {% if container.current_location %}
+    <section class="app-card mt-6">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Location Details" %}</h2>
+      <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Location" %}</dt>
+          <dd class="font-medium text-sm">{{ container.current_location.name }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Type" %}</dt>
+          <dd class="font-medium text-sm">{{ container.current_location.get_location_type_display }}</dd>
+        </div>
+        {% if container.current_location.city or container.current_location.country %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Place" %}</dt>
+            <dd class="font-medium text-sm">
+              {{ container.current_location.city }}{% if container.current_location.city and container.current_location.country %}, {% endif %}{{ container.current_location.country }}
+            </dd>
+          </div>
+        {% endif %}
+        {% if container.last_location_update %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Last updated" %}</dt>
+            <dd class="font-medium text-sm">{{ container.last_location_update|date:"Y-m-d H:i" }}</dd>
+          </div>
+        {% endif %}
+        {% if container.location_source %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Source" %}</dt>
+            <dd class="font-medium text-sm">{{ container.get_location_source_display }}</dd>
+          </div>
+        {% endif %}
+      </dl>
+    </section>
+  {% endif %}
+
+  {# Movement history #}
+  {% if workspace.movements %}
+    <section class="app-card mt-6">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Movement History" %}</h2>
+      <ul class="divide-y divide-base-200">
+        {% for movement in workspace.movements %}
+          <li class="py-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <p class="text-sm font-medium">
+                  {% if movement.from_location %}
+                    {{ movement.from_location.name }} → {{ movement.to_location.name|default:"—" }}
+                  {% else %}
+                    → {{ movement.to_location.name|default:"—" }}
+                  {% endif %}
+                </p>
+                <p class="text-xs text-base-content/50 mt-0.5">
+                  {{ movement.get_movement_type_display }} · {{ movement.occurred_at|date:"Y-m-d H:i" }}
+                  {% if movement.source %} · {{ movement.get_source_display }}{% endif %}
+                </p>
+                {% if movement.notes %}
+                  <p class="text-xs text-base-content/60 mt-1">{{ movement.notes }}</p>
+                {% endif %}
+              </div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
     </section>
   {% endif %}
 

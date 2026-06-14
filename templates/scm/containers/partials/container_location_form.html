@@ -1,0 +1,65 @@
+{% load i18n %}
+
+<div class="modal modal-open">
+  <div class="modal-box max-w-lg">
+    <h3 class="font-bold text-lg mb-4">{{ modal_title }}</h3>
+    <form
+      method="post"
+      action="{{ form_action }}"
+      hx-post="{{ form_action }}"
+      hx-target="#location-table"
+      hx-swap="outerHTML"
+    >
+      {% csrf_token %}
+      <div class="space-y-4">
+        <div class="form-control">
+          <label class="label"><span class="label-text">{{ form.name.label }}</span></label>
+          {{ form.name }}
+          {% if form.name.errors %}<p class="text-error text-xs mt-1">{{ form.name.errors|join:" " }}</p>{% endif %}
+        </div>
+        <div class="form-control">
+          <label class="label"><span class="label-text">{{ form.location_type.label }}</span></label>
+          {{ form.location_type }}
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.country.label }}</span></label>
+            {{ form.country }}
+          </div>
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.city.label }}</span></label>
+            {{ form.city }}
+          </div>
+        </div>
+        <div class="form-control">
+          <label class="label"><span class="label-text">{{ form.address.label }}</span></label>
+          {{ form.address }}
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.external_reference.label }}</span></label>
+            {{ form.external_reference }}
+          </div>
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.owner_name.label }}</span></label>
+            {{ form.owner_name }}
+          </div>
+        </div>
+        <div class="form-control">
+          <label class="label"><span class="label-text">{{ form.notes.label }}</span></label>
+          {{ form.notes }}
+        </div>
+        <div class="form-control">
+          <label class="label cursor-pointer justify-start gap-2">
+            {{ form.is_active }}
+            <span class="label-text">{{ form.is_active.label }}</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-action">
+        <button type="button" class="btn btn-ghost" onclick="this.closest('.modal').remove()">{% translate "Cancel" %}</button>
+        <button type="submit" class="btn btn-primary">{% translate "Save" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

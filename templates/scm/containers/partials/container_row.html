@@ -13,7 +13,7 @@
   <td class="text-sm">{{ container.equipment_type.description|default:"—" }}</td>
   <td>{% include "scm/components/status_badge.html" with status=container.status %}</td>
   <td class="text-sm">{{ container.get_condition_display }}</td>
-  <td class="text-sm text-base-content/60">{{ container.current_location|default:"—" }}</td>
+  <td class="text-sm text-base-content/60">{{ container.current_location.name|default:"—" }}</td>
   <td class="text-sm text-base-content/60">{{ container.manufacturer|default:"—" }}</td>
   <td class="text-right">
     <div class="flex justify-end gap-1">
