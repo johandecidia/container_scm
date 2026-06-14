@@ -4,7 +4,16 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.teams.models import BaseTeamModel
 
-from .choices import ColorSystem, ContainerCategory, ContainerCondition, ContainerStatus, EquipmentCategory
+from .choices import (
+    ColorSystem,
+    ContainerCategory,
+    ContainerCondition,
+    ContainerStatus,
+    EquipmentCategory,
+    LocationSource,
+    LocationType,
+    MovementType,
+)
 from .utils import validate_container_id
 
 
@@ -19,6 +28,42 @@ class PlannedContainerStatus(models.TextChoices):
 def equipment_type_image_path(instance, filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1]
     return f"equipment_types/{instance.iso_code}.{ext}"
+
+
+class ContainerLocation(BaseTeamModel):
+    """A named location where containers can be positioned along the supply chain."""
+
+    name = models.CharField(_("name"), max_length=200)
+    location_type = models.CharField(
+        _("location type"),
+        max_length=30,
+        choices=LocationType.choices,
+        default=LocationType.UNKNOWN,
+    )
+    country = models.CharField(_("country"), max_length=100, blank=True)
+    city = models.CharField(_("city"), max_length=100, blank=True)
+    address = models.TextField(_("address"), blank=True)
+    external_reference = models.CharField(_("external reference"), max_length=100, blank=True)
+    owner_name = models.CharField(_("owner name"), max_length=200, blank=True)
+    notes = models.TextField(_("notes"), blank=True)
+    is_active = models.BooleanField(_("active"), default=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [
+            models.Index(fields=["team", "location_type"]),
+            models.Index(fields=["team", "is_active"]),
+        ]
+        verbose_name = _("Container Location")
+        verbose_name_plural = _("Container Locations")
+
+    def __str__(self) -> str:
+        parts = [self.name]
+        if self.city:
+            parts.append(self.city)
+        if self.country:
+            parts.append(self.country)
+        return ", ".join(parts)
 
 
 class EquipmentType(models.Model):
@@ -111,7 +156,22 @@ class Container(BaseTeamModel):
     manufacture_date = models.DateField(_("manufacture date"), null=True, blank=True)
     manufacturer = models.CharField(_("manufacturer"), max_length=100, blank=True)
     manufacturer_id = models.CharField(_("manufacturer ID"), max_length=100, blank=True)
-    current_location = models.CharField(_("current location"), max_length=200, blank=True)
+    current_location = models.ForeignKey(
+        ContainerLocation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="containers",
+        verbose_name=_("current location"),
+    )
+    last_location_update = models.DateTimeField(_("last location update"), null=True, blank=True)
+    location_source = models.CharField(
+        _("location source"),
+        max_length=30,
+        choices=LocationSource.choices,
+        blank=True,
+    )
+    location_text = models.CharField(_("location (text)"), max_length=200, blank=True)
     notes = models.TextField(_("notes"), blank=True)
 
     created_by = models.ForeignKey(
@@ -138,6 +198,7 @@ class Container(BaseTeamModel):
             models.Index(fields=["team", "condition"]),
             models.Index(fields=["team", "equipment_type"]),
             models.Index(fields=["team", "current_location"]),
+            models.Index(fields=["team", "last_location_update"]),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -230,3 +291,80 @@ class PlannedContainer(BaseTeamModel):
 
     def __str__(self) -> str:
         return f"{self.container_number} ({self.get_status_display()})"
+
+
+class ContainerMovement(BaseTeamModel):
+    """Records a container's movement between locations, forming a position history."""
+
+    container = models.ForeignKey(
+        Container,
+        on_delete=models.CASCADE,
+        related_name="movements",
+        verbose_name=_("container"),
+    )
+    from_location = models.ForeignKey(
+        ContainerLocation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="departures",
+        verbose_name=_("from location"),
+    )
+    to_location = models.ForeignKey(
+        ContainerLocation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="arrivals",
+        verbose_name=_("to location"),
+    )
+    movement_type = models.CharField(
+        _("movement type"),
+        max_length=30,
+        choices=MovementType.choices,
+        default=MovementType.UNKNOWN,
+    )
+    occurred_at = models.DateTimeField(_("occurred at"))
+    source = models.CharField(
+        _("source"),
+        max_length=30,
+        choices=LocationSource.choices,
+        default=LocationSource.MANUAL,
+    )
+    related_shipment = models.ForeignKey(
+        "scm_shipments.Shipment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="container_movements",
+        verbose_name=_("related shipment"),
+    )
+    related_supplier_delivery = models.ForeignKey(
+        "scm_supplier_deliveries.SupplierDelivery",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="container_movements",
+        verbose_name=_("related supplier delivery"),
+    )
+    related_tracking_event = models.ForeignKey(
+        "scm_tracking.TrackingEvent",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="container_movements",
+        verbose_name=_("related tracking event"),
+    )
+    notes = models.TextField(_("notes"), blank=True)
+
+    class Meta:
+        ordering = ["-occurred_at", "-created_at"]
+        indexes = [
+            models.Index(fields=["team", "container"]),
+            models.Index(fields=["team", "occurred_at"]),
+        ]
+        verbose_name = _("Container Movement")
+        verbose_name_plural = _("Container Movements")
+
+    def __str__(self) -> str:
+        return f"{self.container} → {self.to_location} ({self.occurred_at:%Y-%m-%d})"
