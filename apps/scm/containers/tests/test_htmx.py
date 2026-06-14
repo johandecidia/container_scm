@@ -103,7 +103,6 @@ class ContainerHtmxTest(TestCase):
                 "status": "BOOKED",
                 "condition": "GOOD",
                 "color_system": "UNKNOWN",
-                "current_location": "Rotterdam",
             },
             HTTP_HX_REQUEST="true",
         )

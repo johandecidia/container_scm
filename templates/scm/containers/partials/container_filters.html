@@ -42,6 +42,27 @@
     {% endfor %}
   </select>
 
+  <select name="location_type" class="select select-bordered select-sm">
+    <option value="">{% translate "All location types" %}</option>
+    {% for value, label in location_types %}
+      <option value="{{ value }}" {% if request.GET.location_type == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+
+  {% if locations %}
+    <select name="location_id" class="select select-bordered select-sm">
+      <option value="">{% translate "All locations" %}</option>
+      {% for loc in locations %}
+        <option value="{{ loc.pk }}" {% if request.GET.location_id == loc.pk|stringformat:"s" %}selected{% endif %}>{{ loc.name }}</option>
+      {% endfor %}
+    </select>
+  {% endif %}
+
+  <label class="flex items-center gap-1 cursor-pointer select select-bordered select-sm px-3">
+    <input type="checkbox" name="missing_location" value="1" class="checkbox checkbox-sm" {% if request.GET.missing_location == "1" %}checked{% endif %}>
+    <span class="text-sm">{% translate "Missing location" %}</span>
+  </label>
+
   <select name="sort" class="select select-bordered select-sm">
     <option value="newest" {% if request.GET.sort == "newest" or not request.GET.sort %}selected{% endif %}>{% translate "Newest" %}</option>
     <option value="oldest" {% if request.GET.sort == "oldest" %}selected{% endif %}>{% translate "Oldest" %}</option>

@@ -41,7 +41,8 @@ def search_scm(team: Team, query: str) -> list[SearchResult]:
         .filter(
             Q(owner_code__icontains=q)
             | Q(serial_number__icontains=q)
-            | Q(current_location__icontains=q)
+            | Q(current_location__name__icontains=q)
+            | Q(location_text__icontains=q)
             | Q(manufacturer__icontains=q)
         )
         .select_related("equipment_type")[:10]

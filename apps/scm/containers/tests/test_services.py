@@ -70,19 +70,19 @@ class UpdateContainerTest(TestCase):
 
     def test_updates_fields(self):
         c = self._make()
-        updated = update_container(container=c, user=self.other_user, data={"current_location": "Oslo"})
-        self.assertEqual(updated.current_location, "Oslo")
+        updated = update_container(container=c, user=self.other_user, data={"location_text": "Oslo"})
+        self.assertEqual(updated.location_text, "Oslo")
 
     def test_sets_updated_by(self):
         c = self._make()
-        updated = update_container(container=c, user=self.other_user, data={"current_location": "Oslo"})
+        updated = update_container(container=c, user=self.other_user, data={"location_text": "Oslo"})
         self.assertEqual(updated.updated_by, self.other_user)
 
     def test_persists_to_db(self):
         c = self._make()
-        update_container(container=c, user=self.other_user, data={"current_location": "Oslo"})
+        update_container(container=c, user=self.other_user, data={"location_text": "Oslo"})
         c.refresh_from_db()
-        self.assertEqual(c.current_location, "Oslo")
+        self.assertEqual(c.location_text, "Oslo")
 
 
 class DeleteContainerTest(TestCase):

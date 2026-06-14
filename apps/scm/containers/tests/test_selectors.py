@@ -96,7 +96,7 @@ class FilterContainersTest(TestCase):
             serial="305418",
             status=ContainerStatus.AVAILABLE,
             condition=ContainerCondition.NEW,
-            current_location="Rotterdam",
+            location_text="Rotterdam",
             manufacturer="CIMC",
         )
         cls.c2 = Container.objects.create(
@@ -108,7 +108,7 @@ class FilterContainersTest(TestCase):
             equipment_type=et_40hc,
             status=ContainerStatus.IN_TRANSIT,
             condition=ContainerCondition.GOOD,
-            current_location="Hamburg",
+            location_text="Hamburg",
             manufacturer="Singamas",
         )
 
