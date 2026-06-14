@@ -1,5 +1,7 @@
 """Import confirmation: create or update SCM objects from validated rows."""
 
+from decimal import Decimal
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -65,8 +67,58 @@ def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bo
     return "created"
 
 
+def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existing: bool = False) -> str:
+    """Import a single PO row (one PO line). Returns 'created', 'updated', or 'skipped'."""
+    from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine
+
+    data = row.validated_data
+    po_external_id = data.get("po_external_id") or data.get("po_number", "")
+    line_external_id = data.get("line_external_id") or f"{data.get('po_number', '')}-{data.get('line_no', '')}"
+
+    if not po_external_id or not data.get("line_no"):
+        return "skipped"
+
+    # Upsert PO header (idempotent — multiple rows share the same PO).
+    po, _ = PurchaseOrder.objects.update_or_create(
+        team=job.team,
+        external_id=po_external_id,
+        defaults={
+            "po_number": data.get("po_number", ""),
+            "supplier_no": data.get("supplier_no", ""),
+            "supplier_name": data.get("supplier_name", ""),
+            "order_date": data.get("order_date"),
+            "expected_receipt_date": data.get("expected_receipt_date"),
+            "currency": data.get("currency", "EUR"),
+            "status": "open",
+        },
+    )
+
+    # Check for existing line before upsert.
+    line_exists = PurchaseOrderLine.objects.filter(purchase_order=po, external_id=line_external_id).exists()
+    if line_exists and not update_existing:
+        return "skipped"
+
+    _, line_created = PurchaseOrderLine.objects.update_or_create(
+        purchase_order=po,
+        external_id=line_external_id,
+        defaults={
+            "team": job.team,
+            "line_no": data.get("line_no", ""),
+            "item_no": data.get("item_no", ""),
+            "description": data.get("description", ""),
+            "ordered_qty": data.get("ordered_qty", Decimal("0")),
+            "shipped_qty": Decimal("0"),
+            "received_qty": Decimal("0"),
+            "expected_receipt_date": data.get("expected_receipt_date"),
+        },
+    )
+
+    return "created" if line_created else "updated"
+
+
 _IMPORTERS: dict = {
     ImportJob.ImportType.CONTAINERS: _import_container_row,
+    ImportJob.ImportType.PURCHASE_ORDERS: _import_purchase_order_row,
 }
 
 

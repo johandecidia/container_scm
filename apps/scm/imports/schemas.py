@@ -1,5 +1,9 @@
 """Pydantic schemas for import row normalisation and type validation."""
 
+import datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 from .models import ImportJob
@@ -51,9 +55,79 @@ class ContainerImportSchema(BaseModel):
         return None
 
 
+_DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y")
+
+
+class PurchaseOrderImportRowSchema(BaseModel):
+    """Normalise and validate a single flat PO import row (one row = one PO line).
+
+    Pydantic handles: whitespace trimming, type coercion, date parsing, quantity
+    validation and currency normalisation.  Business / DB rules (duplicate checks
+    etc.) are handled separately in validators.py.
+    """
+
+    po_number: str = Field(..., description="PO number, e.g. PO-2026-001")
+    supplier_no: str = Field(..., description="Supplier number")
+    supplier_name: str = Field(..., description="Supplier name")
+    order_date: datetime.date | None = None
+    expected_receipt_date: datetime.date | None = None
+    currency: str = Field(default="EUR", description="ISO 3-letter currency code")
+    line_no: str = Field(..., description="PO line number, e.g. 10000")
+    item_no: str = Field(..., description="Item / SKU number")
+    description: str = Field(default="")
+    ordered_qty: Decimal = Field(..., description="Ordered quantity, must be positive")
+
+    @field_validator("po_number", "supplier_no", "supplier_name", "line_no", "item_no", mode="before")
+    @classmethod
+    def strip_required_str(cls, v: Any) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("This field is required")
+        return str(v).strip()
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def strip_description(cls, v: Any) -> str:
+        return str(v).strip() if v else ""
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalise_currency(cls, v: Any) -> str:
+        if not v or not str(v).strip():
+            return "EUR"
+        return str(v).strip().upper()
+
+    @field_validator("ordered_qty", mode="before")
+    @classmethod
+    def validate_ordered_qty(cls, v: Any) -> Decimal:
+        if v is None or str(v).strip() == "":
+            raise ValueError("ordered_qty is required")
+        raw = str(v).strip().replace(",", ".")
+        try:
+            qty = Decimal(raw)
+        except InvalidOperation as err:
+            raise ValueError(f"Invalid quantity: {v!r} — must be a number") from err
+        if qty <= 0:
+            raise ValueError(f"ordered_qty must be positive, got {qty}")
+        return qty
+
+    @field_validator("order_date", "expected_receipt_date", mode="before")
+    @classmethod
+    def parse_date_field(cls, v: Any) -> datetime.date | None:
+        if not v or not str(v).strip():
+            return None
+        raw = str(v).strip()
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.datetime.strptime(raw, fmt).date()
+            except ValueError:
+                continue
+        raise ValueError(f"Invalid date {raw!r}. Expected YYYY-MM-DD or DD-MM-YYYY")
+
+
 # Registry of schema classes per import type.
 _SCHEMA_REGISTRY: dict[str, type[BaseModel]] = {
     ImportJob.ImportType.CONTAINERS: ContainerImportSchema,
+    ImportJob.ImportType.PURCHASE_ORDERS: PurchaseOrderImportRowSchema,
 }
 
 
@@ -69,7 +143,7 @@ def validate_row_data(import_type: str, mapped_data: dict) -> tuple[dict, list[d
 
     try:
         instance = schema_cls.model_validate(mapped_data)
-        return instance.model_dump(), []
+        return instance.model_dump(mode="json"), []
     except Exception as exc:
         errors: list[dict] = []
         if hasattr(exc, "errors"):

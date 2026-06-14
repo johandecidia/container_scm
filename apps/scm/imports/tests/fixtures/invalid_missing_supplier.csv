@@ -1,0 +1,3 @@
+PO Number,Supplier No,Supplier Name,Order Date,Expected Receipt Date,Currency,Line No,Item No,Description,Ordered Qty
+PO-2026-003,,Missing Supplier Name,2026-03-15,2026-06-01,USD,10000,ITM-004,Widget D,10
+PO-2026-004,SUPP-003,,2026-03-15,2026-06-01,USD,10000,ITM-005,Widget E,15

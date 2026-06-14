@@ -22,8 +22,41 @@ DEFAULT_CONTAINER_MAPPING: dict[str, str] = {
     "Manufacturer": "manufacturer",
 }
 
+DEFAULT_PO_MAPPING: dict[str, str] = {
+    # PO header
+    "PO Number": "po_number",
+    "PO No": "po_number",
+    "Purchase Order": "po_number",
+    "Order Number": "po_number",
+    "Supplier No": "supplier_no",
+    "Supplier Number": "supplier_no",
+    "Vendor No": "supplier_no",
+    "Vendor Number": "supplier_no",
+    "Supplier Name": "supplier_name",
+    "Vendor Name": "supplier_name",
+    "Order Date": "order_date",
+    "Expected Receipt Date": "expected_receipt_date",
+    "Expected Delivery Date": "expected_receipt_date",
+    "Delivery Date": "expected_receipt_date",
+    "Currency": "currency",
+    # PO line
+    "Line No": "line_no",
+    "Line Number": "line_no",
+    "Item No": "item_no",
+    "Item Number": "item_no",
+    "SKU": "item_no",
+    "Article": "item_no",
+    "Article No": "item_no",
+    "Description": "description",
+    "Ordered Qty": "ordered_qty",
+    "Quantity": "ordered_qty",
+    "Qty": "ordered_qty",
+    "Order Qty": "ordered_qty",
+}
+
 _DEFAULT_MAPPINGS: dict[str, dict[str, str]] = {
     ImportJob.ImportType.CONTAINERS: DEFAULT_CONTAINER_MAPPING,
+    ImportJob.ImportType.PURCHASE_ORDERS: DEFAULT_PO_MAPPING,
 }
 
 
