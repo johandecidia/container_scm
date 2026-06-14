@@ -22,6 +22,26 @@ DEFAULT_CONTAINER_MAPPING: dict[str, str] = {
     "Manufacturer": "manufacturer",
 }
 
+DEFAULT_CONTAINER_MOVEMENT_MAPPING: dict[str, str] = {
+    "Container No": "container_number",
+    "Container Number": "container_number",
+    "Container ID": "container_number",
+    "Container": "container_number",
+    "Location": "location_name",
+    "Location Name": "location_name",
+    "Depot": "location_name",
+    "Location Type": "location_type",
+    "Type": "location_type",
+    "Country": "country",
+    "City": "city",
+    "Address": "address",
+    "Occurred At": "occurred_at",
+    "Date": "occurred_at",
+    "Event Date": "occurred_at",
+    "Source": "source",
+    "Notes": "notes",
+}
+
 DEFAULT_PO_MAPPING: dict[str, str] = {
     # PO header
     "PO Number": "po_number",
@@ -56,6 +76,7 @@ DEFAULT_PO_MAPPING: dict[str, str] = {
 
 _DEFAULT_MAPPINGS: dict[str, dict[str, str]] = {
     ImportJob.ImportType.CONTAINERS: DEFAULT_CONTAINER_MAPPING,
+    ImportJob.ImportType.CONTAINER_MOVEMENTS: DEFAULT_CONTAINER_MOVEMENT_MAPPING,
     ImportJob.ImportType.PURCHASE_ORDERS: DEFAULT_PO_MAPPING,
 }
 

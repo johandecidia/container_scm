@@ -5,7 +5,8 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.choices import LocationSource, LocationType, MovementType
+from apps.scm.containers.models import Container, ContainerLocation, ContainerMovement, EquipmentType
 
 from .models import ImportJob, ImportRow
 
@@ -44,7 +45,7 @@ def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bo
             if data.get("status"):
                 existing.status = data["status"]
             if data.get("current_location"):
-                existing.current_location = data["current_location"]
+                existing.location_text = data["current_location"]
             existing.updated_by = job.created_by
             existing.save()
             return "updated"
@@ -60,7 +61,7 @@ def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bo
         serial_number=parts["serial_number"],
         check_digit=parts["check_digit"],
         status=data.get("status") or "AVAILABLE",
-        current_location=data.get("current_location") or "",
+        location_text=data.get("current_location") or "",
         notes=data.get("notes") or "",
         manufacturer=data.get("manufacturer") or "",
     )
@@ -116,8 +117,79 @@ def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existin
     return "created" if line_created else "updated"
 
 
+def _import_container_movement_row(row: ImportRow, job: ImportJob, *, update_existing: bool = False) -> str:  # noqa: ARG001
+    """Import a single container movement row. Returns 'created', 'updated', or 'skipped'."""
+    data = row.validated_data
+    container_number = data.get("container_number", "")
+    location_name = data.get("location_name", "")
+
+    if not container_number or not location_name:
+        return "skipped"
+
+    # Parse container number into parts (owner_code + category + serial)
+    if len(container_number) < 10:
+        return "skipped"
+    owner_code = container_number[:3].upper()
+    category_id = container_number[3:4].upper()
+    serial_number = container_number[4:10]
+
+    try:
+        container = Container.objects.get(
+            team=job.team,
+            owner_code=owner_code,
+            category_id=category_id,
+            serial_number=serial_number,
+        )
+    except Container.DoesNotExist:
+        return "skipped"
+
+    # Get or create the location
+    location_type = data.get("location_type") or LocationType.UNKNOWN
+    valid_types = [lt[0] for lt in LocationType.choices]
+    if location_type not in valid_types:
+        location_type = LocationType.UNKNOWN
+
+    location, _ = ContainerLocation.objects.get_or_create(
+        team=job.team,
+        name=location_name,
+        defaults={
+            "location_type": location_type,
+            "country": data.get("country") or "",
+            "city": data.get("city") or "",
+            "address": data.get("address") or "",
+        },
+    )
+
+    # Determine occurred_at
+    occurred_at = data.get("occurred_at")
+    if occurred_at is None:
+        occurred_at = timezone.now()
+    elif not timezone.is_aware(occurred_at):
+        occurred_at = timezone.make_aware(occurred_at)
+
+    # Create movement and update container location
+    old_location = container.current_location
+    ContainerMovement.objects.create(
+        team=job.team,
+        container=container,
+        from_location=old_location,
+        to_location=location,
+        movement_type=MovementType.POSITION_UPDATE,
+        occurred_at=occurred_at,
+        source=LocationSource.IMPORT,
+        notes=data.get("notes") or "",
+    )
+    container.current_location = location
+    container.location_source = LocationSource.IMPORT
+    container.last_location_update = occurred_at
+    container.save(update_fields=["current_location", "location_source", "last_location_update"])
+
+    return "created"
+
+
 _IMPORTERS: dict = {
     ImportJob.ImportType.CONTAINERS: _import_container_row,
+    ImportJob.ImportType.CONTAINER_MOVEMENTS: _import_container_movement_row,
     ImportJob.ImportType.PURCHASE_ORDERS: _import_purchase_order_row,
 }
 

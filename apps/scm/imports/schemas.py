@@ -55,6 +55,61 @@ class ContainerImportSchema(BaseModel):
         return None
 
 
+class ContainerMovementImportSchema(BaseModel):
+    """Normalise and validate a container movement / location import row."""
+
+    container_number: str = Field(..., description="Full ISO 6346 container ID, e.g. MSCU1234567")
+    location_name: str = Field(..., description="Name of the location")
+    location_type: str | None = Field(None, description="Location type, e.g. depot")
+    country: str | None = None
+    city: str | None = None
+    address: str | None = None
+    occurred_at: datetime.datetime | None = None
+    source: str | None = None
+    notes: str | None = None
+
+    @field_validator("container_number", mode="before")
+    @classmethod
+    def normalise_container_number(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("container_number is required")
+        return str(v).strip().upper().replace(" ", "")
+
+    @field_validator("location_name", mode="before")
+    @classmethod
+    def strip_location_name(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("location_name is required")
+        return str(v).strip()
+
+    @field_validator("location_type", "source", mode="before")
+    @classmethod
+    def normalise_lower(cls, v: str | None) -> str | None:
+        if v and str(v).strip():
+            return str(v).strip().lower()
+        return None
+
+    @field_validator("country", "city", "address", "notes", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, v: str | None) -> str | None:
+        if v and str(v).strip():
+            return str(v).strip()
+        return None
+
+    @field_validator("occurred_at", mode="before")
+    @classmethod
+    def parse_occurred_at(cls, v: Any) -> datetime.datetime | None:
+        if not v or not str(v).strip():
+            return None
+        raw = str(v).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.datetime.strptime(raw, fmt)
+            except ValueError:
+                continue
+        raise ValueError(f"Invalid datetime {raw!r}. Expected YYYY-MM-DD or YYYY-MM-DD HH:MM:SS")
+
+
 _DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y")
 
 
@@ -127,6 +182,7 @@ class PurchaseOrderImportRowSchema(BaseModel):
 # Registry of schema classes per import type.
 _SCHEMA_REGISTRY: dict[str, type[BaseModel]] = {
     ImportJob.ImportType.CONTAINERS: ContainerImportSchema,
+    ImportJob.ImportType.CONTAINER_MOVEMENTS: ContainerMovementImportSchema,
     ImportJob.ImportType.PURCHASE_ORDERS: PurchaseOrderImportRowSchema,
 }
 
