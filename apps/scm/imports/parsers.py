@@ -1,4 +1,4 @@
-"""CSV and XLSX file parsing for import jobs."""
+"""CSV, XLSX and XML file parsing for import jobs."""
 
 import csv
 import io
@@ -41,15 +41,53 @@ def _parse_xlsx(file_obj) -> list[dict[str, Any]]:
     return result
 
 
+def _parse_xml(file_obj) -> list[dict[str, Any]]:
+    """Parse a Business Central PO XML export and return flat row dicts.
+
+    Each row represents one PO line with header fields repeated.  Dates and
+    Decimals are serialised to strings so they can be stored in the JSONField
+    and later coerced by the Pydantic schema.
+    """
+    from .bc_xml_parser import parse_bc_po_xml
+
+    purchase_orders = parse_bc_po_xml(file_obj)
+    rows: list[dict[str, Any]] = []
+    for po in purchase_orders:
+        order_date = po.get("order_date")
+        expected_date = po.get("expected_receipt_date")
+        header = {
+            "po_number": po.get("po_number", ""),
+            "supplier_no": po.get("supplier_no", ""),
+            "supplier_name": po.get("supplier_name", ""),
+            "order_date": order_date.isoformat() if order_date else "",
+            "expected_receipt_date": expected_date.isoformat() if expected_date else "",
+            "currency": po.get("currency", "EUR"),
+        }
+        for line in po.get("lines", []):
+            rows.append(
+                {
+                    **header,
+                    "line_no": line.get("line_no", ""),
+                    "item_no": line.get("item_no", ""),
+                    "description": line.get("description", ""),
+                    "ordered_qty": str(line.get("ordered_qty", "0")),
+                }
+            )
+    return rows
+
+
 def parse_file(job: ImportJob) -> list[dict[str, Any]]:
     """Parse the uploaded file for a job and return raw row dicts.
 
-    Supports .csv and .xlsx. Falls back to CSV for unknown extensions.
+    Supports .csv, .xlsx, and .xml (Business Central PO format).
+    Falls back to CSV for unknown extensions.
     """
     filename = job.original_filename.lower()
     job.file.seek(0)
     if filename.endswith(".xlsx"):
         return _parse_xlsx(job.file)
+    if filename.endswith(".xml"):
+        return _parse_xml(job.file)
     return _parse_csv(job.file)
 
 
