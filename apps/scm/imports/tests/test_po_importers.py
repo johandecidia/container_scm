@@ -419,8 +419,8 @@ class POImportFixtureTest(TestCase):
         line = po.lines.get(line_no="10000")
         self.assertEqual(line.ordered_qty, Decimal("50.000"))
 
-    def test_invalid_missing_supplier_rows_fail_with_clear_errors(self):
-        """invalid_missing_supplier.csv: rows with missing supplier_no or supplier_name are INVALID."""
+    def test_missing_supplier_rows_are_now_valid(self):
+        """invalid_missing_supplier.csv: supplier_no/supplier_name are optional — rows parse as VALID."""
         f = _load_fixture("invalid_missing_supplier.csv")
         job = ImportJob.objects.create(
             team=self.team,
@@ -432,11 +432,11 @@ class POImportFixtureTest(TestCase):
         )
         parse_import_job(job)
         job.refresh_from_db()
-        invalid_rows = job.rows.filter(status=ImportRow.Status.INVALID)
-        self.assertTrue(invalid_rows.exists(), "Expected at least one INVALID row for missing supplier")
+        self.assertEqual(job.rows.filter(status=ImportRow.Status.INVALID).count(), 0)
+        self.assertEqual(job.rows.filter(status=ImportRow.Status.VALID).count(), 2)
 
-    def test_import_fails_with_clear_error_when_supplier_column_missing_value(self):
-        """Row with empty supplier_no gets INVALID status — not silently ignored."""
+    def test_missing_supplier_rows_import_successfully(self):
+        """Rows without supplier info import without errors (supplier fields default to empty string)."""
         f = _load_fixture("invalid_missing_supplier.csv")
         job = ImportJob.objects.create(
             team=self.team,
@@ -447,14 +447,13 @@ class POImportFixtureTest(TestCase):
             status=ImportJob.Status.UPLOADED,
         )
         parse_import_job(job)
-        row_with_no_supplier = job.rows.filter(status=ImportRow.Status.INVALID).first()
-        self.assertIsNotNone(row_with_no_supplier)
-        # Error message must mention supplier field
-        error_fields = [e.get("field") for e in row_with_no_supplier.errors]
-        self.assertTrue(
-            any("supplier" in str(f) for f in error_fields),
-            f"Expected supplier in error fields, got: {error_fields}",
-        )
+        validate_import_job(job)
+        confirm_import_job(job)
+        job.refresh_from_db()
+        self.assertEqual(job.status, ImportJob.Status.COMPLETED)
+        from apps.scm.procurement.models import PurchaseOrder
+
+        self.assertEqual(PurchaseOrder.objects.filter(team=self.team).count(), 2)
 
     def test_invalid_quantities_rows_fail_with_clear_errors(self):
         """invalid_quantities.csv: text/negative/zero/empty quantities → INVALID rows."""

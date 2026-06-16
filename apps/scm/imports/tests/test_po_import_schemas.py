@@ -111,31 +111,33 @@ class PurchaseOrderImportRowSchemaRejectsInvalidTest(SimpleTestCase):
         _, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
         return errors
 
-    def test_schema_rejects_missing_supplier_no(self):
+    def test_schema_accepts_missing_supplier_no(self):
+        """supplier_no is optional — missing defaults to empty string."""
         row = {k: v for k, v in VALID_ROW.items() if k != "supplier_no"}
-        _, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
-        self.assertTrue(errors)
-        fields = [e["field"] for e in errors]
-        self.assertIn("supplier_no", fields)
+        validated, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
+        self.assertEqual(errors, [])
+        self.assertEqual(validated["supplier_no"], "")
 
-    def test_schema_rejects_empty_supplier_no(self):
+    def test_schema_accepts_empty_supplier_no(self):
+        """supplier_no is optional — empty string is valid."""
         row = {**VALID_ROW, "supplier_no": ""}
-        errors = self._get_errors(row)
-        self.assertTrue(errors)
-        fields = [e["field"] for e in errors]
-        self.assertIn("supplier_no", fields)
+        validated, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
+        self.assertEqual(errors, [])
+        self.assertEqual(validated["supplier_no"], "")
 
-    def test_schema_rejects_whitespace_only_supplier_no(self):
+    def test_schema_trims_whitespace_only_supplier_no_to_empty(self):
+        """Whitespace-only supplier_no is stripped to empty string."""
         row = {**VALID_ROW, "supplier_no": "   "}
-        errors = self._get_errors(row)
-        self.assertTrue(errors)
+        validated, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
+        self.assertEqual(errors, [])
+        self.assertEqual(validated["supplier_no"], "")
 
-    def test_schema_rejects_missing_supplier_name(self):
+    def test_schema_accepts_missing_supplier_name(self):
+        """supplier_name is optional — empty string is valid."""
         row = {**VALID_ROW, "supplier_name": ""}
-        errors = self._get_errors(row)
-        self.assertTrue(errors)
-        fields = [e["field"] for e in errors]
-        self.assertIn("supplier_name", fields)
+        validated, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
+        self.assertEqual(errors, [])
+        self.assertEqual(validated["supplier_name"], "")
 
     def test_schema_rejects_missing_po_number(self):
         row = {**VALID_ROW, "po_number": ""}
@@ -199,7 +201,7 @@ class PurchaseOrderImportRowSchemaRejectsInvalidTest(SimpleTestCase):
         self.assertTrue(any(e["field"] == "ordered_qty" for e in errors))
 
     def test_validate_row_data_returns_empty_dict_on_error(self):
-        row = {**VALID_ROW, "supplier_no": ""}
+        row = {**VALID_ROW, "po_number": ""}
         validated, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
         self.assertEqual(validated, {})
         self.assertTrue(errors)

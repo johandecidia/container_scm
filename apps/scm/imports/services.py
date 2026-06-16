@@ -73,6 +73,7 @@ def _pydantic_validate_rows(job: ImportJob) -> None:
             row.status = ImportRow.Status.INVALID
         else:
             row.errors = []
+            row.status = ImportRow.Status.VALID
     ImportRow.objects.bulk_update(rows, ["validated_data", "errors", "status"])
 
 

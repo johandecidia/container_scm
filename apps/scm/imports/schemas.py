@@ -122,8 +122,8 @@ class PurchaseOrderImportRowSchema(BaseModel):
     """
 
     po_number: str = Field(..., description="PO number, e.g. PO-2026-001")
-    supplier_no: str = Field(..., description="Supplier number")
-    supplier_name: str = Field(..., description="Supplier name")
+    supplier_no: str = Field(default="", description="Supplier number")
+    supplier_name: str = Field(default="", description="Supplier name")
     order_date: datetime.date | None = None
     expected_receipt_date: datetime.date | None = None
     currency: str = Field(default="EUR", description="ISO 3-letter currency code")
@@ -132,12 +132,17 @@ class PurchaseOrderImportRowSchema(BaseModel):
     description: str = Field(default="")
     ordered_qty: Decimal = Field(..., description="Ordered quantity, must be positive")
 
-    @field_validator("po_number", "supplier_no", "supplier_name", "line_no", "item_no", mode="before")
+    @field_validator("po_number", "line_no", "item_no", mode="before")
     @classmethod
     def strip_required_str(cls, v: Any) -> str:
         if not v or not str(v).strip():
             raise ValueError("This field is required")
         return str(v).strip()
+
+    @field_validator("supplier_no", "supplier_name", mode="before")
+    @classmethod
+    def strip_optional_str(cls, v: Any) -> str:
+        return str(v).strip() if v else ""
 
     @field_validator("description", mode="before")
     @classmethod
