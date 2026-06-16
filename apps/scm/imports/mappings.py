@@ -72,6 +72,18 @@ DEFAULT_PO_MAPPING: dict[str, str] = {
     "Quantity": "ordered_qty",
     "Qty": "ordered_qty",
     "Order Qty": "ordered_qty",
+    # Identity mappings for pre-normalised rows (e.g. XML imports where field
+    # names already match the target schema field names).
+    "po_number": "po_number",
+    "supplier_no": "supplier_no",
+    "supplier_name": "supplier_name",
+    "order_date": "order_date",
+    "expected_receipt_date": "expected_receipt_date",
+    "currency": "currency",
+    "line_no": "line_no",
+    "item_no": "item_no",
+    "description": "description",
+    "ordered_qty": "ordered_qty",
 }
 
 _DEFAULT_MAPPINGS: dict[str, dict[str, str]] = {
