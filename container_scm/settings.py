@@ -570,6 +570,10 @@ WAGTAILADMIN_BASE_URL = "http://ratecore.io"
 
 WAFFLE_FLAG_MODEL = "teams.Flag"
 
+# SCM PDF extraction service (used for PDF purchase order imports)
+SCM_PDF_FASTAPI_BASE_URL = env.str("SCM_PDF_FASTAPI_BASE_URL", default="")
+SCM_PDF_FASTAPI_TIMEOUT_SECONDS = env.int("SCM_PDF_FASTAPI_TIMEOUT_SECONDS", default=30)
+
 # Pegasus config
 
 # replace any values below with specifics for your project
