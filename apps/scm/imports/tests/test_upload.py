@@ -49,10 +49,15 @@ class ImportUploadFormTest(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("file", form.errors)
 
-    def test_pdf_rejected(self):
-        form = self._form("data.pdf", b"%PDF-1.4")
+    def test_pdf_accepted_for_purchase_orders(self):
+        form = self._form("data.pdf", b"%PDF-1.4", import_type=ImportJob.ImportType.PURCHASE_ORDERS)
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_pdf_rejected_for_containers(self):
+        # PDF is only valid for purchase_orders; containers should trigger a non-field error.
+        form = self._form("data.pdf", b"%PDF-1.4", import_type=ImportJob.ImportType.CONTAINERS)
         self.assertFalse(form.is_valid())
-        self.assertIn("file", form.errors)
+        self.assertTrue(form.non_field_errors())
 
     def test_oversized_file_rejected(self):
         big = b"a,b\n" + b"1,2\n" * (11 * 1024 * 1024 // 4)
