@@ -79,6 +79,19 @@ def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existin
     if not po_external_id or not data.get("line_no"):
         return "skipped"
 
+    # When not updating existing data, check for a duplicate line *before* touching the PO
+    # header.  This prevents a skipped duplicate row from silently overwriting PO header fields.
+    if not update_existing:
+        try:
+            existing_po = PurchaseOrder.objects.get(team=job.team, external_id=po_external_id)
+        except PurchaseOrder.DoesNotExist:
+            existing_po = None
+        if (
+            existing_po is not None
+            and PurchaseOrderLine.objects.filter(purchase_order=existing_po, external_id=line_external_id).exists()
+        ):
+            return "skipped"
+
     # Upsert PO header (idempotent — multiple rows share the same PO).
     po, _ = PurchaseOrder.objects.update_or_create(
         team=job.team,
@@ -93,11 +106,6 @@ def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existin
             "status": "open",
         },
     )
-
-    # Check for existing line before upsert.
-    line_exists = PurchaseOrderLine.objects.filter(purchase_order=po, external_id=line_external_id).exists()
-    if line_exists and not update_existing:
-        return "skipped"
 
     _, line_created = PurchaseOrderLine.objects.update_or_create(
         purchase_order=po,
