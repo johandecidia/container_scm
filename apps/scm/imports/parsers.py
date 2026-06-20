@@ -86,10 +86,22 @@ def _parse_bc_po_xlsx(file_obj) -> list[dict[str, Any]]:
     return to_flat_rows(parsed)
 
 
+def _parse_pdf(job: ImportJob) -> list[dict[str, Any]]:
+    """Extract purchase order rows from a PDF via the FastAPI extraction service."""
+    from .extractors.purchase_orders import extract_pdf_purchase_orders
+
+    try:
+        return extract_pdf_purchase_orders(job.file)
+    except Exception as exc:
+        job.metadata["extract_error"] = str(exc)
+        job.save(update_fields=["metadata", "updated_at"])
+        raise
+
+
 def parse_file(job: ImportJob) -> list[dict[str, Any]]:
     """Parse the uploaded file for a job and return raw row dicts.
 
-    Supports .csv, .xlsx, and .xml (Business Central PO format).
+    Supports .csv, .xlsx, .xml (Business Central PO format), and .pdf (Purchase Orders).
     Falls back to CSV for unknown extensions.
     """
     filename = job.original_filename.lower()
@@ -100,6 +112,10 @@ def parse_file(job: ImportJob) -> list[dict[str, Any]]:
         return _parse_xlsx(job.file)
     if filename.endswith(".xml"):
         return _parse_xml(job.file)
+    if filename.endswith(".pdf"):
+        job.metadata["source_format"] = "pdf"
+        job.save(update_fields=["metadata", "updated_at"])
+        return _parse_pdf(job)
     return _parse_csv(job.file)
 
 
