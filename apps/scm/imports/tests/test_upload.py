@@ -14,6 +14,41 @@ from apps.scm.imports.services import create_import_job
 from .helpers import make_csv_file, make_team, make_user
 
 
+class BCPOXLSXRemovedTest(TestCase):
+    """Regression: BC_PO_XLSX import type must no longer exist in the codebase."""
+
+    def test_bc_po_xlsx_not_in_import_type_values(self):
+        self.assertNotIn("bc_po_xlsx", ImportJob.ImportType.values)
+
+    def test_upload_form_choices_do_not_include_bc_po_xlsx(self):
+        f = SimpleUploadedFile("x.csv", b"a,b")
+        form = ImportUploadForm(
+            data={"import_type": ImportJob.ImportType.CONTAINERS},
+            files=cast(MultiValueDict, {"file": f}),
+        )
+        choice_values = [v for v, _ in form.fields["import_type"].choices]
+        self.assertNotIn("bc_po_xlsx", choice_values)
+
+    def test_form_rejects_bc_po_xlsx_import_type(self):
+        f = SimpleUploadedFile("x.csv", b"a,b")
+        form = ImportUploadForm(
+            data={"import_type": "bc_po_xlsx"},
+            files=cast(MultiValueDict, {"file": f}),
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("import_type", form.errors)
+
+    def test_xlsx_accepted_for_purchase_orders(self):
+        """Standard .xlsx still works under the purchase_orders import type."""
+        f = SimpleUploadedFile("orders.xlsx", b"PK\x03\x04fake-xlsx-bytes")
+        form = ImportUploadForm(
+            data={"import_type": ImportJob.ImportType.PURCHASE_ORDERS},
+            files=cast(MultiValueDict, {"file": f}),
+        )
+        # The file is valid at form level (content validation happens at parse time).
+        self.assertNotIn("import_type", form.errors)
+
+
 class ImportUploadFormTest(TestCase):
     def _form(self, filename: str, content: bytes = b"a,b\n1,2", import_type: str = ImportJob.ImportType.CONTAINERS):
         f = SimpleUploadedFile(filename, content)

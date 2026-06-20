@@ -27,8 +27,6 @@ class ImportJob(BaseTeamModel):
         SHIPMENTS = "shipments", _("Shipments")
         TRACKING_EVENTS = "tracking_events", _("Tracking Events")
         RATES = "rates", _("Rates")
-        # Business Central PO XLSX — removable importer plugin (see apps/scm/imports/plugins/bc_po_xlsx/)
-        BC_PO_XLSX = "bc_po_xlsx", _("Business Central Purchase Order XLSX")
 
     created_by = models.ForeignKey(
         CustomUser,

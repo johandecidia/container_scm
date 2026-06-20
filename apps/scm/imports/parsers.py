@@ -76,16 +76,6 @@ def _parse_xml(file_obj) -> list[dict[str, Any]]:
     return rows
 
 
-def _parse_bc_po_xlsx(file_obj) -> list[dict[str, Any]]:
-    """Parse a BC PO XLSX document-layout file into flat row dicts."""
-    from .plugins.bc_po_xlsx.parser import parse_bc_po_xlsx, to_flat_rows
-
-    parsed = parse_bc_po_xlsx(file_obj)
-    if parsed is None:
-        return []
-    return to_flat_rows(parsed)
-
-
 def _parse_pdf(job: ImportJob) -> list[dict[str, Any]]:
     """Extract purchase order rows from a PDF via the FastAPI extraction service."""
     from .extractors.purchase_orders import extract_pdf_purchase_orders
@@ -106,8 +96,6 @@ def parse_file(job: ImportJob) -> list[dict[str, Any]]:
     """
     filename = job.original_filename.lower()
     job.file.seek(0)
-    if filename.endswith(".xlsx") and job.import_type == ImportJob.ImportType.BC_PO_XLSX:
-        return _parse_bc_po_xlsx(job.file)
     if filename.endswith(".xlsx"):
         return _parse_xlsx(job.file)
     if filename.endswith(".xml"):

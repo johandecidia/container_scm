@@ -199,8 +199,6 @@ _IMPORTERS: dict = {
     ImportJob.ImportType.CONTAINERS: _import_container_row,
     ImportJob.ImportType.CONTAINER_MOVEMENTS: _import_container_movement_row,
     ImportJob.ImportType.PURCHASE_ORDERS: _import_purchase_order_row,
-    # BC PO XLSX plugin — reuses the same importer as PURCHASE_ORDERS.
-    ImportJob.ImportType.BC_PO_XLSX: _import_purchase_order_row,
 }
 
 

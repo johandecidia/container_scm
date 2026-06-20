@@ -1,23 +1,10 @@
 from django import forms
-from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 
 from .models import ImportJob
 
 ALLOWED_EXTENSIONS = (".csv", ".xlsx", ".xml", ".pdf")
 MAX_UPLOAD_MB = 10
-
-
-def _get_import_type_choices() -> list[tuple[str, str]]:
-    """Return available import type choices, gating BC_PO_XLSX behind its feature flag."""
-    choices = []
-    for value, label in ImportJob.ImportType.choices:
-        if value == ImportJob.ImportType.BC_PO_XLSX:
-            if getattr(settings, "SCM_ENABLE_BC_PO_XLSX_IMPORT", False):
-                choices.append((value, label))
-        else:
-            choices.append((value, label))
-    return choices
 
 
 class ImportUploadForm(forms.Form):
@@ -33,7 +20,7 @@ class ImportUploadForm(forms.Form):
     )
     import_type = forms.ChoiceField(
         label=_("Import type"),
-        choices=_get_import_type_choices,
+        choices=ImportJob.ImportType.choices,
         widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
 
@@ -54,9 +41,4 @@ class ImportUploadForm(forms.Form):
             raise forms.ValidationError(_("XML files are only supported for Purchase Orders imports."))
         if file and file.name.lower().endswith(".pdf") and import_type != ImportJob.ImportType.PURCHASE_ORDERS:
             raise forms.ValidationError(_("PDF files are only supported for Purchase Orders imports."))
-        if import_type == ImportJob.ImportType.BC_PO_XLSX:
-            if not getattr(settings, "SCM_ENABLE_BC_PO_XLSX_IMPORT", False):
-                raise forms.ValidationError(_("Business Central PO XLSX import is not enabled."))
-            if file and not file.name.lower().endswith(".xlsx"):
-                raise forms.ValidationError(_("Business Central PO XLSX import requires an XLSX file."))
         return cleaned_data
