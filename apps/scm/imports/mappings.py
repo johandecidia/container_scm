@@ -90,6 +90,8 @@ _DEFAULT_MAPPINGS: dict[str, dict[str, str]] = {
     ImportJob.ImportType.CONTAINERS: DEFAULT_CONTAINER_MAPPING,
     ImportJob.ImportType.CONTAINER_MOVEMENTS: DEFAULT_CONTAINER_MOVEMENT_MAPPING,
     ImportJob.ImportType.PURCHASE_ORDERS: DEFAULT_PO_MAPPING,
+    # BC PO XLSX plugin — parser emits pre-normalised field names, identity mapping passes them through.
+    ImportJob.ImportType.BC_PO_XLSX: DEFAULT_PO_MAPPING,
 }
 
 

@@ -570,6 +570,11 @@ WAGTAILADMIN_BASE_URL = "http://ratecore.io"
 
 WAFFLE_FLAG_MODEL = "teams.Flag"
 
+# SCM feature flags
+# Set SCM_ENABLE_BC_PO_XLSX_IMPORT=True to enable the Business Central PO XLSX importer.
+# When False (default) the import type is hidden from the UI and inaccessible.
+SCM_ENABLE_BC_PO_XLSX_IMPORT = env.bool("SCM_ENABLE_BC_PO_XLSX_IMPORT", default=False)
+
 # Pegasus config
 
 # replace any values below with specifics for your project

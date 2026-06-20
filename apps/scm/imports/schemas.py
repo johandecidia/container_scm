@@ -189,6 +189,8 @@ _SCHEMA_REGISTRY: dict[str, type[BaseModel]] = {
     ImportJob.ImportType.CONTAINERS: ContainerImportSchema,
     ImportJob.ImportType.CONTAINER_MOVEMENTS: ContainerMovementImportSchema,
     ImportJob.ImportType.PURCHASE_ORDERS: PurchaseOrderImportRowSchema,
+    # BC PO XLSX plugin — same Pydantic schema as PURCHASE_ORDERS.
+    ImportJob.ImportType.BC_PO_XLSX: PurchaseOrderImportRowSchema,
 }
 
 

@@ -131,6 +131,8 @@ def _validate_container_row(row: ImportRow, validated_data: dict, team: Team) ->
 _VALIDATORS: dict = {
     ImportJob.ImportType.CONTAINERS: _validate_container_row,
     ImportJob.ImportType.PURCHASE_ORDERS: _validate_purchase_order_row,
+    # BC PO XLSX plugin — reuses the same DB/business-rule validator as PURCHASE_ORDERS.
+    ImportJob.ImportType.BC_PO_XLSX: _validate_purchase_order_row,
 }
 
 
