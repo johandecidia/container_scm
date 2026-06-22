@@ -4,6 +4,7 @@ This module is a pure transport layer: it sends the PDF file and returns the
 raw list of row dicts returned by the API.  No database access, no validation.
 """
 
+import os
 from typing import Any
 
 import requests
@@ -29,7 +30,12 @@ def extract_purchase_orders_from_pdf(file_obj) -> list[dict[str, Any]]:
     url = f"{base_url.rstrip('/')}/v1/purchase-orders/extract"
 
     try:
-        response = requests.post(url, files={"file": file_obj}, timeout=timeout)
+        filename = os.path.basename(getattr(file_obj, "name", None) or "upload.pdf")
+        response = requests.post(
+            url,
+            files={"file": (filename, file_obj, "application/pdf")},
+            timeout=timeout,
+        )
     except requests.Timeout as exc:
         raise PDFExtractionError(f"PDF extraction timed out after {timeout}s.") from exc
     except requests.RequestException as exc:
