@@ -4,7 +4,7 @@ Covers:
 - Upload form: PDF accepted for purchase_orders, rejected for other types.
 - Parsing: PDF extractor is called for .pdf purchase_order jobs.
 - Error handling: timeout / HTTP errors mark job as FAILED and set extract_error.
-- Row conversion: canonical JSON from the API becomes correct ImportRows.
+- Row conversion: API response dict is flattened into correct ImportRows.
 - Pipeline: existing validate + confirm flow works unaffected after PDF extraction.
 - Bug fix: duplicate-skip does NOT overwrite PO header when update_existing=False.
 """
@@ -26,18 +26,26 @@ from apps.scm.procurement.models import PurchaseOrder
 
 from .helpers import make_team, make_user
 
-# Canonical row dict that the FastAPI service would return for a single PO line.
-CANONICAL_ROW = {
-    "po_number": "PO-PDF-001",
-    "supplier_no": "SUPP-PDF",
-    "supplier_name": "PDF Supplier AB",
-    "order_date": "2026-03-01",
-    "expected_receipt_date": "2026-06-15",
-    "currency": "USD",
-    "line_no": "10000",
-    "item_no": "ITM-PDF-001",
-    "description": "PDF Widget",
-    "ordered_qty": "75",
+# Canonical API response dict matching the real FastAPI extraction service shape.
+CANONICAL_API_RESPONSE = {
+    "confidence": 0.95,
+    "status": "completed",
+    "requires_review": False,
+    "warnings": [],
+    "data": {
+        "purchase_order_number": "PO-PDF-001",
+        "vendor_number": "SUPP-PDF",
+        "vendor": {"company": "PDF Supplier AB"},
+        "order_date": "2026-03-01",
+        "currency": "USD",
+        "line_items": [
+            {
+                "item_no": "ITM-PDF-001",
+                "description": "PDF Widget",
+                "quantity": "75",
+            }
+        ],
+    },
 }
 
 
@@ -90,7 +98,7 @@ class PDFExtractorCalledTest(TestCase):
 
     @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
     def test_extractor_called_for_pdf_job(self, mock_post):
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: [CANONICAL_ROW])
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: CANONICAL_API_RESPONSE)
 
         job = _make_pdf_job(self.team, self.user)
         with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
@@ -102,7 +110,7 @@ class PDFExtractorCalledTest(TestCase):
 
     @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
     def test_source_format_set_in_metadata(self, mock_post):
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: [CANONICAL_ROW])
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: CANONICAL_API_RESPONSE)
 
         job = _make_pdf_job(self.team, self.user)
         with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
@@ -182,7 +190,7 @@ class PDFExtractorErrorHandlingTest(TestCase):
 
 
 class PDFRowConversionTest(TestCase):
-    """Canonical JSON from the API is turned into correctly structured ImportRows."""
+    """API response dict is flattened into correctly structured ImportRows."""
 
     @classmethod
     def setUpTestData(cls):
@@ -190,8 +198,8 @@ class PDFRowConversionTest(TestCase):
         cls.user = make_user("pdf-rows@example.com")
 
     @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
-    def test_api_rows_become_import_rows(self, mock_post):
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: [CANONICAL_ROW])
+    def test_api_response_becomes_import_rows(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: CANONICAL_API_RESPONSE)
 
         job = _make_pdf_job(self.team, self.user)
         with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
@@ -199,30 +207,43 @@ class PDFRowConversionTest(TestCase):
 
         self.assertEqual(job.rows.count(), 1)
         row = job.rows.first()
-        # raw_data should contain the canonical row
         self.assertEqual(row.raw_data.get("po_number"), "PO-PDF-001")
+        self.assertEqual(row.raw_data.get("supplier_no"), "SUPP-PDF")
+        self.assertEqual(row.raw_data.get("supplier_name"), "PDF Supplier AB")
+        self.assertEqual(row.raw_data.get("line_no"), "10000")
+        self.assertEqual(row.raw_data.get("ordered_qty"), "75")
 
     @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
-    def test_multi_row_api_response_creates_multiple_import_rows(self, mock_post):
-        row2 = {**CANONICAL_ROW, "line_no": "20000", "item_no": "ITM-PDF-002"}
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: [CANONICAL_ROW, row2])
+    def test_multiple_line_items_create_multiple_import_rows(self, mock_post):
+        two_line_response = {
+            **CANONICAL_API_RESPONSE,
+            "data": {
+                **CANONICAL_API_RESPONSE["data"],
+                "line_items": [
+                    {"item_no": "ITM-PDF-001", "description": "Widget A", "quantity": "10"},
+                    {"item_no": "ITM-PDF-002", "description": "Widget B", "quantity": "20"},
+                ],
+            },
+        }
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: two_line_response)
 
         job = _make_pdf_job(self.team, self.user)
         with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
             parse_import_job(job)
 
         self.assertEqual(job.rows.count(), 2)
+        line_nos = list(job.rows.values_list("raw_data__line_no", flat=True).order_by("row_number"))
+        self.assertEqual(line_nos, ["10000", "20000"])
 
     @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
     def test_pydantic_validation_runs_on_pdf_rows(self, mock_post):
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: [CANONICAL_ROW])
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: CANONICAL_API_RESPONSE)
 
         job = _make_pdf_job(self.team, self.user)
         with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
             parse_import_job(job)
 
         row = job.rows.first()
-        # Pydantic validation should have run and set validated_data
         self.assertIn("po_number", row.validated_data)
         self.assertEqual(row.status, ImportRow.Status.VALID)
 
@@ -237,7 +258,7 @@ class PDFFullPipelineTest(TestCase):
 
     @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
     def test_validate_and_confirm_after_pdf_extraction(self, mock_post):
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: [CANONICAL_ROW])
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: CANONICAL_API_RESPONSE)
 
         job = _make_pdf_job(self.team, self.user)
         with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):

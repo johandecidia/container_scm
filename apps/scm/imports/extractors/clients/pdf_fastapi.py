@@ -15,10 +15,11 @@ class PDFExtractionError(Exception):
     """Raised when PDF extraction fails for any reason."""
 
 
-def extract_purchase_orders_from_pdf(file_obj) -> list[dict[str, Any]]:
+def extract_purchase_orders_from_pdf(file_obj) -> dict[str, Any]:
     """POST the PDF file to the FastAPI extraction endpoint.
 
-    Returns a list of flat row dicts compatible with PurchaseOrderImportRowSchema.
+    Returns the raw API response dict.  Callers are responsible for normalising
+    the response into import-pipeline row dicts.
     Raises PDFExtractionError on timeout, HTTP errors, or malformed responses.
     """
     base_url: str = getattr(settings, "SCM_PDF_FASTAPI_BASE_URL", "")
@@ -49,9 +50,9 @@ def extract_purchase_orders_from_pdf(file_obj) -> list[dict[str, Any]]:
     except ValueError as exc:
         raise PDFExtractionError(f"PDF extraction API returned invalid JSON: {exc}") from exc
 
-    if not isinstance(data, list):
+    if not isinstance(data, dict):
         raise PDFExtractionError(
-            f"PDF extraction API returned unexpected format: expected list, got {type(data).__name__}"
+            f"PDF extraction API returned unexpected format: expected dict, got {type(data).__name__}"
         )
 
     return data
