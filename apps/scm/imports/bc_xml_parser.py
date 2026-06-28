@@ -39,6 +39,7 @@ Column name Mapped field
 ``Column01`` item_no
 ``Column02`` description
 ``Column03`` ordered_qty (Swedish decimal: comma as decimal separator)
+``Column04`` unit_price (Swedish decimal: comma as decimal separator)
 ``IsTextLine`` skip when "True"
 ==========  =============
 """
@@ -188,6 +189,8 @@ def _parse_po_lines(copy_loop: ET.Element) -> list[dict[str, Any]]:
         if not item_no:
             continue
         external_id = cols.get("Line01", "").strip()
+        unit_price_raw = cols.get("Column04", "").strip()
+        unit_price = _parse_qty(unit_price_raw) if unit_price_raw else None
         lines.append(
             {
                 "external_id": external_id,
@@ -195,6 +198,7 @@ def _parse_po_lines(copy_loop: ET.Element) -> list[dict[str, Any]]:
                 "item_no": item_no,
                 "description": cols.get("Column02", ""),
                 "ordered_qty": _parse_qty(cols.get("Column03", "")),
+                "unit_price": unit_price,
                 "shipped_qty": Decimal("0"),
                 "received_qty": Decimal("0"),
                 "expected_receipt_date": None,

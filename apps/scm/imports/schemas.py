@@ -131,6 +131,7 @@ class PurchaseOrderImportRowSchema(BaseModel):
     item_no: str = Field(..., description="Item / SKU number")
     description: str = Field(default="")
     ordered_qty: Decimal = Field(..., description="Ordered quantity, must be positive")
+    unit_price: Decimal | None = Field(None, description="Unit price")
 
     @field_validator("po_number", "line_no", "item_no", mode="before")
     @classmethod
@@ -169,6 +170,20 @@ class PurchaseOrderImportRowSchema(BaseModel):
         if qty <= 0:
             raise ValueError(f"ordered_qty must be positive, got {qty}")
         return qty
+
+    @field_validator("unit_price", mode="before")
+    @classmethod
+    def validate_unit_price(cls, v: Any) -> Decimal | None:
+        if v is None or str(v).strip() == "":
+            return None
+        raw = str(v).strip().replace(",", ".")
+        try:
+            price = Decimal(raw)
+        except InvalidOperation as err:
+            raise ValueError(f"Invalid unit price: {v!r} — must be a number") from err
+        if price < 0:
+            raise ValueError(f"unit_price must be non-negative, got {price}")
+        return price
 
     @field_validator("order_date", "expected_receipt_date", mode="before")
     @classmethod

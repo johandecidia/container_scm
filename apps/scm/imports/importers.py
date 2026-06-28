@@ -118,6 +118,7 @@ def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existin
             "ordered_qty": data.get("ordered_qty", Decimal("0")),
             "shipped_qty": Decimal("0"),
             "received_qty": Decimal("0"),
+            "unit_price": data.get("unit_price"),
             "expected_receipt_date": data.get("expected_receipt_date"),
         },
     )

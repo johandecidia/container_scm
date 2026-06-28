@@ -70,6 +70,8 @@
               <th class="text-right">{% translate "Ordered" %}</th>
               <th class="text-right">{% translate "Shipped" %}</th>
               <th class="text-right">{% translate "Received" %}</th>
+              <th class="text-right">{% translate "Unit Price" %}</th>
+              <th class="text-right">{% translate "Amount" %}</th>
               <th>{% translate "Expected Receipt" %}</th>
             </tr>
           </thead>
@@ -82,10 +84,21 @@
                 <td class="text-right tabular-nums">{{ line.ordered_qty }}</td>
                 <td class="text-right tabular-nums">{{ line.shipped_qty }}</td>
                 <td class="text-right tabular-nums">{{ line.received_qty }}</td>
+                <td class="text-right tabular-nums">{{ line.unit_price|default:"—" }}</td>
+                <td class="text-right tabular-nums">{{ line.line_amount|default:"—" }}</td>
                 <td>{{ line.expected_receipt_date|default:"—" }}</td>
               </tr>
             {% endfor %}
           </tbody>
+          {% if total_order_amount is not None %}
+            <tfoot>
+              <tr class="font-semibold">
+                <td colspan="7" class="text-right text-base-content/60 text-xs uppercase tracking-wide">{% translate "Total" %}</td>
+                <td class="text-right tabular-nums">{{ total_order_amount }}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          {% endif %}
         </table>
       </div>
     {% else %}

@@ -8,6 +8,7 @@ Event service: records timeline events on purchase orders.
 from __future__ import annotations
 
 import logging
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -16,6 +17,17 @@ from apps.teams.models import Team
 from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderEventType, PurchaseOrderLine
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Manual create service
+# ---------------------------------------------------------------------------
+
+
+def create_purchase_order(team: Team, **kwargs: Any) -> PurchaseOrder:
+    """Create a manually entered purchase order with an auto-generated external_id."""
+    external_id = f"manual-{uuid.uuid4().hex}"
+    return PurchaseOrder.objects.create(team=team, external_id=external_id, **kwargs)
 
 
 # ---------------------------------------------------------------------------

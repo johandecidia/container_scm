@@ -45,15 +45,17 @@ def _flatten_api_response(api_response: dict[str, Any]) -> list[dict[str, Any]]:
 
     rows = []
     for i, line in enumerate(data.get("line_items") or [], start=1):
-        rows.append(
-            {
-                **header,
-                "line_no": str(i * 10000),
-                "item_no": line.get("item_no", ""),
-                "description": line.get("description", ""),
-                "ordered_qty": line.get("quantity", "0"),
-            }
-        )
+        row: dict = {
+            **header,
+            "line_no": str(i * 10000),
+            "item_no": line.get("item_no", ""),
+            "description": line.get("description", ""),
+            "ordered_qty": line.get("quantity", "0"),
+        }
+        unit_price = line.get("unit_price") or line.get("price")
+        if unit_price is not None and str(unit_price).strip():
+            row["unit_price"] = str(unit_price)
+        rows.append(row)
 
     return rows
 

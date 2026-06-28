@@ -7,6 +7,10 @@
       <h1 class="text-2xl font-bold">{% translate "Purchase Orders" %}</h1>
       <p class="text-sm text-base-content/60 mt-1">{% translate "Purchase order visibility from Business Central." %}</p>
     </div>
+    <a href="{% url 'procurement:purchase_order_create' %}" class="btn btn-primary btn-sm">
+      <i class="fa fa-plus"></i>
+      {% translate "Lägg till Purchase Order" %}
+    </a>
   </div>
 
   <section class="app-card">

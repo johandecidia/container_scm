@@ -65,7 +65,14 @@ class PurchaseOrderLine(BaseTeamModel):
     ordered_qty = models.DecimalField(_("Ordered Qty"), max_digits=12, decimal_places=3, default=0)
     shipped_qty = models.DecimalField(_("Shipped Qty"), max_digits=12, decimal_places=3, default=0)
     received_qty = models.DecimalField(_("Received Qty"), max_digits=12, decimal_places=3, default=0)
+    unit_price = models.DecimalField(_("Unit Price"), max_digits=14, decimal_places=4, null=True, blank=True)
     expected_receipt_date = models.DateField(_("Expected Receipt Date"), null=True, blank=True)
+
+    @property
+    def line_amount(self):
+        if self.unit_price is not None:
+            return self.unit_price * self.ordered_qty
+        return None
 
     class Meta:
         verbose_name = _("Purchase Order Line")

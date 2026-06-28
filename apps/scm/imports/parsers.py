@@ -64,15 +64,16 @@ def _parse_xml(file_obj) -> list[dict[str, Any]]:
             "currency": po.get("currency", "EUR"),
         }
         for line in po.get("lines", []):
-            rows.append(
-                {
-                    **header,
-                    "line_no": line.get("line_no", ""),
-                    "item_no": line.get("item_no", ""),
-                    "description": line.get("description", ""),
-                    "ordered_qty": str(line.get("ordered_qty", "0")),
-                }
-            )
+            row: dict = {
+                **header,
+                "line_no": line.get("line_no", ""),
+                "item_no": line.get("item_no", ""),
+                "description": line.get("description", ""),
+                "ordered_qty": str(line.get("ordered_qty", "0")),
+            }
+            if line.get("unit_price") is not None:
+                row["unit_price"] = str(line["unit_price"])
+            rows.append(row)
     return rows
 
 
