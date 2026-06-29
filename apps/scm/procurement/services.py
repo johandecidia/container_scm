@@ -31,19 +31,21 @@ def create_purchase_order(team: Team, **kwargs: Any) -> PurchaseOrder:
 
 
 # ---------------------------------------------------------------------------
-# BC import service
+# Upsert service (canonical entry point for all PO sources)
 # ---------------------------------------------------------------------------
 
 
-def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[str, Any]]) -> list[PurchaseOrder]:
-    """Upsert purchase orders (and their lines) from normalized BC data.
+def upsert_purchase_orders(team: Team, purchase_orders_data: list[dict[str, Any]]) -> list[PurchaseOrder]:
+    """Upsert purchase orders (and their lines) from any normalised source.
 
-    Can be called multiple times with the same data without creating duplicates.
-    BC is the master — this function only reads incoming data and writes to SCM.
+    Idempotent — can be called multiple times with the same data without
+    creating duplicates. The source system is master; this function only reads
+    incoming data and writes to SCM.
 
     Args:
         team: The team that owns these purchase orders.
-        purchase_orders_data: List of dicts matching the BC normalized format.
+        purchase_orders_data: List of dicts with keys matching PurchaseOrder
+            and PurchaseOrderLine fields (external_id, po_number, lines, …).
 
     Returns:
         List of PurchaseOrder instances (created or updated).
@@ -73,8 +75,15 @@ def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[s
     return orders
 
 
+def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[str, Any]]) -> list[PurchaseOrder]:
+    """Backwards-compatible alias for upsert_purchase_orders."""
+    return upsert_purchase_orders(team, purchase_orders_data)
+
+
 def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[dict[str, Any]]) -> None:
     for line_data in lines_data:
+        raw_price = line_data.get("unit_price")
+        unit_price = Decimal(str(raw_price)) if raw_price is not None else None
         PurchaseOrderLine.objects.update_or_create(
             purchase_order=purchase_order,
             external_id=line_data["external_id"],
@@ -86,6 +95,7 @@ def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[di
                 "ordered_qty": Decimal(str(line_data.get("ordered_qty", 0))),
                 "shipped_qty": Decimal(str(line_data.get("shipped_qty", 0))),
                 "received_qty": Decimal(str(line_data.get("received_qty", 0))),
+                "unit_price": unit_price,
                 "expected_receipt_date": line_data.get("expected_receipt_date"),
             },
         )
