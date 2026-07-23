@@ -1,6 +1,32 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.shortcuts import redirect
+from django.template.response import TemplateResponse
+from django.urls import path
 
 from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderLine
+
+
+@admin.action(description="Sync from Business Central (dummy data)")
+def sync_from_bc_dummy(modeladmin, request, queryset):
+    """Admin action: sync BC purchase orders for teams of selected rows."""
+    from apps.scm.integrations.business_systems.business_central.client import BusinessCentralClient
+    from apps.scm.integrations.business_systems.business_central.sync import (
+        sync_purchase_orders_from_business_central,
+    )
+
+    teams = {po.team for po in queryset.select_related("team")}
+    if not teams:
+        modeladmin.message_user(request, "Inga rader valda.", messages.WARNING)
+        return
+
+    client = BusinessCentralClient(use_dummy=True)
+    for team in teams:
+        orders = sync_purchase_orders_from_business_central(team=team, client=client)
+        modeladmin.message_user(
+            request,
+            f"Team '{team.slug}': synkade {len(orders)} purchase orders.",
+            messages.SUCCESS,
+        )
 
 
 class PurchaseOrderLineInline(admin.TabularInline):
@@ -24,6 +50,55 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     search_fields = ("po_number", "supplier_name", "supplier_no")
     readonly_fields = ("external_id", "created_at", "updated_at")
     inlines = [PurchaseOrderLineInline, PurchaseOrderEventInline]
+    actions = [sync_from_bc_dummy]
+    change_list_template = "admin/scm_procurement/purchaseorder/change_list.html"
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [
+            path(
+                "sync-bc-dummy/",
+                self.admin_site.admin_view(self._sync_bc_dummy_view),
+                name="scm_procurement_purchaseorder_sync_bc_dummy",
+            ),
+        ]
+        return custom + urls
+
+    def _sync_bc_dummy_view(self, request):
+        from apps.scm.integrations.business_systems.business_central.client import BusinessCentralClient
+        from apps.scm.integrations.business_systems.business_central.sync import (
+            sync_purchase_orders_from_business_central,
+        )
+        from apps.teams.models import Team
+
+        if request.method == "POST":
+            team_id = request.POST.get("team_id")
+            if team_id:
+                try:
+                    team = Team.objects.get(pk=team_id)
+                except Team.DoesNotExist:
+                    self.message_user(request, "Team hittades inte.", messages.ERROR)
+                    return redirect(".")
+                client = BusinessCentralClient(use_dummy=True)
+                orders = sync_purchase_orders_from_business_central(team=team, client=client)
+                self.message_user(
+                    request,
+                    f"Team '{team.slug}': synkade {len(orders)} purchase orders.",
+                    messages.SUCCESS,
+                )
+            return redirect("../")
+
+        context = {
+            **self.admin_site.each_context(request),
+            "teams": Team.objects.all().order_by("name"),
+            "opts": self.model._meta,
+            "title": "Sync från Business Central (dummy)",
+        }
+        return TemplateResponse(
+            request,
+            "admin/scm_procurement/purchaseorder/sync_bc_dummy.html",
+            context,
+        )
 
 
 @admin.register(PurchaseOrderLine)
