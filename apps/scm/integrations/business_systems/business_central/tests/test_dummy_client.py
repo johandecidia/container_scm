@@ -3,6 +3,7 @@
 from django.test import SimpleTestCase
 
 from apps.scm.integrations.business_systems.business_central.client import BusinessCentralClient
+from apps.scm.integrations.business_systems.business_central.exceptions import BusinessCentralConfigurationError
 
 
 class DummyClientPurchaseOrdersTest(SimpleTestCase):
@@ -45,12 +46,6 @@ class DummyClientPurchaseOrdersTest(SimpleTestCase):
         self.assertEqual(lines[0]["itemNumber"], "40RF-NEW")
         self.assertEqual(lines[1]["itemNumber"], "40RF-PTI")
 
-    def test_live_client_raises_not_implemented(self):
-        live_client = BusinessCentralClient(use_dummy=False)
-        with self.assertRaises(NotImplementedError):
-            live_client.fetch_purchase_orders()
-
-    def test_live_client_lines_raises_not_implemented(self):
-        live_client = BusinessCentralClient(use_dummy=False)
-        with self.assertRaises(NotImplementedError):
-            live_client.fetch_purchase_order_lines("PO100245")
+    def test_live_client_without_integration_raises_configuration_error(self):
+        with self.assertRaises(BusinessCentralConfigurationError):
+            BusinessCentralClient(use_dummy=False)
