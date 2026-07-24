@@ -10,11 +10,36 @@ from apps.teams.models import BaseTeamModel
 
 
 class PurchaseOrderStatus(models.TextChoices):
+    """Business Central document status.
+
+    This mirrors the source system's document status and is written ONLY by the
+    Business Central mapper/sync. It is not the SCM logistics status — see
+    ``PurchaseOrderLogisticsStatus`` and
+    ``apps.scm.procurement.selectors.get_purchase_order_logistics_status``.
+    """
+
     OPEN = "open", _("Open")
     RELEASED = "released", _("Released")
     PARTIALLY_RECEIVED = "partially_received", _("Partially Received")
     FULLY_RECEIVED = "fully_received", _("Fully Received")
     CLOSED = "closed", _("Closed")
+
+
+class PurchaseOrderLogisticsStatus(models.TextChoices):
+    """SCM-owned logistics status, COMPUTED from fulfillment quantities.
+
+    This is calculated by Container SCM (not stored, and never written by the
+    Business Central mapper) from PO line quantities and supplier deliveries.
+    See ``apps.scm.procurement.selectors.get_purchase_order_logistics_status``.
+    """
+
+    NOT_STARTED = "not_started", _("Not started")
+    PARTIALLY_SHIPPED = "partially_shipped", _("Partially shipped")
+    FULLY_SHIPPED = "fully_shipped", _("Fully shipped")
+    ARRIVED = "arrived", _("Arrived")
+    PARTIALLY_RECEIVED = "partially_received", _("Partially received")
+    COMPLETED = "completed", _("Completed")
+    EXCEPTION = "exception", _("Exception")
 
 
 class PurchaseOrder(BaseTeamModel):

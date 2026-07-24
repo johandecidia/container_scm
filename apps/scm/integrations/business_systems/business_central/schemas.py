@@ -1,6 +1,6 @@
 # Normalised DTO schemas for Microsoft Business Central data.
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -75,5 +75,8 @@ class NormalizedPurchaseOrder(BaseModel):
     order_date: date | None = None
     expected_receipt_date: date | None = None
     currency: str = "EUR"
+    # Source lastModifiedDateTime — used to advance the incremental sync watermark.
+    # Not persisted to the PurchaseOrder model in this milestone.
+    source_last_modified: datetime | None = None
     raw_payload: dict[str, Any] = PydanticField(default_factory=dict)
     lines: list[NormalizedPurchaseOrderLine] = PydanticField(default_factory=list)

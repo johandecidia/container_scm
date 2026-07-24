@@ -42,6 +42,14 @@ class BusinessCentralRateLimitError(BusinessCentralError):
         self.retry_after = retry_after
 
 
+class BusinessCentralSyncInProgressError(BusinessCentralError):
+    """A sync for this integration + resource is already running.
+
+    Raised when the sync lock cannot be acquired. Not retryable — the other run
+    is doing the work.
+    """
+
+
 class BusinessCentralResponseError(BusinessCentralError):
     """The API returned an unexpected status or an unparseable/invalid body.
 

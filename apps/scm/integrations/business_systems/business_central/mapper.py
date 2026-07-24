@@ -1,6 +1,6 @@
 """Maps raw Business Central OData responses to normalised DTO objects."""
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from apps.scm.integrations.business_systems.base import BaseBusinessSystemMapper
@@ -30,6 +30,16 @@ def _parse_date(value: str | None) -> date | None:
     try:
         return date.fromisoformat(value)
     except ValueError, TypeError:
+        return None
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    """Parse a Business Central lastModifiedDateTime (ISO-8601, may end in 'Z')."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError, TypeError, AttributeError:
         return None
 
 
@@ -67,6 +77,7 @@ class BusinessCentralMapper(BaseBusinessSystemMapper):
             order_date=_parse_date(raw.get("orderDate")),
             expected_receipt_date=_parse_date(raw.get("expectedReceiptDate")),
             currency=raw.get("currencyCode", "EUR"),
+            source_last_modified=_parse_datetime(raw.get("lastModifiedDateTime")),
             raw_payload=raw,
             lines=mapped_lines,
         )

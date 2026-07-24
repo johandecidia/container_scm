@@ -9,6 +9,7 @@
       "expectedReceiptDate": "2026-08-15",
       "currencyCode": "USD",
       "status": "Open",
+      "lastModifiedDateTime": "2026-06-18T09:30:00Z",
       "totalAmountExcludingTax": 48500.0
     },
     {
@@ -20,6 +21,7 @@
       "expectedReceiptDate": "2026-09-02",
       "currencyCode": "USD",
       "status": "Released",
+      "lastModifiedDateTime": "2026-06-21T14:05:00Z",
       "totalAmountExcludingTax": 112000.0
     }
   ]

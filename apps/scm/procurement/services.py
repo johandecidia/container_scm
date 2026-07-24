@@ -9,14 +9,33 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
+
+from django.db import transaction
 
 from apps.teams.models import Team
 
 from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderEventType, PurchaseOrderLine
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class UpsertResult:
+    """Structured outcome of an upsert_purchase_orders call."""
+
+    created: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    failed: int = 0
+    purchase_orders: list[PurchaseOrder] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def processed(self) -> int:
+        return self.created + self.updated + self.unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -35,12 +54,15 @@ def create_purchase_order(team: Team, **kwargs: Any) -> PurchaseOrder:
 # ---------------------------------------------------------------------------
 
 
-def upsert_purchase_orders(team: Team, purchase_orders_data: list[dict[str, Any]]) -> list[PurchaseOrder]:
+def upsert_purchase_orders(team: Team, purchase_orders_data: list[dict[str, Any]]) -> UpsertResult:
     """Upsert purchase orders (and their lines) from any normalised source.
 
     Idempotent — can be called multiple times with the same data without
-    creating duplicates. The source system is master; this function only reads
-    incoming data and writes to SCM.
+    creating duplicates, and unchanged records are detected and reported as such
+    (not counted as updates). The source system is master; this function only
+    reads incoming data and writes to SCM. Each purchase order is written in its
+    own transaction so a single bad record fails in isolation without rolling
+    back the rest of the batch.
 
     Args:
         team: The team that owns these purchase orders.
@@ -48,57 +70,134 @@ def upsert_purchase_orders(team: Team, purchase_orders_data: list[dict[str, Any]
             and PurchaseOrderLine fields (external_id, po_number, lines, …).
 
     Returns:
-        List of PurchaseOrder instances (created or updated).
+        UpsertResult with created/updated/unchanged/failed counts, the affected
+        PurchaseOrder instances, and per-record errors keyed by external id.
     """
-    orders = []
+    result = UpsertResult()
     for po_data in purchase_orders_data:
-        lines_data = po_data.get("lines", [])
-        po, created = PurchaseOrder.objects.update_or_create(
-            team=team,
-            external_id=po_data["external_id"],
-            defaults={
-                "po_number": po_data.get("po_number", ""),
-                "supplier_no": po_data.get("supplier_no", ""),
-                "supplier_name": po_data.get("supplier_name", ""),
-                "status": po_data.get("status", "open"),
-                "order_date": po_data.get("order_date"),
-                "expected_receipt_date": po_data.get("expected_receipt_date"),
-                "currency": po_data.get("currency", "EUR"),
-            },
-        )
-        if created:
-            logger.info("Created PurchaseOrder %s for team %s", po.po_number, team.slug)
+        external_id = po_data.get("external_id")
+        try:
+            if not external_id:
+                raise ValueError("purchase order data is missing 'external_id'")
+            with transaction.atomic():
+                po = _upsert_single_purchase_order(team, external_id, po_data, result)
+            result.purchase_orders.append(po)
+        except Exception as exc:  # noqa: BLE001 — isolate one bad record from the batch
+            result.failed += 1
+            result.errors.append(
+                {
+                    "external_id": external_id,
+                    "po_number": po_data.get("po_number", ""),
+                    "error": str(exc),
+                }
+            )
+            logger.warning("Failed to upsert purchase order %s for team %s: %s", external_id, team.slug, exc)
 
+    return result
+
+
+def _upsert_single_purchase_order(
+    team: Team,
+    external_id: str,
+    po_data: dict[str, Any],
+    result: UpsertResult,
+) -> PurchaseOrder:
+    lines_data = po_data.get("lines", [])
+    defaults = {
+        "po_number": po_data.get("po_number", ""),
+        "supplier_no": po_data.get("supplier_no", ""),
+        "supplier_name": po_data.get("supplier_name", ""),
+        "status": po_data.get("status", "open"),
+        "order_date": po_data.get("order_date"),
+        "expected_receipt_date": po_data.get("expected_receipt_date"),
+        "currency": po_data.get("currency", "EUR"),
+    }
+
+    existing = PurchaseOrder.objects.filter(team=team, external_id=external_id).first()
+    if existing is None:
+        po = PurchaseOrder.objects.create(team=team, external_id=external_id, **defaults)
         _upsert_lines(team=team, purchase_order=po, lines_data=lines_data)
-        orders.append(po)
+        result.created += 1
+        logger.info("Created PurchaseOrder %s for team %s", po.po_number, team.slug)
+        return po
 
-    return orders
+    if _purchase_order_unchanged(existing, defaults, lines_data):
+        result.unchanged += 1
+        return existing
+
+    for attr, value in defaults.items():
+        setattr(existing, attr, value)
+    existing.save(update_fields=[*defaults.keys(), "updated_at"])
+    _upsert_lines(team=team, purchase_order=existing, lines_data=lines_data)
+    result.updated += 1
+    return existing
 
 
 def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[str, Any]]) -> list[PurchaseOrder]:
-    """Backwards-compatible alias for upsert_purchase_orders."""
-    return upsert_purchase_orders(team, purchase_orders_data)
+    """Backwards-compatible alias returning just the affected purchase orders."""
+    return upsert_purchase_orders(team, purchase_orders_data).purchase_orders
+
+
+def _line_defaults(team: Team, line_data: dict[str, Any]) -> dict[str, Any]:
+    raw_price = line_data.get("unit_price")
+    return {
+        "team": team,
+        "line_no": line_data.get("line_no", ""),
+        "item_no": line_data.get("item_no", ""),
+        "description": line_data.get("description", ""),
+        "ordered_qty": Decimal(str(line_data.get("ordered_qty", 0))),
+        "shipped_qty": Decimal(str(line_data.get("shipped_qty", 0))),
+        "received_qty": Decimal(str(line_data.get("received_qty", 0))),
+        "unit_price": Decimal(str(raw_price)) if raw_price is not None else None,
+        "expected_receipt_date": line_data.get("expected_receipt_date"),
+    }
 
 
 def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[dict[str, Any]]) -> None:
     for line_data in lines_data:
-        raw_price = line_data.get("unit_price")
-        unit_price = Decimal(str(raw_price)) if raw_price is not None else None
         PurchaseOrderLine.objects.update_or_create(
             purchase_order=purchase_order,
             external_id=line_data["external_id"],
-            defaults={
-                "team": team,
-                "line_no": line_data.get("line_no", ""),
-                "item_no": line_data.get("item_no", ""),
-                "description": line_data.get("description", ""),
-                "ordered_qty": Decimal(str(line_data.get("ordered_qty", 0))),
-                "shipped_qty": Decimal(str(line_data.get("shipped_qty", 0))),
-                "received_qty": Decimal(str(line_data.get("received_qty", 0))),
-                "unit_price": unit_price,
-                "expected_receipt_date": line_data.get("expected_receipt_date"),
-            },
+            defaults=_line_defaults(team, line_data),
         )
+
+
+def _purchase_order_unchanged(
+    existing: PurchaseOrder,
+    defaults: dict[str, Any],
+    lines_data: list[dict[str, Any]],
+) -> bool:
+    """Return True when the stored PO and all its lines already match the source.
+
+    Used so a re-sync of identical data is reported as "unchanged" rather than
+    "updated". Only the source-owned fields are compared.
+    """
+    if any(getattr(existing, attr) != value for attr, value in defaults.items()):
+        return False
+
+    existing_lines = {line.external_id: line for line in existing.lines.all()}
+    if len(existing_lines) != len(lines_data):
+        return False
+
+    for line_data in lines_data:
+        line = existing_lines.get(line_data.get("external_id"))
+        if line is None:
+            return False
+        expected = _line_defaults(existing.team, line_data)
+        # team is a relation stored elsewhere; compare only the data fields.
+        for attr in (
+            "line_no",
+            "item_no",
+            "description",
+            "ordered_qty",
+            "shipped_qty",
+            "received_qty",
+            "unit_price",
+            "expected_receipt_date",
+        ):
+            if getattr(line, attr) != expected[attr]:
+                return False
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -6,25 +6,48 @@ from django.urls import path
 from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderLine
 
 
-@admin.action(description="Sync from Business Central (dummy data)")
-def sync_from_bc_dummy(modeladmin, request, queryset):
-    """Admin action: sync BC purchase orders for teams of selected rows."""
+def _dummy_sync_for_team(team):
+    """Run a dummy BC purchase-order sync for a team, ensuring a BC integration exists.
+
+    Uses a get-or-create Business Central integration (so the sync-run tracking
+    and validation path is exercised) with a dummy client — no live credentials.
+    Returns the IntegrationSyncRun.
+    """
     from apps.scm.integrations.business_systems.business_central.client import BusinessCentralClient
     from apps.scm.integrations.business_systems.business_central.sync import (
         sync_purchase_orders_from_business_central,
     )
+    from apps.scm.integrations.models import Integration
 
+    integration, _ = Integration.objects.get_or_create(
+        team=team,
+        provider_code="business_central",
+        defaults={
+            "name": "Business Central",
+            "provider_family": Integration.ProviderFamily.BUSINESS_SYSTEM,
+            "status": Integration.Status.ACTIVE,
+            "is_active": True,
+            "config": {"sync_enabled": True},
+        },
+    )
+    client = BusinessCentralClient(use_dummy=True)
+    return sync_purchase_orders_from_business_central(integration, client=client, trigger_type="manual")
+
+
+@admin.action(description="Sync from Business Central (dummy data)")
+def sync_from_bc_dummy(modeladmin, request, queryset):
+    """Admin action: sync BC purchase orders for teams of selected rows."""
     teams = {po.team for po in queryset.select_related("team")}
     if not teams:
         modeladmin.message_user(request, "Inga rader valda.", messages.WARNING)
         return
 
-    client = BusinessCentralClient(use_dummy=True)
     for team in teams:
-        orders = sync_purchase_orders_from_business_central(team=team, client=client)
+        run = _dummy_sync_for_team(team)
         modeladmin.message_user(
             request,
-            f"Team '{team.slug}': synkade {len(orders)} purchase orders.",
+            f"Team '{team.slug}': synkade {run.records_created + run.records_updated} purchase orders "
+            f"({run.records_unchanged} oförändrade).",
             messages.SUCCESS,
         )
 
@@ -65,10 +88,6 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
         return custom + urls
 
     def _sync_bc_dummy_view(self, request):
-        from apps.scm.integrations.business_systems.business_central.client import BusinessCentralClient
-        from apps.scm.integrations.business_systems.business_central.sync import (
-            sync_purchase_orders_from_business_central,
-        )
         from apps.teams.models import Team
 
         if request.method == "POST":
@@ -79,11 +98,11 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
                 except Team.DoesNotExist:
                     self.message_user(request, "Team hittades inte.", messages.ERROR)
                     return redirect(".")
-                client = BusinessCentralClient(use_dummy=True)
-                orders = sync_purchase_orders_from_business_central(team=team, client=client)
+                run = _dummy_sync_for_team(team)
                 self.message_user(
                     request,
-                    f"Team '{team.slug}': synkade {len(orders)} purchase orders.",
+                    f"Team '{team.slug}': synkade {run.records_created + run.records_updated} purchase orders "
+                    f"({run.records_unchanged} oförändrade).",
                     messages.SUCCESS,
                 )
             return redirect("../")

@@ -6,9 +6,32 @@ from django.utils import timezone
 
 from apps.teams.models import Team
 
-from .models import Integration, IntegrationRequestLog
+from .models import Integration, IntegrationRequestLog, IntegrationSyncRun
 
 logger = logging.getLogger(__name__)
+
+
+# ── Sync run watermark ──────────────────────────────────────────────────────
+
+
+def get_last_successful_watermark(integration: Integration, resource_type: str):
+    """Return the watermark_to of the most recent fully completed sync run.
+
+    Only ``COMPLETED`` runs advance the watermark — a failed or partially
+    completed run must not move it forward, so those are excluded here. Returns
+    None when there is no completed run yet (first sync).
+    """
+    run = (
+        IntegrationSyncRun.objects.filter(
+            integration=integration,
+            resource_type=resource_type,
+            status=IntegrationSyncRun.Status.COMPLETED,
+            watermark_to__isnull=False,
+        )
+        .order_by("-watermark_to")
+        .first()
+    )
+    return run.watermark_to if run else None
 
 
 # ── Integration lifecycle ─────────────────────────────────────────────────────

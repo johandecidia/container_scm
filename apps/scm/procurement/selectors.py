@@ -2,7 +2,7 @@
 
 from apps.teams.models import Team
 
-from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderLine
+from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderLine, PurchaseOrderLogisticsStatus
 
 
 def get_team_purchase_orders(team: Team):
@@ -28,3 +28,52 @@ def get_purchase_order_lines(purchase_order: PurchaseOrder):
 def get_purchase_order_events(purchase_order: PurchaseOrder):
     """Return all timeline events for a purchase order, oldest first."""
     return PurchaseOrderEvent.objects.filter(purchase_order=purchase_order).order_by("timestamp")
+
+
+def get_purchase_order_logistics_status(purchase_order: PurchaseOrder) -> str:
+    """Compute the SCM logistics status for a purchase order.
+
+    This is the single canonical implementation of SCM logistics status. It is
+    derived from the fulfillment quantities (PO lines + supplier deliveries) via
+    ``calculate_purchase_order_fulfillment`` — it is NOT stored on the model and
+    is never written by the Business Central sync. ``PurchaseOrder.status`` holds
+    the Business Central *document* status and is a separate concept.
+
+    Returns a value from ``PurchaseOrderLogisticsStatus``. Precedence (a PO can
+    match several conditions; the earliest wins):
+      - EXCEPTION: received more than ordered (data/receipt anomaly)
+      - COMPLETED: received the full ordered quantity
+      - PARTIALLY_RECEIVED: some (but not all) received
+      - ARRIVED: goods arrived at destination, none received yet
+      - FULLY_SHIPPED: whole order shipped, none arrived/received yet
+      - PARTIALLY_SHIPPED: some shipped, none arrived/received yet
+      - NOT_STARTED: nothing shipped, arrived, or received
+
+    Note: "in transit" is represented by the shipped states (shipped but not yet
+    arrived). A distinct in-transit state and cancellation-driven exceptions are
+    out of scope until richer source signals are synced.
+    """
+    from .services import calculate_purchase_order_fulfillment
+
+    f = calculate_purchase_order_fulfillment(purchase_order)
+    ordered = f["ordered_qty"]
+    shipped = f["shipped_qty"]
+    arrived = f["arrived_qty"]
+    received = f["received_qty"]
+
+    S = PurchaseOrderLogisticsStatus
+    if ordered <= 0:
+        return S.NOT_STARTED
+    if received > ordered:
+        return S.EXCEPTION
+    if received >= ordered:
+        return S.COMPLETED
+    if received > 0:
+        return S.PARTIALLY_RECEIVED
+    if arrived > 0:
+        return S.ARRIVED
+    if shipped >= ordered:
+        return S.FULLY_SHIPPED
+    if shipped > 0:
+        return S.PARTIALLY_SHIPPED
+    return S.NOT_STARTED
