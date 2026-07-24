@@ -1,6 +1,6 @@
 """Tests for the Business Central purchase order mapper."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from django.test import SimpleTestCase
@@ -107,3 +107,22 @@ class MapperTest(SimpleTestCase):
         raw = {**_RAW_PO, "status": "Released"}
         result = self.mapper.map_purchase_order(raw, [])
         self.assertEqual(result.status, "released")
+
+    def test_last_modified_parsed(self):
+        raw = {**_RAW_PO, "lastModifiedDateTime": "2026-06-18T09:30:00Z"}
+        result = self.mapper.map_purchase_order(raw, [])
+        self.assertEqual(result.source_last_modified, datetime(2026, 6, 18, 9, 30, 0, tzinfo=UTC))
+
+    def test_missing_last_modified_is_none(self):
+        result = self.mapper.map_purchase_order(_RAW_PO, [])
+        self.assertIsNone(result.source_last_modified)
+
+    def test_malformed_last_modified_is_none(self):
+        raw = {**_RAW_PO, "lastModifiedDateTime": "not-a-date"}
+        result = self.mapper.map_purchase_order(raw, [])
+        self.assertIsNone(result.source_last_modified)
+
+    def test_malformed_required_date_is_none(self):
+        raw = {**_RAW_PO, "orderDate": "13/06/2026"}
+        result = self.mapper.map_purchase_order(raw, [])
+        self.assertIsNone(result.order_date)
