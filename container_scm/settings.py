@@ -574,6 +574,13 @@ WAFFLE_FLAG_MODEL = "teams.Flag"
 SCM_PDF_FASTAPI_BASE_URL = env.str("SCM_PDF_FASTAPI_BASE_URL", default="")
 SCM_PDF_FASTAPI_TIMEOUT_SECONDS = env.int("SCM_PDF_FASTAPI_TIMEOUT_SECONDS", default=30)
 
+# SCM integration credential encryption
+# Fernet key (url-safe base64, 32 bytes) used to encrypt IntegrationCredential data
+# at rest. If unset, a key is derived from SECRET_KEY so local development works
+# without extra configuration. Set an explicit, stable key in production so stored
+# credentials survive a SECRET_KEY rotation. Never commit a real key.
+SCM_INTEGRATION_ENCRYPTION_KEY = env.str("SCM_INTEGRATION_ENCRYPTION_KEY", default="")
+
 # Pegasus config
 
 # replace any values below with specifics for your project

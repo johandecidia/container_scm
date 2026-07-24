@@ -1,15 +1,21 @@
 # Integration credential service — single point of access for integration secrets.
 #
 # All reads and writes of sensitive credentials must go through this module so
-# that encryption can be added (or swapped) in one place without touching callers.
+# that encryption can be swapped in one place without touching callers.
 #
-# Current implementation: base64-encoded JSON (NOT encrypted — placeholder only).
-# TODO: replace with Django encrypted fields or a KMS-backed solution before
-#       storing real API keys or OAuth tokens in production.
+# Credentials are encrypted at rest with Fernet (AES-128-CBC + HMAC) using the
+# key resolved from settings.SCM_INTEGRATION_ENCRYPTION_KEY, falling back to a
+# key derived from SECRET_KEY for local development. Legacy base64-encoded rows
+# (from the previous placeholder implementation) are still readable so existing
+# data keeps working; they are re-encrypted on the next write.
 import base64
+import hashlib
 import json
 import logging
 import re
+
+from cryptography.fernet import Fernet, InvalidToken
+from django.conf import settings
 
 from .models import Integration, IntegrationCredential
 
@@ -29,20 +35,49 @@ def mask_secret(value: str) -> str:
     return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
 
 
-def _encode(data: dict) -> str:
-    """Encode a credential dict to a storable string.
+def _get_fernet() -> Fernet:
+    """Build the Fernet cipher from configuration.
 
-    TODO: replace with encrypted storage before production use.
+    Uses SCM_INTEGRATION_ENCRYPTION_KEY when set (must be a url-safe base64
+    32-byte Fernet key). Otherwise derives a stable key from SECRET_KEY so
+    development works without extra configuration.
     """
-    return base64.b64encode(json.dumps(data).encode()).decode()
+    configured = getattr(settings, "SCM_INTEGRATION_ENCRYPTION_KEY", "") or ""
+    if configured:
+        key = configured.encode()
+    else:
+        digest = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
+        key = base64.urlsafe_b64encode(digest)
+    return Fernet(key)
+
+
+def _encode(data: dict) -> str:
+    """Encrypt a credential dict to a storable string."""
+    token = _get_fernet().encrypt(json.dumps(data).encode())
+    return token.decode()
 
 
 def _decode(encoded: str) -> dict:
-    """Decode a stored credential string back to a dict."""
+    """Decrypt a stored credential string back to a dict.
+
+    Falls back to the legacy base64-JSON format for rows written before
+    encryption was introduced. Returns an empty dict if the value cannot be
+    read at all. Never logs the secret payload itself.
+    """
+    if not encoded:
+        return {}
     try:
-        return json.loads(base64.b64decode(encoded.encode()).decode())
+        decrypted = _get_fernet().decrypt(encoded.encode())
+        return json.loads(decrypted.decode())
+    except InvalidToken:
+        # Legacy (unencrypted) base64-JSON payload — read it so old data works.
+        try:
+            return json.loads(base64.b64decode(encoded.encode()).decode())
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to decode legacy credential data: %s", type(exc).__name__)
+            return {}
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to decode credential data: %s", exc)
+        logger.error("Failed to decrypt credential data: %s", type(exc).__name__)
         return {}
 
 
