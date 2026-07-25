@@ -86,6 +86,64 @@ def retry_failed_integration_request(self, integration_id: int) -> None:
     # TODO: implement per-carrier retry logic
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def sync_business_central_purchase_orders_task(self, integration_id: int, trigger_type: str = "scheduled") -> None:
+    """Run a Business Central purchase-order sync for a single integration.
+
+    Permanent problems (config, or a sync already running) are logged and skipped;
+    transient Business Central errors are retried with backoff.
+    """
+    from .business_systems.business_central.exceptions import (
+        BusinessCentralConfigurationError,
+        BusinessCentralError,
+        BusinessCentralSyncInProgressError,
+    )
+    from .business_systems.business_central.sync import sync_purchase_orders_from_business_central
+    from .models import Integration
+
+    try:
+        integration = Integration.objects.get(pk=integration_id, is_active=True)
+    except Integration.DoesNotExist:
+        logger.info(
+            "sync_business_central_purchase_orders_task: integration %s not found/inactive — skipping.", integration_id
+        )
+        return
+
+    try:
+        run = sync_purchase_orders_from_business_central(integration, trigger_type=trigger_type)
+        logger.info(
+            "BC PO sync task: integration=%s %s (created=%d updated=%d unchanged=%d failed=%d)",
+            integration_id,
+            run.status,
+            run.records_created,
+            run.records_updated,
+            run.records_unchanged,
+            run.records_failed,
+        )
+    except (BusinessCentralConfigurationError, BusinessCentralSyncInProgressError) as exc:
+        logger.info("BC PO sync task: integration=%s skipped: %s", integration_id, exc)
+    except BusinessCentralError as exc:
+        logger.warning("BC PO sync task: integration=%s transient failure: %s", integration_id, exc)
+        raise self.retry(exc=exc) from exc
+
+
+@shared_task
+def sync_enabled_business_central_integrations_task() -> dict:
+    """Dispatcher: queue a PO sync for every BC integration that is due.
+
+    Runs on a fixed Celery Beat interval; the due check (interval, failure backoff,
+    in-progress, enabled/active) decides which integrations are actually queued.
+    One task is enqueued per integration, keeping teams isolated.
+    """
+    from .services import get_due_business_central_integrations
+
+    due = get_due_business_central_integrations()
+    for integration in due:
+        sync_business_central_purchase_orders_task.delay(integration.id, "scheduled")
+    logger.info("BC dispatcher: queued %d integration(s)", len(due))
+    return {"queued": len(due)}
+
+
 @shared_task
 def discover_containers_for_open_shipments_task(team_id: int) -> dict:
     """Discover containers for all open shipments that lack containers.

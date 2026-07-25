@@ -1,6 +1,6 @@
 # Integration services — all business logic, write operations, and external API calls.
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.utils import timezone
 
@@ -9,6 +9,71 @@ from apps.teams.models import Team
 from .models import Integration, IntegrationRequestLog, IntegrationSyncRun
 
 logger = logging.getLogger(__name__)
+
+_BC_PROVIDER_CODE = "business_central"
+_DEFAULT_SYNC_INTERVAL_MINUTES = 30
+_DEFAULT_FAILURE_BACKOFF_MINUTES = 15
+# A run stuck in "running" longer than this is treated as crashed (the advisory
+# lock, released on crash, is the real concurrency guard).
+_STALE_RUNNING_HOURS = 2
+
+
+def _is_business_central_sync_due(integration: Integration, now: datetime) -> bool:
+    """True when this BC integration's purchase-order sync is due to run again."""
+    config = integration.config or {}
+    interval = timedelta(
+        minutes=int(config.get("purchase_order_sync_interval_minutes") or _DEFAULT_SYNC_INTERVAL_MINUTES)
+    )
+    backoff = timedelta(
+        minutes=int(config.get("purchase_order_sync_failure_backoff_minutes") or _DEFAULT_FAILURE_BACKOFF_MINUTES)
+    )
+
+    latest = (
+        IntegrationSyncRun.objects.filter(
+            integration=integration,
+            resource_type=IntegrationSyncRun.ResourceType.PURCHASE_ORDERS,
+        )
+        .order_by("-started_at")
+        .first()
+    )
+    if latest is None:
+        return True  # never synced
+
+    # A genuinely-running sync is skipped; a stale one is allowed (lock still guards).
+    if (
+        latest.status == IntegrationSyncRun.Status.RUNNING
+        and latest.started_at
+        and latest.started_at > now - timedelta(hours=_STALE_RUNNING_HOURS)
+    ):
+        return False
+
+    reference = latest.finished_at or latest.started_at
+    if reference is None:
+        return True
+    gap = interval if latest.status == IntegrationSyncRun.Status.COMPLETED else backoff
+    return reference + gap <= now
+
+
+def get_due_business_central_integrations(now: datetime | None = None) -> list[Integration]:
+    """Return active, sync-enabled BC integrations whose PO sync is due.
+
+    Skips integrations that are inactive, have sync disabled, are not yet due per
+    their configured interval, are backing off after a failure, or have a sync in
+    progress.
+    """
+    now = now or timezone.now()
+    integrations = Integration.objects.filter(
+        provider_family=Integration.ProviderFamily.BUSINESS_SYSTEM,
+        provider_code=_BC_PROVIDER_CODE,
+        is_active=True,
+    )
+    due = []
+    for integration in integrations:
+        if not (integration.config or {}).get("sync_enabled", True):
+            continue
+        if _is_business_central_sync_due(integration, now):
+            due.append(integration)
+    return due
 
 
 # ── Sync run watermark ──────────────────────────────────────────────────────

@@ -537,6 +537,13 @@ SCHEDULED_TASKS: dict[str, Any] = {
         "schedule": timedelta(days=1),
         "expire_seconds": 60 * 60,
     },
+    # Business Central PO sync dispatcher — runs often; the task itself decides
+    # which integrations are actually due per their configured interval.
+    "dispatch-business-central-po-sync": {
+        "task": "apps.scm.integrations.tasks.sync_enabled_business_central_integrations_task",
+        "schedule": timedelta(minutes=5),
+        "expire_seconds": 5 * 60,
+    },
     # Example of a crontab schedule
     # from celery import schedules
     # "daily-4am-task": {
