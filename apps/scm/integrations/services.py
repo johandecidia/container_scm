@@ -191,20 +191,20 @@ def test_integration_connection(integration: Integration) -> dict:
     """Test connectivity and credentials for a carrier integration.
 
     1. Looks up the carrier in the registry.
-    2. Instantiates the client.
+    2. Builds the client with this integration (and its credentials) injected.
     3. Calls test_connection().
     4. Updates integration status and logs the result.
     Returns {"success": bool, "message": str}.
     """
-    from .carriers.registry import UnknownCarrierError, get_carrier_client_class
+    from .carriers.factory import build_carrier_client
+    from .carriers.registry import UnknownCarrierError
 
     integration.last_tested_at = timezone.now()
     integration.save(update_fields=["last_tested_at", "updated_at"])
 
     started_at: datetime = timezone.now()
     try:
-        client_class = get_carrier_client_class(integration.provider_code)
-        client = client_class()
+        client = build_carrier_client(integration.provider_code, integration=integration)
         result = client.test_connection()
         duration_ms = int((timezone.now() - started_at).total_seconds() * 1000)
 

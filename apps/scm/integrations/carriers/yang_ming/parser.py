@@ -2,10 +2,10 @@ from apps.scm.integrations.carriers.base import BaseCarrierParser
 
 
 class YangMingParser(BaseCarrierParser):
-    """Yang Ming payload parser (placeholder — API format not confirmed; defensive stub only)."""
+    """Yang Ming payload parser — stub, awaiting API access.
+
+    parse_tracking_events() is inherited from BaseCarrierParser and raises
+    CarrierNotImplementedError until the carrier response format is known.
+    """
 
     provider_code = "yang_ming"
-
-    def parse_tracking_events(self, raw_payload: dict) -> list[dict]:
-        # TODO: confirm Yang Ming API format before implementing
-        raise NotImplementedError("Yang Ming parser not yet implemented — API format unconfirmed")

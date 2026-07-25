@@ -2,16 +2,11 @@ from apps.scm.integrations.carriers.base import BaseCarrierClient
 
 
 class MscClient(BaseCarrierClient):
-    """MSC tracking client (placeholder — full implementation pending API access)."""
+    """MSC tracking client — stub, awaiting API access.
+
+    Inherits the full contract from BaseCarrierClient, whose methods raise
+    CarrierNotImplementedError. That keeps an unimplemented carrier from ever
+    being mistaken for a carrier that returned no data.
+    """
 
     provider_code = "msc"
-
-    def test_connection(self) -> dict:
-        # TODO: implement MSC API connection test
-        raise NotImplementedError("MSC API client not yet implemented")
-
-    def fetch_tracking(
-        self, *, container_number=None, bill_of_lading_number=None, booking_number=None, purchase_order_number=None
-    ) -> dict:
-        # TODO: implement MSC Track & Trace API call
-        raise NotImplementedError("MSC API client not yet implemented")

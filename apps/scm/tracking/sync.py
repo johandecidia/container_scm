@@ -27,18 +27,16 @@ def _get_next_sync_at():
     return timezone.now() + timezone.timedelta(minutes=DEFAULT_SYNC_INTERVAL_MINUTES)
 
 
-def _get_carrier_client_and_parser(provider_code: str):
-    """Look up the carrier client and parser from the registry.
+def _get_carrier_client_and_parser(provider_code: str, team):
+    """Build the carrier client and parser for a team.
 
-    Returns (client_instance, parser_instance) or raises if the carrier is unknown.
+    The client is built through the carrier factory so the team's Integration and
+    its credentials are injected — a client never resolves those itself.
     Raises UnknownCarrierError for unknown provider codes.
     """
-    from apps.scm.integrations.carriers.registry import get_carrier_definition
+    from apps.scm.integrations.carriers.factory import build_carrier_client, build_carrier_parser
 
-    definition = get_carrier_definition(provider_code)
-    client = definition.client_class()
-    parser = definition.parser_class()
-    return client, parser
+    return build_carrier_client(provider_code, team=team), build_carrier_parser(provider_code)
 
 
 def sync_tracking_subscription(subscription: TrackingSubscription) -> bool:
@@ -60,7 +58,7 @@ def sync_tracking_subscription(subscription: TrackingSubscription) -> bool:
     try:
         # Resolve carrier client and parser from the registry.
         try:
-            client, parser = _get_carrier_client_and_parser(subscription.provider.code)
+            client, parser = _get_carrier_client_and_parser(subscription.provider.code, subscription.team)
         except Exception as exc:  # noqa: BLE001
             # Registry miss or carrier not yet implemented — log and continue with empty payload.
             logger.warning(
