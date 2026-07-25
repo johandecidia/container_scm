@@ -7,6 +7,8 @@ Event service: records timeline events on purchase orders.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -43,6 +45,67 @@ class UpsertResult:
     @property
     def processed(self) -> int:
         return self.created + self.updated + self.unchanged
+
+
+# ---------------------------------------------------------------------------
+# Deterministic sync hash
+# ---------------------------------------------------------------------------
+#
+# The hash covers ONLY the normalised business-content fields the source system
+# owns. It deliberately excludes technical/local fields so that re-syncing
+# identical content is detected as unchanged:
+#   - excluded: last_synced_at, source_last_modified, raw_payload, source_active,
+#     SCM logistics status, local relations, comments, and DB row ordering.
+#   - shipped/received quantities are SCM/logistics-owned and are excluded too.
+
+
+def _norm_decimal(value: Any) -> str | None:
+    if value is None:
+        return None
+    return f"{Decimal(str(value)).normalize():f}"
+
+
+def _norm_date(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _line_content(line_data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "external_id": line_data.get("external_id", ""),
+        "line_no": line_data.get("line_no", ""),
+        "item_no": line_data.get("item_no", ""),
+        "description": line_data.get("description", ""),
+        "ordered_qty": _norm_decimal(line_data.get("ordered_qty", 0)),
+        "unit_price": _norm_decimal(line_data.get("unit_price")),
+        "expected_receipt_date": _norm_date(line_data.get("expected_receipt_date")),
+    }
+
+
+def compute_line_sync_hash(line_data: dict[str, Any]) -> str:
+    """Deterministic SHA-256 of a single line's source-owned content."""
+    blob = json.dumps(_line_content(line_data), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def compute_purchase_order_sync_hash(po_data: dict[str, Any]) -> str:
+    """Deterministic SHA-256 of a purchase order's source-owned content (+ lines)."""
+    payload = {
+        "po_number": po_data.get("po_number", ""),
+        "supplier_no": po_data.get("supplier_no", ""),
+        "supplier_name": po_data.get("supplier_name", ""),
+        "status": po_data.get("status", "open"),
+        "order_date": _norm_date(po_data.get("order_date")),
+        "expected_receipt_date": _norm_date(po_data.get("expected_receipt_date")),
+        "currency": po_data.get("currency", "EUR"),
+        "lines": sorted(
+            (_line_content(line) for line in po_data.get("lines", [])),
+            key=lambda line: line["external_id"],
+        ),
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +207,13 @@ def _upsert_single_purchase_order(
         "expected_receipt_date": po_data.get("expected_receipt_date"),
         "currency": po_data.get("currency", "EUR"),
     }
+    sync_hash = compute_purchase_order_sync_hash(po_data)
     source_meta = {
         "source_system": source_system,
         "source_company_id": source_company_id,
         "source_last_modified_at": po_data.get("source_last_modified"),
         "raw_payload": po_data.get("raw_payload") or {},
+        "sync_hash": sync_hash,
         "source_active": True,
         "source_deleted_at": None,
     }
@@ -163,8 +228,8 @@ def _upsert_single_purchase_order(
         logger.info("Created PurchaseOrder %s for team %s", po.po_number, team.slug)
         return po
 
-    if _purchase_order_unchanged(existing, defaults, lines_data):
-        # Technical touch only — record we saw it, without a business update.
+    # Unchanged when the deterministic content hash matches — technical touch only.
+    if existing.sync_hash and existing.sync_hash == sync_hash:
         existing.last_synced_at = now
         existing.source_active = True
         existing.source_deleted_at = None
@@ -200,6 +265,7 @@ def _line_defaults(team: Team, line_data: dict[str, Any], *, now=None) -> dict[s
         "expected_receipt_date": line_data.get("expected_receipt_date"),
         "source_last_modified_at": line_data.get("source_last_modified"),
         "raw_payload": line_data.get("raw_payload") or {},
+        "sync_hash": compute_line_sync_hash(line_data),
         "source_active": True,
         "source_deleted_at": None,
         "last_synced_at": now,
@@ -213,44 +279,6 @@ def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[di
             external_id=line_data["external_id"],
             defaults=_line_defaults(team, line_data, now=now),
         )
-
-
-def _purchase_order_unchanged(
-    existing: PurchaseOrder,
-    defaults: dict[str, Any],
-    lines_data: list[dict[str, Any]],
-) -> bool:
-    """Return True when the stored PO and all its lines already match the source.
-
-    Used so a re-sync of identical data is reported as "unchanged" rather than
-    "updated". Only the source-owned fields are compared.
-    """
-    if any(getattr(existing, attr) != value for attr, value in defaults.items()):
-        return False
-
-    existing_lines = {line.external_id: line for line in existing.lines.all()}
-    if len(existing_lines) != len(lines_data):
-        return False
-
-    for line_data in lines_data:
-        line = existing_lines.get(line_data.get("external_id"))
-        if line is None:
-            return False
-        expected = _line_defaults(existing.team, line_data)
-        # team is a relation stored elsewhere; compare only the data fields.
-        for attr in (
-            "line_no",
-            "item_no",
-            "description",
-            "ordered_qty",
-            "shipped_qty",
-            "received_qty",
-            "unit_price",
-            "expected_receipt_date",
-        ):
-            if getattr(line, attr) != expected[attr]:
-                return False
-    return True
 
 
 # ---------------------------------------------------------------------------
