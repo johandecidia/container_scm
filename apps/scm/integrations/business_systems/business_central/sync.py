@@ -17,7 +17,6 @@ import logging
 import uuid
 from datetime import UTC, timedelta
 
-from django.core.cache import cache
 from django.utils import timezone
 
 from apps.scm.integrations.models import Integration, IntegrationSyncRun
@@ -28,10 +27,8 @@ from apps.scm.integrations.services import (
 )
 
 from .client import BusinessCentralClient
-from .exceptions import (
-    BusinessCentralConfigurationError,
-    BusinessCentralSyncInProgressError,
-)
+from .exceptions import BusinessCentralConfigurationError
+from .locks import DEFAULT_LOCK_TTL_SECONDS, purchase_order_lock_name, sync_lock
 from .mapper import BusinessCentralMapper
 
 logger = logging.getLogger(__name__)
@@ -43,7 +40,6 @@ _PROVIDER_CODE = "business_central"
 # Re-fetch a little before the last watermark so records modified right on the
 # boundary are not missed; the idempotent upsert absorbs the overlap.
 _WATERMARK_OVERLAP = timedelta(minutes=5)
-_LOCK_TIMEOUT_SECONDS = 30 * 60
 
 
 def sync_purchase_orders_from_business_central(
@@ -74,14 +70,11 @@ def sync_purchase_orders_from_business_central(
     """
     _validate_integration(integration, client)
 
-    if not _acquire_lock(integration):
-        raise BusinessCentralSyncInProgressError(
-            f"A purchase order sync is already running for integration {integration.pk}"
-        )
-    try:
+    ttl = int((integration.config or {}).get("sync_lock_ttl_seconds") or DEFAULT_LOCK_TTL_SECONDS)
+    # Raises BusinessCentralSyncInProgressError if a run is already in progress;
+    # holds a DB advisory lock for the whole run (never proceeds unprotected).
+    with sync_lock(purchase_order_lock_name(integration), ttl=ttl):
         return _run_sync(integration, client, trigger_type)
-    finally:
-        _release_lock(integration)
 
 
 # ---------------------------------------------------------------------------
@@ -109,31 +102,6 @@ def _validate_integration(integration: Integration, client: BusinessCentralClien
         creds = get_integration_credentials(integration)
         if not creds.get("client_id") or not creds.get("client_secret"):
             raise BusinessCentralConfigurationError("integration is missing client_id/client_secret credentials")
-
-
-# ---------------------------------------------------------------------------
-# Sync lock (cache-based, best-effort)
-# ---------------------------------------------------------------------------
-
-
-def _lock_key(integration: Integration) -> str:
-    return f"bc_sync_lock:{integration.pk}:{_RESOURCE}"
-
-
-def _acquire_lock(integration: Integration) -> bool:
-    """Atomically acquire the per-integration sync lock. Fail-open on cache errors."""
-    try:
-        return bool(cache.add(_lock_key(integration), "1", _LOCK_TIMEOUT_SECONDS))
-    except Exception as exc:  # noqa: BLE001 — never let a cache outage block syncing
-        logger.warning("Sync lock unavailable (%s); proceeding without lock", type(exc).__name__)
-        return True
-
-
-def _release_lock(integration: Integration) -> None:
-    try:
-        cache.delete(_lock_key(integration))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to release sync lock: %s", type(exc).__name__)
 
 
 # ---------------------------------------------------------------------------

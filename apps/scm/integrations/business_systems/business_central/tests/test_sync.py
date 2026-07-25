@@ -187,9 +187,10 @@ class SyncWatermarkTest(TestCase):
 
     def test_watermark_not_advanced_after_failure(self):
         integration = _integration()
-        with mock.patch.object(
-            BusinessCentralClient, "fetch_purchase_orders", side_effect=BusinessCentralError("boom")
-        ), self.assertRaises(BusinessCentralError):
+        with (
+            mock.patch.object(BusinessCentralClient, "fetch_purchase_orders", side_effect=BusinessCentralError("boom")),
+            self.assertRaises(BusinessCentralError),
+        ):
             _sync(integration)
         run = integration.sync_runs.latest("created_at")
         self.assertEqual(run.status, IntegrationSyncRun.Status.FAILED)
@@ -216,20 +217,41 @@ class SyncLockTest(TestCase):
     def test_second_run_blocked_while_locked(self):
         from django.core.cache import cache
 
+        from apps.scm.integrations.business_systems.business_central.locks import (
+            cache_lock_key,
+            purchase_order_lock_name,
+        )
+
         integration = _integration()
-        # Pre-acquire the lock as if another run holds it.
-        cache.add(sync_module._lock_key(integration), "1", 600)
+        # Pre-acquire the cache lock as if another run holds it.
+        cache.add(cache_lock_key(purchase_order_lock_name(integration)), "held", 600)
         with self.assertRaises(BusinessCentralSyncInProgressError):
             _sync(integration)
 
     def test_lock_released_after_run(self):
         from django.core.cache import cache
 
+        from apps.scm.integrations.business_systems.business_central.locks import (
+            cache_lock_key,
+            purchase_order_lock_name,
+        )
+
         integration = _integration()
         _sync(integration)
         # Lock is released, so a subsequent run acquires it fine.
-        self.assertIsNone(cache.get(sync_module._lock_key(integration)))
+        self.assertIsNone(cache.get(cache_lock_key(purchase_order_lock_name(integration))))
         run = _sync(integration)
+        self.assertEqual(run.status, IntegrationSyncRun.Status.COMPLETED)
+
+    def test_runs_when_cache_unavailable(self):
+        # Cache outage must not fail-open silently AND must not block a legitimate
+        # run — the DB advisory lock protects it instead.
+        integration = _integration()
+        with mock.patch(
+            "apps.scm.integrations.business_systems.business_central.locks.cache.add",
+            side_effect=RuntimeError("cache down"),
+        ):
+            run = _sync(integration)
         self.assertEqual(run.status, IntegrationSyncRun.Status.COMPLETED)
 
 
