@@ -174,3 +174,44 @@ class ImportUploadViewPreselectionTest(TestCase):
         resp = c.get(reverse("procurement:purchase_order_list"))
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "import_type=purchase_orders")
+
+
+class UploadFormErrorRenderingTest(TestCase):
+    """Form-wide validation errors must be visible on the upload page.
+
+    The template previously rendered only per-field errors, so a PDF uploaded
+    under the wrong import type was rejected with no message at all.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="upload-errors-team")
+        cls.user = make_user("upload-errors@example.com")
+        cls.team.members.add(cls.user)
+
+    def _client(self) -> Client:
+        c = Client()
+        c.force_login(self.user)
+        session = c.session
+        session["team_id"] = self.team.pk
+        session.save()
+        return c
+
+    def test_pdf_with_wrong_import_type_shows_error_message(self):
+        f = SimpleUploadedFile("orders.pdf", b"%PDF-1.4 fake", content_type="application/pdf")
+        resp = self._client().post(
+            reverse("imports:upload"),
+            {"file": f, "import_type": ImportJob.ImportType.CONTAINERS},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "PDF files are only supported for Purchase Orders imports.")
+        self.assertFalse(ImportJob.objects.filter(team=self.team).exists())
+
+    def test_xml_with_wrong_import_type_shows_error_message(self):
+        f = SimpleUploadedFile("orders.xml", b"<?xml version='1.0'?><a/>", content_type="text/xml")
+        resp = self._client().post(
+            reverse("imports:upload"),
+            {"file": f, "import_type": ImportJob.ImportType.CONTAINERS},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "XML files are only supported for Purchase Orders imports.")

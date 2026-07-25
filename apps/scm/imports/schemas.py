@@ -110,7 +110,47 @@ class ContainerMovementImportSchema(BaseModel):
         raise ValueError(f"Invalid datetime {raw!r}. Expected YYYY-MM-DD or YYYY-MM-DD HH:MM:SS")
 
 
-_DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y")
+_DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%y-%m-%d")
+
+# Space characters used as thousands separators in printed ERP documents.
+# Business Central PDFs use NO-BREAK SPACE, e.g. "2\xa0091,68".
+_THOUSANDS_SPACES = (
+    "\xa0",  # NO-BREAK SPACE
+    "\u202f",  # NARROW NO-BREAK SPACE
+    "\u2009",  # THIN SPACE
+    "\u2007",  # FIGURE SPACE
+    " ",  # plain space
+)
+
+
+def _to_decimal(value: Any, field_label: str) -> Decimal:
+    """Parse a printed number into a Decimal.
+
+    Handles the formats produced by European ERP documents and spreadsheets:
+    space thousands separators (including NO-BREAK SPACE), comma decimal
+    separators and dot decimal separators.  When both ``,`` and ``.`` are
+    present, the last one is the decimal separator and the other is dropped as
+    a grouping mark.  A lone comma is always read as a decimal separator, which
+    matches the European sources this pipeline imports from.
+    """
+    raw = str(value).strip()
+    for space in _THOUSANDS_SPACES:
+        raw = raw.replace(space, "")
+
+    last_comma = raw.rfind(",")
+    last_dot = raw.rfind(".")
+    if last_comma < 0 or last_dot < 0:
+        # Only one separator kind present — a lone comma is the decimal mark.
+        raw = raw.replace(",", ".")
+    elif last_comma > last_dot:
+        raw = raw.replace(".", "").replace(",", ".")
+    else:
+        raw = raw.replace(",", "")
+
+    try:
+        return Decimal(raw)
+    except InvalidOperation as err:
+        raise ValueError(f"Invalid {field_label}: {value!r} — must be a number") from err
 
 
 class PurchaseOrderImportRowSchema(BaseModel):
@@ -162,11 +202,7 @@ class PurchaseOrderImportRowSchema(BaseModel):
     def validate_ordered_qty(cls, v: Any) -> Decimal:
         if v is None or str(v).strip() == "":
             raise ValueError("ordered_qty is required")
-        raw = str(v).strip().replace(",", ".")
-        try:
-            qty = Decimal(raw)
-        except InvalidOperation as err:
-            raise ValueError(f"Invalid quantity: {v!r} — must be a number") from err
+        qty = _to_decimal(v, "quantity")
         if qty <= 0:
             raise ValueError(f"ordered_qty must be positive, got {qty}")
         return qty
@@ -176,11 +212,7 @@ class PurchaseOrderImportRowSchema(BaseModel):
     def validate_unit_price(cls, v: Any) -> Decimal | None:
         if v is None or str(v).strip() == "":
             return None
-        raw = str(v).strip().replace(",", ".")
-        try:
-            price = Decimal(raw)
-        except InvalidOperation as err:
-            raise ValueError(f"Invalid unit price: {v!r} — must be a number") from err
+        price = _to_decimal(v, "unit price")
         if price < 0:
             raise ValueError(f"unit_price must be non-negative, got {price}")
         return price
@@ -196,7 +228,7 @@ class PurchaseOrderImportRowSchema(BaseModel):
                 return datetime.datetime.strptime(raw, fmt).date()
             except ValueError:
                 continue
-        raise ValueError(f"Invalid date {raw!r}. Expected YYYY-MM-DD or DD-MM-YYYY")
+        raise ValueError(f"Invalid date {raw!r}. Expected YYYY-MM-DD, DD-MM-YYYY or YY-MM-DD")
 
 
 # Registry of schema classes per import type.

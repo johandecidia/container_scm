@@ -78,15 +78,23 @@ def _parse_xml(file_obj) -> list[dict[str, Any]]:
 
 
 def _parse_pdf(job: ImportJob) -> list[dict[str, Any]]:
-    """Extract purchase order rows from a PDF via the FastAPI extraction service."""
+    """Extract purchase order rows from a PDF via the FastAPI extraction service.
+
+    Records the service's extraction-quality fields (status, confidence,
+    warnings) on the job so the user can see how reliable the extraction was
+    before confirming the import.
+    """
     from .extractors.purchase_orders import extract_pdf_purchase_orders
 
     try:
-        return extract_pdf_purchase_orders(job.file)
+        extraction = extract_pdf_purchase_orders(job.file)
     except Exception as exc:
         job.metadata["extract_error"] = str(exc)
         job.save(update_fields=["metadata", "updated_at"])
         raise
+    job.metadata.update(extraction.as_metadata())
+    job.save(update_fields=["metadata", "updated_at"])
+    return extraction.rows
 
 
 def parse_file(job: ImportJob) -> list[dict[str, Any]]:

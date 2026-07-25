@@ -357,8 +357,12 @@ class XMLPOImportErrorTest(TestCase):
         job.refresh_from_db()
         self.assertIn("parse_error", job.metadata)
 
-    def test_xml_with_po_but_no_lines_creates_zero_rows(self):
-        """A valid PO header with no item lines (all text lines) → 0 rows."""
+    def test_xml_with_po_but_no_lines_fails_the_job(self):
+        """A valid PO header with no item lines (all text lines) → 0 rows → FAILED.
+
+        The parser produces no rows, and a job with no rows must fail rather than
+        report a successful empty import.
+        """
         xml = b"""\
 <?xml version="1.0"?>
 <ReportDataSet name="PEB Purchase Order">
@@ -379,15 +383,19 @@ class XMLPOImportErrorTest(TestCase):
   </DataItems>
 </ReportDataSet>"""
         job = self._make_job_with_content(xml, "empty_lines.xml")
-        parse_import_job(job)
+        with self.assertRaises(ValueError):
+            parse_import_job(job)
         job.refresh_from_db()
         self.assertEqual(job.total_rows, 0)
+        self.assertEqual(job.status, ImportJob.Status.FAILED)
+        self.assertIn("parse_error", job.metadata)
 
     def test_xml_line_missing_item_no_is_skipped_by_parser(self):
         """A PO line without Column01 (item_no) is silently skipped by the XML parser.
 
         The BC parser design skips any line that has no item number, so no row
-        is created — rather than creating an INVALID row.
+        is created — rather than creating an INVALID row.  With no rows at all
+        the job fails instead of completing empty.
         """
         xml = b"""\
 <?xml version="1.0"?>
@@ -418,10 +426,12 @@ class XMLPOImportErrorTest(TestCase):
   </DataItems>
 </ReportDataSet>"""
         job = self._make_job_with_content(xml, "missing_item.xml")
-        parse_import_job(job)
+        with self.assertRaises(ValueError):
+            parse_import_job(job)
         job.refresh_from_db()
-        # Parser skips lines without item_no → 0 rows created
+        # Parser skips lines without item_no → 0 rows created → job fails.
         self.assertEqual(job.total_rows, 0)
+        self.assertEqual(job.status, ImportJob.Status.FAILED)
 
 
 # ---------------------------------------------------------------------------

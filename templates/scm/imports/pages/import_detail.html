@@ -43,6 +43,9 @@
       {{ job.created_at|date:"d M Y H:i" }}
     </div>
 
+    {# Parsing / extraction feedback #}
+    {% include "scm/imports/partials/import_job_alerts.html" %}
+
     {# Action buttons #}
     <div class="flex flex-wrap gap-2 mb-6">
       {% if can_parse %}

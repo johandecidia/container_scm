@@ -212,3 +212,84 @@ class PurchaseOrderImportRowSchemaRejectsInvalidTest(SimpleTestCase):
         self.assertIn("po_number", validated)
         self.assertIn("ordered_qty", validated)
         self.assertIn("supplier_no", validated)
+
+
+class PurchaseOrderPrintedNumberFormatTest(SimpleTestCase):
+    """Numbers as printed on ERP documents parse correctly.
+
+    Business Central PDFs print amounts with a NO-BREAK SPACE thousands
+    separator and a comma decimal separator, e.g. "2\xa0091,68".
+    """
+
+    def test_nbsp_thousands_separator_with_comma_decimal(self):
+        row = {**VALID_ROW, "unit_price": "2\xa0091,68"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.unit_price, Decimal("2091.68"))
+
+    def test_plain_space_thousands_separator(self):
+        row = {**VALID_ROW, "unit_price": "41 833,60"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.unit_price, Decimal("41833.60"))
+
+    def test_narrow_nbsp_thousands_separator(self):
+        row = {**VALID_ROW, "unit_price": "1\u202f234,50"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.unit_price, Decimal("1234.50"))
+
+    def test_nbsp_thousands_separator_in_quantity(self):
+        row = {**VALID_ROW, "ordered_qty": "1\xa0200"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.ordered_qty, Decimal("1200"))
+
+    def test_dot_thousands_with_comma_decimal(self):
+        """German-style grouping: the last separator is the decimal one."""
+        row = {**VALID_ROW, "unit_price": "1.234,56"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.unit_price, Decimal("1234.56"))
+
+    def test_comma_thousands_with_dot_decimal(self):
+        """US-style grouping: the last separator is the decimal one."""
+        row = {**VALID_ROW, "unit_price": "1,234.56"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.unit_price, Decimal("1234.56"))
+
+    def test_plain_dot_decimal_still_works(self):
+        row = {**VALID_ROW, "unit_price": "506.00"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.unit_price, Decimal("506.00"))
+
+    def test_lone_comma_is_a_decimal_separator(self):
+        row = {**VALID_ROW, "unit_price": "5,00"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.unit_price, Decimal("5.00"))
+
+    def test_non_numeric_price_still_rejected(self):
+        row = {**VALID_ROW, "unit_price": "on request"}
+        validated, errors = validate_row_data(ImportJob.ImportType.PURCHASE_ORDERS, row)
+        self.assertEqual(validated, {})
+        self.assertTrue(any(e["field"] == "unit_price" for e in errors))
+
+
+class PurchaseOrderPrintedDateFormatTest(SimpleTestCase):
+    """Two-digit-year dates as printed by Business Central parse correctly."""
+
+    def test_yy_mm_dd_order_date(self):
+        row = {**VALID_ROW, "order_date": "26-06-23"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.order_date, datetime.date(2026, 6, 23))
+
+    def test_yy_mm_dd_older_year(self):
+        row = {**VALID_ROW, "order_date": "24-08-16"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.order_date, datetime.date(2024, 8, 16))
+
+    def test_four_digit_year_takes_precedence(self):
+        """A full ISO date must not be misread by the two-digit-year format."""
+        row = {**VALID_ROW, "order_date": "2026-06-23"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.order_date, datetime.date(2026, 6, 23))
+
+    def test_dd_mm_yyyy_still_works(self):
+        row = {**VALID_ROW, "order_date": "23-06-2026"}
+        schema = PurchaseOrderImportRowSchema.model_validate(row)
+        self.assertEqual(schema.order_date, datetime.date(2026, 6, 23))

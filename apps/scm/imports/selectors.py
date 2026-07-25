@@ -35,6 +35,16 @@ def get_import_errors(job: ImportJob) -> QuerySet[ImportError]:
     )
 
 
+# Statuses a job can only reach after its file has been read.
+_POST_PARSE_STATUSES = (
+    ImportJob.Status.PARSED,
+    ImportJob.Status.VALIDATING,
+    ImportJob.Status.VALIDATED,
+    ImportJob.Status.IMPORTING,
+    ImportJob.Status.COMPLETED,
+)
+
+
 def get_job_summary(job: ImportJob) -> dict:
     """Return a summary dict suitable for preview / stats display."""
     return {
@@ -44,6 +54,9 @@ def get_job_summary(job: ImportJob) -> dict:
         "processed_rows": job.processed_rows,
         "status": job.status,
         "import_type": job.import_type,
+        # A parsed job with no rows means the file was read but nothing usable
+        # came out of it — the UI must not present that as a success.
+        "has_no_rows": job.total_rows == 0 and job.status in _POST_PARSE_STATUSES,
     }
 
 

@@ -14,13 +14,14 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import Client, TestCase
+from django.urls import reverse
 from django.utils.datastructures import MultiValueDict
 
 from apps.scm.imports.extractors.clients.pdf_fastapi import PDFExtractionError
 from apps.scm.imports.forms import ImportUploadForm
 from apps.scm.imports.importers import run_import
-from apps.scm.imports.models import ImportJob, ImportRow
+from apps.scm.imports.models import ImportError, ImportJob, ImportRow
 from apps.scm.imports.services import confirm_import_job, parse_import_job, validate_import_job
 from apps.scm.procurement.models import PurchaseOrder
 
@@ -335,3 +336,282 @@ class PODuplicateSkipBugFixTest(TestCase):
         # PO header must be unchanged.
         po.refresh_from_db()
         self.assertEqual(po.supplier_name, "Original Supplier")
+
+
+# Real service response for a Swedish-language Business Central purchase order:
+# HTTP 200, but the layout was not recognised — no PO number and no line items.
+UNRECOGNISED_LAYOUT_RESPONSE = {
+    "status": "needs_review",
+    "confidence": 0.7,
+    "requires_review": True,
+    "warnings": ["Purchase order number not found", "No line items found"],
+    "data": {
+        "document_type": "purchase_order",
+        "purchase_order_number": "UNKNOWN",
+        "vendor_number": None,
+        "order_date": None,
+        "currency": "SEK",
+        "vendor": None,
+        "ship_to": None,
+        "purchaser": None,
+        "line_items": [],
+        "amount_excl_vat": "41833.60",
+    },
+}
+
+# The service could not read the document at all.
+NULL_DATA_RESPONSE = {
+    "status": "failed",
+    "confidence": 0.0,
+    "requires_review": True,
+    "warnings": ["Could not extract text from document"],
+    "data": None,
+}
+
+# Lines were found, but the service is not fully confident about them.
+NEEDS_REVIEW_WITH_ROWS_RESPONSE = {
+    "status": "needs_review",
+    "confidence": 0.62,
+    "requires_review": True,
+    "warnings": ["Vendor number not found", "Order date could not be parsed"],
+    "data": {
+        **CANONICAL_API_RESPONSE["data"],
+        "vendor_number": "",
+    },
+}
+
+
+class PDFEmptyExtractionTest(TestCase):
+    """An extraction yielding no rows fails the job instead of completing it empty.
+
+    The service answers HTTP 200 for an unsupported layout, so the old pipeline
+    silently produced a COMPLETED job with 0 rows and told the user the import
+    had succeeded.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="pdf-empty-team")
+        cls.user = make_user("pdf-empty@example.com")
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_unrecognised_layout_marks_job_failed(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: UNRECOGNISED_LAYOUT_RESPONSE)
+
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"), self.assertRaises(PDFExtractionError):
+            parse_import_job(job)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, ImportJob.Status.FAILED)
+        self.assertEqual(job.total_rows, 0)
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_unrecognised_layout_creates_no_rows(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: UNRECOGNISED_LAYOUT_RESPONSE)
+
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"), self.assertRaises(PDFExtractionError):
+            parse_import_job(job)
+
+        self.assertEqual(job.rows.count(), 0)
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_error_message_includes_service_warnings(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: UNRECOGNISED_LAYOUT_RESPONSE)
+
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"), self.assertRaises(PDFExtractionError):
+            parse_import_job(job)
+
+        job.refresh_from_db()
+        extract_error = job.metadata["extract_error"]
+        self.assertIn("no purchase order lines", extract_error)
+        self.assertIn("needs_review", extract_error)
+        self.assertIn("No line items found", extract_error)
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_null_data_marks_job_failed(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: NULL_DATA_RESPONSE)
+
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"), self.assertRaises(PDFExtractionError):
+            parse_import_job(job)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, ImportJob.Status.FAILED)
+        self.assertIn("no purchase order data", job.metadata["extract_error"])
+
+
+class PDFExtractionMetadataTest(TestCase):
+    """Extraction-quality fields are persisted and surfaced as warnings."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="pdf-meta-team")
+        cls.user = make_user("pdf-meta@example.com")
+
+    def _parse(self, mock_post, response) -> ImportJob:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: response)
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
+            parse_import_job(job)
+        job.refresh_from_db()
+        return job
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_quality_fields_stored_in_metadata(self, mock_post):
+        job = self._parse(mock_post, NEEDS_REVIEW_WITH_ROWS_RESPONSE)
+
+        self.assertEqual(job.metadata["extraction_status"], "needs_review")
+        self.assertEqual(job.metadata["extraction_confidence"], 0.62)
+        self.assertTrue(job.metadata["extraction_requires_review"])
+        self.assertEqual(
+            job.metadata["extraction_warnings"],
+            ["Vendor number not found", "Order date could not be parsed"],
+        )
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_clean_extraction_records_confident_metadata(self, mock_post):
+        job = self._parse(mock_post, CANONICAL_API_RESPONSE)
+
+        self.assertEqual(job.metadata["extraction_status"], "completed")
+        self.assertEqual(job.metadata["extraction_confidence"], 0.95)
+        self.assertFalse(job.metadata["extraction_requires_review"])
+        self.assertEqual(job.metadata["extraction_warnings"], [])
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_service_warnings_recorded_as_job_level_warnings(self, mock_post):
+        job = self._parse(mock_post, NEEDS_REVIEW_WITH_ROWS_RESPONSE)
+
+        warnings = ImportError.objects.filter(import_job=job, code="extraction_warning")
+        self.assertEqual(warnings.count(), 2)
+        self.assertTrue(all(w.severity == ImportError.Severity.WARNING for w in warnings))
+        self.assertTrue(all(w.import_row_id is None for w in warnings))
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_requires_review_recorded_as_job_level_warning(self, mock_post):
+        job = self._parse(mock_post, NEEDS_REVIEW_WITH_ROWS_RESPONSE)
+
+        review = ImportError.objects.filter(import_job=job, code="extraction_requires_review")
+        self.assertEqual(review.count(), 1)
+        self.assertEqual(review.first().severity, ImportError.Severity.WARNING)
+        self.assertIn("0.62", review.first().message)
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_confident_extraction_records_no_warnings(self, mock_post):
+        job = self._parse(mock_post, CANONICAL_API_RESPONSE)
+
+        self.assertEqual(ImportError.objects.filter(import_job=job).count(), 0)
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_extraction_warnings_survive_validation(self, mock_post):
+        """Row-level validation must not wipe the job-level extraction warnings."""
+        job = self._parse(mock_post, NEEDS_REVIEW_WITH_ROWS_RESPONSE)
+        validate_import_job(job)
+
+        self.assertEqual(
+            ImportError.objects.filter(import_job=job, import_row__isnull=True).count(),
+            3,  # 2 service warnings + 1 requires-review notice
+        )
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_requires_review_does_not_block_the_import(self, mock_post):
+        """A flagged-for-review extraction still yields valid, importable rows."""
+        job = self._parse(mock_post, NEEDS_REVIEW_WITH_ROWS_RESPONSE)
+
+        self.assertEqual(job.status, ImportJob.Status.PARSED)
+        self.assertEqual(job.rows.filter(status=ImportRow.Status.VALID).count(), 1)
+
+
+class PDFReparseClearsStaleErrorsTest(TestCase):
+    """A retried parse must not show the previous attempt's failure."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="pdf-retry-team")
+        cls.user = make_user("pdf-retry@example.com")
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_successful_reparse_clears_previous_extract_error(self, mock_post):
+        job = _make_pdf_job(self.team, self.user)
+
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: UNRECOGNISED_LAYOUT_RESPONSE)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"), self.assertRaises(PDFExtractionError):
+            parse_import_job(job)
+        job.refresh_from_db()
+        self.assertIn("extract_error", job.metadata)
+
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: CANONICAL_API_RESPONSE)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
+            parse_import_job(job)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, ImportJob.Status.PARSED)
+        self.assertNotIn("extract_error", job.metadata)
+        self.assertNotIn("parse_error", job.metadata)
+
+
+class ImportDetailAlertRenderingTest(TestCase):
+    """The detail page must show why an import produced nothing."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="pdf-alerts-team")
+        cls.user = make_user("pdf-alerts@example.com")
+        cls.team.members.add(cls.user)
+
+    def _client(self) -> Client:
+        c = Client()
+        c.force_login(self.user)
+        session = c.session
+        session["team_id"] = self.team.pk
+        session.save()
+        return c
+
+    def _detail(self, job: ImportJob):
+        return self._client().get(reverse("imports:detail", kwargs={"pk": job.pk}))
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_failed_extraction_shows_reason(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: UNRECOGNISED_LAYOUT_RESPONSE)
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"), self.assertRaises(PDFExtractionError):
+            parse_import_job(job)
+
+        resp = self._detail(job)
+        self.assertContains(resp, "Document extraction failed")
+        self.assertContains(resp, "No line items found")
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_needs_review_extraction_shows_warning(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: NEEDS_REVIEW_WITH_ROWS_RESPONSE)
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
+            parse_import_job(job)
+
+        resp = self._detail(job)
+        self.assertContains(resp, "Extraction needs review")
+        self.assertContains(resp, "Vendor number not found")
+
+    def test_parsed_job_with_zero_rows_shows_warning(self):
+        """Defensive: a legacy job that reached a post-parse state with no rows."""
+        job = _make_pdf_job(self.team, self.user)
+        job.status = ImportJob.Status.COMPLETED
+        job.total_rows = 0
+        job.save(update_fields=["status", "total_rows"])
+
+        resp = self._detail(job)
+        self.assertContains(resp, "No rows were read from this file")
+
+    @patch("apps.scm.imports.extractors.clients.pdf_fastapi.requests.post")
+    def test_confident_extraction_shows_no_alerts(self, mock_post):
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: CANONICAL_API_RESPONSE)
+        job = _make_pdf_job(self.team, self.user)
+        with self.settings(SCM_PDF_FASTAPI_BASE_URL="http://localhost:9000"):
+            parse_import_job(job)
+
+        resp = self._detail(job)
+        self.assertNotContains(resp, "Document extraction failed")
+        self.assertNotContains(resp, "Extraction needs review")
+        self.assertNotContains(resp, "No rows were read from this file")
