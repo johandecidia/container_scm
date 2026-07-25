@@ -35,6 +35,9 @@
                   <a class="link link-primary font-medium" href="{% url 'procurement:purchase_order_detail' po.pk %}">
                     {{ po.po_number }}
                   </a>
+                  {% if po.is_business_central %}
+                    <span class="badge badge-info badge-xs ml-1" title="{% translate 'Managed by Business Central' %}">BC</span>
+                  {% endif %}
                 </td>
                 <td>{{ po.supplier_name }}</td>
                 <td>

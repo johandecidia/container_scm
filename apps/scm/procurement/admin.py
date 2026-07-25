@@ -66,15 +66,45 @@ class PurchaseOrderEventInline(admin.TabularInline):
     readonly_fields = ("event_type", "timestamp", "description")
 
 
+_BC_PO_READONLY = (
+    "po_number",
+    "supplier_no",
+    "supplier_name",
+    "status",
+    "order_date",
+    "expected_receipt_date",
+    "currency",
+    "source_system",
+    "source_company_id",
+    "source_last_modified_at",
+    "last_synced_at",
+    "raw_payload",
+    "sync_hash",
+    "source_active",
+    "source_deleted_at",
+)
+
+
 @admin.register(PurchaseOrder)
 class PurchaseOrderAdmin(admin.ModelAdmin):
-    list_display = ("po_number", "supplier_name", "status", "order_date", "expected_receipt_date", "team")
-    list_filter = ("status", "team")
+    list_display = ("po_number", "supplier_name", "status", "source_system", "source_active", "order_date", "team")
+    list_filter = ("status", "source_system", "source_active", "team")
     search_fields = ("po_number", "supplier_name", "supplier_no")
     readonly_fields = ("external_id", "created_at", "updated_at")
     inlines = [PurchaseOrderLineInline, PurchaseOrderEventInline]
     actions = [sync_from_bc_dummy]
     change_list_template = "admin/scm_procurement/purchaseorder/change_list.html"
+
+    def get_readonly_fields(self, request, obj=None):
+        # Business Central is master — its source fields are never editable here.
+        if obj is not None and obj.is_business_central:
+            return tuple(self.readonly_fields) + _BC_PO_READONLY
+        return self.readonly_fields
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and obj.is_business_central:
+            return False
+        return super().has_delete_permission(request, obj)
 
     def get_urls(self):
         urls = super().get_urls()
@@ -120,12 +150,40 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
         )
 
 
+_BC_LINE_READONLY = (
+    "line_no",
+    "item_no",
+    "description",
+    "ordered_qty",
+    "shipped_qty",
+    "received_qty",
+    "unit_price",
+    "expected_receipt_date",
+    "source_last_modified_at",
+    "last_synced_at",
+    "raw_payload",
+    "sync_hash",
+    "source_active",
+    "source_deleted_at",
+)
+
+
 @admin.register(PurchaseOrderLine)
 class PurchaseOrderLineAdmin(admin.ModelAdmin):
     list_display = ("purchase_order", "line_no", "item_no", "description", "ordered_qty", "shipped_qty", "received_qty")
     list_filter = ("purchase_order__team",)
     search_fields = ("item_no", "description", "purchase_order__po_number")
     readonly_fields = ("external_id", "created_at", "updated_at")
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj is not None and obj.purchase_order.is_business_central:
+            return tuple(self.readonly_fields) + _BC_LINE_READONLY
+        return self.readonly_fields
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and obj.purchase_order.is_business_central:
+            return False
+        return super().has_delete_permission(request, obj)
 
 
 @admin.register(PurchaseOrderEvent)

@@ -8,6 +8,11 @@
     </a>
     <h1 class="text-2xl font-bold mt-2">{{ purchase_order.po_number }}</h1>
     <p class="text-sm text-base-content/60 mt-1">{{ purchase_order.supplier_name }}</p>
+    {% if purchase_order.is_business_central %}
+      <span class="badge badge-info badge-sm mt-2" title="{% translate 'This purchase order is read-only in SCM.' %}">
+        {% translate "Managed by Business Central" %}
+      </span>
+    {% endif %}
   </div>
 
   {# Header info + fulfillment summary #}
