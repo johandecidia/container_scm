@@ -49,8 +49,11 @@ class CheckShipmentDelayTest(TestCase):
 
     def test_not_delayed_when_eta_improved(self):
         team = _team("delay-eta-earlier")
-        original = datetime.date(2026, 7, 10)
-        current = datetime.date(2026, 7, 5)
+        # Dates are relative to "today" and kept in the future so the shipment is
+        # neither ETA-drifted nor overdue — only that the ETA moved earlier.
+        today = timezone.now().date()
+        original = today + datetime.timedelta(days=20)
+        current = today + datetime.timedelta(days=15)
         shipment = _shipment(team, original_eta=original, current_eta=current)
         report = check_shipment_delay(team, shipment)
         self.assertFalse(report.is_delayed)
