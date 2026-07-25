@@ -95,3 +95,29 @@ class SourceSystemPerSourceTest(TestCase):
         )
         po = PurchaseOrder.objects.get(team=self.team, external_id="d")
         self.assertEqual(po.source_system, PurchaseOrderSource.DOCUMENT_IMPORT)
+
+    def test_migration_classifies_manual_from_known_signal(self):
+        # Simulate pre-migration rows: manual-<uuid> external_id defaulted to BC.
+        import importlib
+
+        from django.apps import apps
+
+        migration = importlib.import_module("apps.scm.procurement.migrations.0005_classify_manual_purchase_orders")
+
+        manual = PurchaseOrder.objects.create(
+            team=self.team,
+            external_id="manual-abc123",
+            po_number="OLD-1",
+            source_system=PurchaseOrderSource.BUSINESS_CENTRAL,
+        )
+        bc = PurchaseOrder.objects.create(
+            team=self.team,
+            external_id="bc-guid-1",
+            po_number="OLD-2",
+            source_system=PurchaseOrderSource.BUSINESS_CENTRAL,
+        )
+        migration.classify_manual(apps, None)
+        manual.refresh_from_db()
+        bc.refresh_from_db()
+        self.assertEqual(manual.source_system, PurchaseOrderSource.MANUAL)
+        self.assertEqual(bc.source_system, PurchaseOrderSource.BUSINESS_CENTRAL)

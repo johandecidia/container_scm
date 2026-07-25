@@ -1,9 +1,11 @@
 # Business Central Integration — Purchase Order Sync
 
-> **Scope: EPIC 1A, Milestone 1.** Live read-only Purchase Order sync (OAuth2 +
-> OData), incremental watermark, sync-run tracking, credential encryption.
-> Serial numbers, warehouse receipts/shipments, sales orders and any write-back
-> are **out of scope**.
+> **Scope: EPIC 1A, Milestones 1–2.** Live read-only Purchase Order sync (OAuth2 +
+> OData), incremental watermark, sync-run tracking, versioned credential
+> encryption, hardened locking, source metadata + deterministic sync hash,
+> reconciliation/soft-delete, read-only enforcement, a scheduled dispatcher, and a
+> monitoring UI. Serial numbers, warehouse receipts/shipments, sales orders and any
+> write-back are **out of scope**.
 
 ## Architecture
 
@@ -193,3 +195,56 @@ The command prints the typed exception name; check `IntegrationRequestLog` and
 
 > **Security note:** the docs above contain no real secrets. Never commit a
 > client secret or a Fernet key.
+
+---
+
+## Milestone 2 additions
+
+### Credential storage & production key
+
+- Stored credentials are versioned: `fernet:v1:<ciphertext>` for all new writes;
+  `legacy:base64:<value>` (and unprefixed transitional values) are read-only. A
+  `fernet:v1` decryption failure raises a sanitised `CredentialDecryptionError`
+  and is never silently treated as legacy.
+- Migrate legacy rows: `python manage.py migrate_integration_credentials [--dry-run]`
+  (never prints secret values).
+- In production, `SCM_INTEGRATION_ENCRYPTION_KEY` is **mandatory**: a system check
+  (`scm_integrations.E001`) errors if it is missing, and the credential service
+  refuses the SECRET_KEY-derived fallback.
+
+### Source metadata & sync hash
+
+- `PurchaseOrder` (and lines) carry `source_system` (`business_central` /
+  `document_import` / `manual`), `source_company_id`, `source_last_modified_at`,
+  `last_synced_at`, `raw_payload` (sanitised — never auth material), `sync_hash`,
+  `source_active`, `source_deleted_at`.
+- `sync_hash` is a deterministic SHA-256 over only the source-owned business
+  content; it drives created/updated/unchanged. `last_synced_at` is technical and
+  is bumped even for unchanged records without counting as a business update.
+
+### Reconciliation vs incremental sync
+
+- Incremental sync (default, watermark-bounded) never deactivates records for being
+  absent from a bounded result.
+- Full reconciliation soft-deletes records gone at source
+  (`source_active=False` + `source_deleted_at`), never hard-deleting; run it
+  deliberately: `python manage.py bc_reconcile_purchase_orders --integration <id>`.
+- Three distinct concepts: `status=closed` (BC document closed, still present) ≠
+  `source_active=False` (gone at source) ≠ computed SCM logistics `completed`.
+
+### Read-only enforcement
+
+- BC-sourced POs (`source_system=business_central`) are read-only in SCM: admin
+  business/source fields are read-only and delete is blocked (PO and lines); the
+  UI shows a "Managed by Business Central" badge. Manual / document-import POs
+  remain editable.
+
+### Scheduling & monitoring
+
+- Celery Beat runs `sync_enabled_business_central_integrations_task` every 5 minutes;
+  it queues one `sync_business_central_purchase_orders_task` per *due* integration
+  (per-integration `purchase_order_sync_interval_minutes`, failure backoff via
+  `purchase_order_sync_failure_backoff_minutes`, skipping in-progress runs).
+- Monitoring UI at `/scm/integrations/`: per-integration health, latest run counts,
+  watermark, and **Test connection** / **Sync purchase orders now** buttons (POST +
+  CSRF, team-scoped, queue Celery tasks, never display credentials).

@@ -52,11 +52,11 @@ class UpsertResult:
 # ---------------------------------------------------------------------------
 #
 # The hash covers ONLY the normalised business-content fields the source system
-# owns. It deliberately excludes technical/local fields so that re-syncing
-# identical content is detected as unchanged:
-#   - excluded: last_synced_at, source_last_modified, raw_payload, source_active,
-#     SCM logistics status, local relations, comments, and DB row ordering.
-#   - shipped/received quantities are SCM/logistics-owned and are excluded too.
+# owns (header fields + per-line quantities/price/dates) so that re-syncing
+# identical content is detected as unchanged. It deliberately excludes
+# technical/local fields: last_synced_at, source_last_modified, raw_payload,
+# source_active, computed SCM logistics status, local relations, comments, and DB
+# row ordering.
 
 
 def _norm_decimal(value: Any) -> str | None:
@@ -78,6 +78,8 @@ def _line_content(line_data: dict[str, Any]) -> dict[str, Any]:
         "item_no": line_data.get("item_no", ""),
         "description": line_data.get("description", ""),
         "ordered_qty": _norm_decimal(line_data.get("ordered_qty", 0)),
+        "shipped_qty": _norm_decimal(line_data.get("shipped_qty", 0)),
+        "received_qty": _norm_decimal(line_data.get("received_qty", 0)),
         "unit_price": _norm_decimal(line_data.get("unit_price")),
         "expected_receipt_date": _norm_date(line_data.get("expected_receipt_date")),
     }
