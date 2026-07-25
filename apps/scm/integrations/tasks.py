@@ -128,6 +128,38 @@ def sync_business_central_purchase_orders_task(self, integration_id: int, trigge
 
 
 @shared_task
+def test_business_central_connection_task(integration_id: int) -> dict:
+    """Test a Business Central integration's connection off the request cycle.
+
+    Updates the integration's health fields (last_tested_at + success/error) and
+    returns a sanitised {"success", "message"}. Never exposes credentials.
+    """
+    from django.utils import timezone
+
+    from .business_systems.business_central.client import BusinessCentralClient
+    from .business_systems.business_central.exceptions import BusinessCentralError
+    from .models import Integration
+    from .services import mark_integration_error, mark_integration_success
+
+    try:
+        integration = Integration.objects.get(pk=integration_id)
+    except Integration.DoesNotExist:
+        logger.warning("test_business_central_connection_task: integration %s not found.", integration_id)
+        return {"success": False, "message": "Integration not found"}
+
+    integration.last_tested_at = timezone.now()
+    integration.save(update_fields=["last_tested_at", "updated_at"])
+    try:
+        result = BusinessCentralClient(integration=integration).test_connection()
+        mark_integration_success(integration)
+        return result
+    except BusinessCentralError as exc:
+        message = f"{type(exc).__name__}: {exc}"
+        mark_integration_error(integration, message)
+        return {"success": False, "message": message}
+
+
+@shared_task
 def sync_enabled_business_central_integrations_task() -> dict:
     """Dispatcher: queue a PO sync for every BC integration that is due.
 

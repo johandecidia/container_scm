@@ -1,0 +1,88 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'integrations:list' %}">
+      &larr; {% translate "Integrations" %}
+    </a>
+    <h1 class="text-2xl font-bold mt-2">{{ integration.name }}</h1>
+    <p class="text-sm text-base-content/60 mt-1">{{ integration.provider_code }}</p>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags|default:'info' }} mb-4">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  {# Actions — POST + CSRF; queue Celery tasks, never a live call in-request. #}
+  <div class="flex gap-2 mb-6">
+    <form method="post" action="{% url 'integrations:test_connection' integration.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-outline btn-sm">{% translate "Test connection" %}</button>
+    </form>
+    <form method="post" action="{% url 'integrations:sync_now' integration.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary btn-sm" {% if in_progress %}disabled{% endif %}>
+        {% translate "Sync purchase orders now" %}
+      </button>
+    </form>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <section class="app-card">
+      <h2 class="font-semibold mb-3">{% translate "Health" %}</h2>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dt class="text-base-content/60">{% translate "Status" %}</dt>
+        <dd><span class="badge badge-outline badge-sm">{{ integration.get_status_display }}</span></dd>
+        <dt class="text-base-content/60">{% translate "Environment" %}</dt>
+        <dd>{{ environment|default:"—" }}</dd>
+        <dt class="text-base-content/60">{% translate "Company ID" %}</dt>
+        <dd class="font-mono text-xs">{{ company_id|default:"—" }}</dd>
+        <dt class="text-base-content/60">{% translate "Last tested" %}</dt>
+        <dd>{{ integration.last_tested_at|default:"—" }}</dd>
+        <dt class="text-base-content/60">{% translate "Last success" %}</dt>
+        <dd>{{ integration.last_success_at|default:"—" }}</dd>
+        <dt class="text-base-content/60">{% translate "Last error" %}</dt>
+        <dd>{{ integration.last_error_at|default:"—" }}</dd>
+        <dt class="text-base-content/60">{% translate "Sync in progress" %}</dt>
+        <dd>{% if in_progress %}{% translate "Yes" %}{% else %}{% translate "No" %}{% endif %}</dd>
+        <dt class="text-base-content/60">{% translate "Watermark" %}</dt>
+        <dd>{{ current_watermark|default:"—" }}</dd>
+      </dl>
+      {% if integration.last_error_message %}
+        <p class="text-error text-xs mt-3">{{ integration.last_error_message }}</p>
+      {% endif %}
+    </section>
+
+    <section class="app-card">
+      <h2 class="font-semibold mb-3">{% translate "Latest sync run" %}</h2>
+      {% if latest_run %}
+        <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <dt class="text-base-content/60">{% translate "Status" %}</dt>
+          <dd>{{ latest_run.get_status_display }}</dd>
+          <dt class="text-base-content/60">{% translate "Started" %}</dt>
+          <dd>{{ latest_run.started_at|default:"—" }}</dd>
+          <dt class="text-base-content/60">{% translate "Finished" %}</dt>
+          <dd>{{ latest_run.finished_at|default:"—" }}</dd>
+          <dt class="text-base-content/60">{% translate "Fetched" %}</dt>
+          <dd class="tabular-nums">{{ latest_run.records_fetched }}</dd>
+          <dt class="text-base-content/60">{% translate "Created" %}</dt>
+          <dd class="tabular-nums">{{ latest_run.records_created }}</dd>
+          <dt class="text-base-content/60">{% translate "Updated" %}</dt>
+          <dd class="tabular-nums">{{ latest_run.records_updated }}</dd>
+          <dt class="text-base-content/60">{% translate "Unchanged" %}</dt>
+          <dd class="tabular-nums">{{ latest_run.records_unchanged }}</dd>
+          <dt class="text-base-content/60">{% translate "Failed" %}</dt>
+          <dd class="tabular-nums">{{ latest_run.records_failed }}</dd>
+        </dl>
+        {% if latest_run.error_summary %}
+          <p class="text-error text-xs mt-3">{{ latest_run.error_summary }}</p>
+        {% endif %}
+      {% else %}
+        <p class="text-base-content/60 text-sm">{% translate "No sync runs yet." %}</p>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}
