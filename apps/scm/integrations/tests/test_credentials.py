@@ -9,8 +9,10 @@ from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.scm.integrations.checks import check_credential_encryption_key
 from apps.scm.integrations.credentials import (
+    CredentialDecryptionError,
     _decode,
     _encode,
+    _get_fernet,
     get_integration_credentials,
     mask_secret,
     set_integration_credentials,
@@ -45,10 +47,33 @@ class CredentialEncryptionTest(TestCase):
         data = {"client_secret": "same-value"}
         self.assertNotEqual(_encode(data), _encode(data))
 
+    def test_new_format_has_version_prefix(self):
+        self.assertTrue(_encode({"a": "b"}).startswith("fernet:v1:"))
+
     def test_legacy_base64_payload_still_readable(self):
-        # Simulate a row written by the old placeholder implementation.
+        # Simulate a row written by the old placeholder implementation (unprefixed).
         legacy = base64.b64encode(json.dumps({"client_id": "old"}).encode()).decode()
         self.assertEqual(_decode(legacy), {"client_id": "old"})
+
+    def test_legacy_prefixed_payload_readable(self):
+        legacy = "legacy:base64:" + base64.b64encode(json.dumps({"client_id": "old"}).encode()).decode()
+        self.assertEqual(_decode(legacy), {"client_id": "old"})
+
+    def test_unprefixed_raw_fernet_token_readable(self):
+        # A raw Fernet token from the first release (no version prefix).
+        raw = _get_fernet().encrypt(json.dumps({"client_id": "m1"}).encode()).decode()
+        self.assertEqual(_decode(raw), {"client_id": "m1"})
+
+    def test_versioned_corrupt_ciphertext_raises_not_legacy(self):
+        # A fernet:v1 value that fails to decrypt must NOT be reinterpreted as legacy.
+        with self.assertRaises(CredentialDecryptionError):
+            _decode("fernet:v1:not-a-valid-token")
+
+    def test_corrupt_error_contains_no_secret(self):
+        try:
+            _decode("fernet:v1:not-a-valid-token")
+        except CredentialDecryptionError as exc:
+            self.assertNotIn("not-a-valid-token", str(exc))
 
     def test_decode_empty_returns_empty_dict(self):
         self.assertEqual(_decode(""), {})
