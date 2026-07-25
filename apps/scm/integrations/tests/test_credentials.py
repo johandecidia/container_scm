@@ -3,8 +3,11 @@
 import base64
 import json
 
-from django.test import TestCase
+from cryptography.fernet import Fernet
+from django.core.exceptions import ImproperlyConfigured
+from django.test import SimpleTestCase, TestCase, override_settings
 
+from apps.scm.integrations.checks import check_credential_encryption_key
 from apps.scm.integrations.credentials import (
     _decode,
     _encode,
@@ -81,3 +84,36 @@ class CredentialEncryptionTest(TestCase):
         self.assertTrue(masked.startswith("abcd"))
         self.assertTrue(masked.endswith("wxyz"))
         self.assertNotIn("1234567890", masked)
+
+
+class ProductionEncryptionKeyTest(SimpleTestCase):
+    def test_check_passes_when_not_required(self):
+        self.assertEqual(check_credential_encryption_key(None), [])
+
+    @override_settings(SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY=True, SCM_INTEGRATION_ENCRYPTION_KEY="")
+    def test_check_errors_when_required_and_missing(self):
+        errors = check_credential_encryption_key(None)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].id, "scm_integrations.E001")
+        # The error must not leak any secret material.
+        self.assertNotIn("SECRET_KEY", errors[0].msg.upper().replace("SECRET_KEY-DERIVED", ""))
+
+    @override_settings(
+        SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY=True,
+        SCM_INTEGRATION_ENCRYPTION_KEY=Fernet.generate_key().decode(),
+    )
+    def test_check_passes_when_required_and_present(self):
+        self.assertEqual(check_credential_encryption_key(None), [])
+
+    @override_settings(SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY=True, SCM_INTEGRATION_ENCRYPTION_KEY="")
+    def test_encrypt_refuses_fallback_in_production(self):
+        with self.assertRaises(ImproperlyConfigured):
+            _encode({"client_secret": "x"})
+
+    @override_settings(
+        SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY=True,
+        SCM_INTEGRATION_ENCRYPTION_KEY=Fernet.generate_key().decode(),
+    )
+    def test_encrypt_uses_configured_key_in_production(self):
+        data = {"client_secret": "prod-secret"}
+        self.assertEqual(_decode(_encode(data)), data)

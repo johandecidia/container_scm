@@ -58,6 +58,11 @@ DJANGO_VITE["default"]["dev_mode"] = False
 
 ADMINS = [("Johan", "johan@decidia.se")]
 
+# In production a dedicated integration credential encryption key is mandatory —
+# the SECRET_KEY-derived fallback is only acceptable for development/tests. This
+# flag is checked by apps.scm.integrations.checks and the credential service.
+SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY = True
+
 # ---------------------------------------------------------------------------
 # Production environment validation — fail fast on startup if required vars
 # are missing so the app never starts in a broken/insecure state.

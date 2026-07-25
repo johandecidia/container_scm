@@ -16,6 +16,7 @@ import re
 
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 from .models import Integration, IntegrationCredential
 
@@ -40,15 +41,22 @@ def _get_fernet() -> Fernet:
 
     Uses SCM_INTEGRATION_ENCRYPTION_KEY when set (must be a url-safe base64
     32-byte Fernet key). Otherwise derives a stable key from SECRET_KEY so
-    development works without extra configuration.
+    development works without extra configuration — but in production
+    (SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY) the dedicated key is mandatory and
+    the fallback is refused. The key value is never logged.
     """
     configured = getattr(settings, "SCM_INTEGRATION_ENCRYPTION_KEY", "") or ""
     if configured:
-        key = configured.encode()
-    else:
-        digest = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
-        key = base64.urlsafe_b64encode(digest)
-    return Fernet(key)
+        return Fernet(configured.encode())
+
+    if getattr(settings, "SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY", False):
+        raise ImproperlyConfigured(
+            "SCM_INTEGRATION_ENCRYPTION_KEY must be set in production; the SECRET_KEY-derived "
+            "fallback is only permitted in development and tests."
+        )
+
+    digest = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
 
 
 def _encode(data: dict) -> str:
