@@ -4,7 +4,7 @@
 import logging
 from datetime import datetime
 
-from .schemas import DcsaEventClassifier, NormalisedTrackingEvent
+from .schemas import NormalisedTrackingEvent
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +22,30 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def _extract_location(event: dict) -> tuple[str, str]:
-    """Return (location_name, location_unlocode) from a DCSA event dict."""
-    # DCSA events nest location inside a "location" or "eventLocation" key.
-    location = event.get("location") or event.get("eventLocation") or {}
+def _location(event: dict) -> dict:
+    """Return the location sub-document of a DCSA event."""
+    return event.get("location") or event.get("eventLocation") or {}
+
+
+def _extract_location(event: dict) -> tuple[str, str, str]:
+    """Return (location_name, location_unlocode, facility_name) from a DCSA event."""
+    location = _location(event)
     name = location.get("locationName") or location.get("facilityName") or ""
     unlocode = location.get("UNLocationCode") or location.get("unLocationCode") or ""
-    return name, unlocode
+    facility = location.get("facilityName") or ""
+    return name, unlocode, facility
+
+
+def _extract_coordinates(event: dict) -> tuple[str, str]:
+    """Return (latitude, longitude) as raw strings from a DCSA event, if present.
+
+    DCSA carries coordinates as strings; they are kept as strings here and only
+    converted when persisted, so an unparseable value never loses the original.
+    """
+    location = _location(event)
+    latitude = location.get("latitude") or event.get("latitude") or ""
+    longitude = location.get("longitude") or event.get("longitude") or ""
+    return str(latitude or ""), str(longitude or "")
 
 
 def _extract_vessel(event: dict) -> tuple[str, str, str]:
@@ -37,7 +54,7 @@ def _extract_vessel(event: dict) -> tuple[str, str, str]:
     name = vessel.get("vesselName") or vessel.get("name") or ""
     imo = vessel.get("vesselIMONumber") or vessel.get("imoNumber") or ""
     voyage = event.get("exportVoyageNumber") or event.get("importVoyageNumber") or event.get("voyageNumber") or ""
-    return name, imo, voyage
+    return name, str(imo or ""), voyage
 
 
 class DcsaParser:
@@ -99,9 +116,11 @@ class DcsaParser:
         tz_str = raw.get("eventDateTimeTimezone") or ""
         event_dt = _parse_datetime(dt_str)
 
-        location_name, unlocode = _extract_location(raw)
+        location_name, unlocode, facility_name = _extract_location(raw)
+        latitude, longitude = _extract_coordinates(raw)
         vessel_name, vessel_imo, voyage = _extract_vessel(raw)
         transport_mode = raw.get("modeOfTransport") or raw.get("transportMode") or ""
+        description = raw.get("description") or raw.get("eventDescription") or raw.get("statusName") or ""
 
         # Equipment / container reference
         equipment = raw.get("equipmentReference") or raw.get("containerNumber") or ""
@@ -111,17 +130,18 @@ class DcsaParser:
 
         raw_event_id = raw.get("eventID") or raw.get("eventId") or raw.get("trackingEventID") or ""
 
-        is_estimated = classifier in (DcsaEventClassifier.ESTIMATED, DcsaEventClassifier.PLANNED)
-        is_actual = classifier == DcsaEventClassifier.ACTUAL
-
         return NormalisedTrackingEvent(
             event_type=event_type,
             event_classifier=classifier,
             event_code=event_code,
+            description=description,
             event_datetime=event_dt,
             event_datetime_timezone=tz_str,
             location_name=location_name,
             location_unlocode=unlocode,
+            facility_name=facility_name,
+            latitude=latitude,
+            longitude=longitude,
             vessel_name=vessel_name,
             vessel_imo=vessel_imo,
             voyage_number=voyage,
@@ -131,8 +151,6 @@ class DcsaParser:
             bill_of_lading_number=bl,
             purchase_order_number=po,
             raw_event_id=raw_event_id,
-            is_estimated=is_estimated,
-            is_actual=is_actual,
             source_provider=self.source_provider,
             raw_payload=raw,
         )

@@ -101,7 +101,34 @@ class TrackingSubscription(BaseTeamModel):
 
 
 class TrackingEvent(BaseTeamModel):
-    """Stores normalised tracking events from any provider."""
+    """Stores normalised tracking events from any provider.
+
+    ``event_type`` is our internal, provider-independent classification;
+    ``carrier_event_type`` / ``event_code`` / ``carrier_description`` keep what the
+    carrier actually said, so a mapping gap never destroys information.
+
+    Whether the time is observed or forecast is carried by the single
+    ``event_time_type`` field. There is deliberately no pair of is_actual /
+    is_estimated booleans, which could contradict each other; ``is_actual`` is a
+    derived property.
+    """
+
+    class EventTimeType(models.TextChoices):
+        """Whether the event time is observed or forecast (DCSA event classifier)."""
+
+        ACTUAL = "actual", _("Actual")
+        ESTIMATED = "estimated", _("Estimated")
+        PLANNED = "planned", _("Planned")
+        REQUESTED = "requested", _("Requested")
+        UNKNOWN = "unknown", _("Unknown")
+
+    class TransportMode(models.TextChoices):
+        VESSEL = "vessel", _("Vessel")
+        RAIL = "rail", _("Rail")
+        TRUCK = "truck", _("Truck")
+        BARGE = "barge", _("Barge")
+        AIR = "air", _("Air")
+        OTHER = "other", _("Other")
 
     class EventType(models.TextChoices):
         BOOKING_CREATED = "booking_created", _("Booking Created")
@@ -150,21 +177,56 @@ class TrackingEvent(BaseTeamModel):
         related_name="events",
         verbose_name=_("provider"),
     )
+    raw_payload = models.ForeignKey(
+        "scm_tracking.TrackingRawPayload",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="events",
+        verbose_name=_("raw payload"),
+        help_text=_("The stored carrier response this event was parsed from."),
+    )
+
+    # Classification — internal first, then what the carrier actually sent.
     event_type = models.CharField(_("event type"), max_length=40, choices=EventType.choices, default=EventType.UNKNOWN)
+    carrier_event_type = models.CharField(_("carrier event type"), max_length=60, blank=True)
     event_code = models.CharField(_("event code"), max_length=100, blank=True)
+    event_time_type = models.CharField(
+        _("event time type"),
+        max_length=20,
+        choices=EventTimeType.choices,
+        default=EventTimeType.UNKNOWN,
+    )
     status = models.CharField(_("status"), max_length=200, blank=True)
     description = models.TextField(_("description"), blank=True)
+    carrier_description = models.TextField(_("carrier description"), blank=True)
 
     # Location
     location_name = models.CharField(_("location name"), max_length=200, blank=True)
     location_unlocode = models.CharField(_("UN/LOCODE"), max_length=10, blank=True)
+    location_latitude = models.DecimalField(_("latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    location_longitude = models.DecimalField(_("longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+
+    # Transport
+    vessel_name = models.CharField(_("vessel name"), max_length=200, blank=True)
+    vessel_imo = models.CharField(_("vessel IMO"), max_length=20, blank=True)
+    voyage_number = models.CharField(_("voyage number"), max_length=50, blank=True)
+    transport_mode = models.CharField(_("transport mode"), max_length=20, choices=TransportMode.choices, blank=True)
+    equipment_reference = models.CharField(_("equipment reference"), max_length=20, blank=True)
 
     # Timing
     event_datetime = models.DateTimeField(_("event datetime"), null=True, blank=True)
     event_timezone = models.CharField(_("event timezone"), max_length=50, blank=True)
+    received_at = models.DateTimeField(_("received at"), null=True, blank=True)
 
     # Deduplication
     source_event_id = models.CharField(_("source event ID"), max_length=200, blank=True)
+    event_fingerprint = models.CharField(
+        _("event fingerprint"),
+        max_length=64,
+        blank=True,
+        help_text=_("Stable hash used to recognise the same carrier event across syncs."),
+    )
     confidence = models.PositiveSmallIntegerField(_("confidence"), default=100)
 
     raw_data = models.JSONField(_("raw data"), default=dict, blank=True)
@@ -177,17 +239,31 @@ class TrackingEvent(BaseTeamModel):
             models.Index(fields=["team", "provider"]),
             models.Index(fields=["event_datetime"]),
             models.Index(fields=["source_event_id"]),
+            models.Index(fields=["team", "container", "event_time_type"]),
         ]
         constraints = [
+            # The fingerprint is the single deduplication key: it is derived from the
+            # carrier event ID when there is one, and from the event's identifying
+            # fields when there is not.
             models.UniqueConstraint(
-                fields=["team", "provider", "source_event_id"],
-                condition=models.Q(source_event_id__gt=""),
-                name="unique_tracking_event_source_id",
+                fields=["team", "provider", "event_fingerprint"],
+                condition=models.Q(event_fingerprint__gt=""),
+                name="unique_tracking_event_fingerprint",
             ),
         ]
 
     def __str__(self) -> str:
         return f"{self.get_event_type_display()} — {self.event_datetime}"
+
+    @property
+    def is_actual(self) -> bool:
+        """True when the carrier reported this as an observed event."""
+        return self.event_time_type == self.EventTimeType.ACTUAL
+
+    @property
+    def is_estimated(self) -> bool:
+        """True when the event time is a forecast, not an observation."""
+        return self.event_time_type in (self.EventTimeType.ESTIMATED, self.EventTimeType.PLANNED)
 
 
 class TrackingRawPayload(BaseTeamModel):

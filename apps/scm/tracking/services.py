@@ -3,11 +3,11 @@
 import hashlib
 import json
 
-from django.db import transaction
 from django.utils import timezone
 
 from apps.teams.models import Team
 
+from .ingestion import build_event_fingerprint, upsert_event
 from .models import TrackingEvent, TrackingProvider, TrackingRawPayload, TrackingSubscription, TrackingSyncRun
 
 
@@ -138,7 +138,6 @@ def finish_sync_run_failed(
     return sync_run
 
 
-@transaction.atomic
 def upsert_tracking_event(
     team: Team,
     provider: TrackingProvider,
@@ -156,16 +155,39 @@ def upsert_tracking_event(
     event_timezone: str = "",
     confidence: int = 100,
     raw_data: dict | None = None,
+    event_time_type: str = TrackingEvent.EventTimeType.UNKNOWN,
 ) -> tuple[TrackingEvent, bool]:
-    """Create or update a tracking event, avoiding duplicates.
+    """Create or update a tracking event from explicit field values.
 
-    Deduplication strategy:
-    1. If source_event_id is set, use (team, provider, source_event_id) as unique key.
-    2. Otherwise fall back to (team, provider, subscription, event_type, event_datetime).
+    Used by ingestion sources that already work in internal terms (manual entry,
+    webhooks, imports). The carrier pipeline uses
+    :func:`apps.scm.tracking.ingestion.persist_normalised_event` instead.
 
-    Returns (event, created) tuple.
+    Deduplication uses the same fingerprint as the carrier pipeline: derived from
+    the carrier event ID when there is one, otherwise from the fields that identify
+    the event. Returns (event, created).
     """
+    reference = ""
+    if container is not None:
+        reference = container.container_id
+    elif subscription is not None:
+        reference = subscription.tracking_reference
+
+    fingerprint = build_event_fingerprint(
+        team_id=team.pk,
+        provider_code=provider.code,
+        source_event_id=source_event_id,
+        reference=reference,
+        carrier_event_type=event_type,
+        event_code=event_code,
+        event_time_type=event_time_type,
+        event_datetime=event_datetime,
+        location_unlocode=location_unlocode,
+        location_name=location_name,
+    )
     defaults = {
+        "event_type": event_type,
+        "event_time_type": event_time_type,
         "event_code": event_code,
         "status": status,
         "description": description,
@@ -173,31 +195,15 @@ def upsert_tracking_event(
         "location_unlocode": location_unlocode,
         "event_datetime": event_datetime,
         "event_timezone": event_timezone,
+        "received_at": timezone.now(),
         "confidence": confidence,
         "raw_data": raw_data or {},
+        "source_event_id": source_event_id,
         "shipment": shipment,
         "container": container,
         "subscription": subscription,
-        "event_type": event_type,
     }
-
-    if source_event_id:
-        event, created = TrackingEvent.objects.update_or_create(
-            team=team,
-            provider=provider,
-            source_event_id=source_event_id,
-            defaults=defaults,
-        )
-    else:
-        event, created = TrackingEvent.objects.update_or_create(
-            team=team,
-            provider=provider,
-            subscription=subscription,
-            event_type=event_type,
-            event_datetime=event_datetime,
-            defaults=defaults,
-        )
-    return event, created
+    return upsert_event(team=team, provider=provider, fingerprint=fingerprint, defaults=defaults)
 
 
 def deduplicate_tracking_event(

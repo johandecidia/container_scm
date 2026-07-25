@@ -15,6 +15,8 @@ TrackingProviderType = TrackingProvider.ProviderType
 TrackingReferenceType = TrackingSubscription.ReferenceType
 TrackingSubscriptionStatus = TrackingSubscription.Status
 TrackingEventType = TrackingEvent.EventType
+TrackingEventTimeType = TrackingEvent.EventTimeType
+TrackingTransportMode = TrackingEvent.TransportMode
 TrackingPayloadType = TrackingRawPayload.PayloadType
 TrackingSyncStatus = TrackingSyncRun.Status
 
@@ -70,3 +72,75 @@ def normalize_event_type(external_status: str) -> str:
     Comparison is case-insensitive.  Returns UNKNOWN if no mapping is found.
     """
     return _NORMALISE_MAP.get(external_status.lower().strip(), TrackingEventType.UNKNOWN)
+
+
+# ---------------------------------------------------------------------------
+# DCSA normalisation
+# ---------------------------------------------------------------------------
+
+# DCSA eventClassifierCode → TrackingEvent.EventTimeType.
+_CLASSIFIER_MAP: dict[str, str] = {
+    "ACT": TrackingEventTimeType.ACTUAL,
+    "EST": TrackingEventTimeType.ESTIMATED,
+    "PLN": TrackingEventTimeType.PLANNED,
+    "REQ": TrackingEventTimeType.REQUESTED,
+}
+
+# DCSA modeOfTransport → TrackingEvent.TransportMode.
+_TRANSPORT_MODE_MAP: dict[str, str] = {
+    "VESSEL": TrackingTransportMode.VESSEL,
+    "RAIL": TrackingTransportMode.RAIL,
+    "TRUCK": TrackingTransportMode.TRUCK,
+    "BARGE": TrackingTransportMode.BARGE,
+    "AIR": TrackingTransportMode.AIR,
+}
+
+# DCSA event codes → internal TrackingEventType, keyed by (top-level type, code).
+# Only unambiguous codes are mapped; anything else stays UNKNOWN and the carrier's
+# own code and description are preserved on the event so no information is lost.
+_DCSA_EVENT_CODE_MAP: dict[tuple[str, str], str] = {
+    ("EQUIPMENT", "LOAD"): TrackingEventType.LOADED_ON_VESSEL,
+    ("EQUIPMENT", "DISC"): TrackingEventType.DISCHARGED,
+    ("EQUIPMENT", "GTIN"): TrackingEventType.GATE_IN,
+    ("EQUIPMENT", "GTOT"): TrackingEventType.GATE_OUT,
+    ("TRANSPORT", "ARRI"): TrackingEventType.VESSEL_ARRIVED,
+    ("TRANSPORT", "DEPA"): TrackingEventType.VESSEL_DEPARTED,
+    ("SHIPMENT", "RECE"): TrackingEventType.BOOKING_CREATED,
+    ("SHIPMENT", "CONF"): TrackingEventType.BOOKING_CREATED,
+}
+
+
+def normalize_event_time_type(classifier: str) -> str:
+    """Map a DCSA eventClassifierCode to an EventTimeType.
+
+    Returns UNKNOWN for absent or unrecognised classifiers — never guesses that an
+    unclassified event actually happened.
+    """
+    return _CLASSIFIER_MAP.get((classifier or "").upper().strip(), TrackingEventTimeType.UNKNOWN)
+
+
+def normalize_transport_mode(mode: str) -> str:
+    """Map a carrier transport mode to a TransportMode value.
+
+    An unrecognised but non-empty mode becomes OTHER; the original string is kept
+    in the event's raw data.
+    """
+    cleaned = (mode or "").upper().strip()
+    if not cleaned:
+        return ""
+    return _TRANSPORT_MODE_MAP.get(cleaned, TrackingTransportMode.OTHER)
+
+
+def normalize_dcsa_event_type(carrier_event_type: str, event_code: str, description: str = "") -> str:
+    """Map a DCSA event to an internal TrackingEventType.
+
+    Tries the (event type, code) pair first, then falls back to matching the
+    carrier's free-text description, then UNKNOWN.
+    """
+    key = ((carrier_event_type or "").upper().strip(), (event_code or "").upper().strip())
+    mapped = _DCSA_EVENT_CODE_MAP.get(key)
+    if mapped:
+        return mapped
+    if description:
+        return normalize_event_type(description)
+    return TrackingEventType.UNKNOWN
