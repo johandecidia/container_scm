@@ -32,7 +32,18 @@ class TrackingProvider(BaseModel):
 
 
 class TrackingSubscription(BaseTeamModel):
-    """Represents an active or historical tracking watch for a shipment or container."""
+    """Represents an active or historical tracking watch for a shipment or container.
+
+    Two statuses are tracked separately and must not be conflated:
+
+    ``status``
+        The lifecycle of our watch — active, paused, completed, failed.
+
+    ``tracking_status``
+        What the carrier is telling us. In particular, NO_DATA means the call
+        worked and the carrier does not know this reference yet, while
+        NOT_CONFIGURED means we never got to ask.
+    """
 
     class Status(models.TextChoices):
         ACTIVE = "active", _("Active")
@@ -41,6 +52,13 @@ class TrackingSubscription(BaseTeamModel):
         COMPLETED = "completed", _("Completed")
         FAILED = "failed", _("Failed")
         CANCELLED = "cancelled", _("Cancelled")
+
+    class TrackingStatus(models.TextChoices):
+        PENDING = "pending", _("Pending first sync")
+        NO_DATA = "no_data", _("No data at carrier yet")
+        TRACKING = "tracking", _("Tracking")
+        NOT_CONFIGURED = "not_configured", _("Carrier not configured")
+        ERROR = "error", _("Error")
 
     class ReferenceType(models.TextChoices):
         CONTAINER_NUMBER = "container_number", _("Container Number")
@@ -76,10 +94,28 @@ class TrackingSubscription(BaseTeamModel):
         _("reference type"), max_length=30, choices=ReferenceType.choices, default=ReferenceType.CONTAINER_NUMBER
     )
     status = models.CharField(_("status"), max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    tracking_status = models.CharField(
+        _("tracking status"),
+        max_length=20,
+        choices=TrackingStatus.choices,
+        default=TrackingStatus.PENDING,
+    )
 
     # Sync state
     last_synced_at = models.DateTimeField(_("last synced at"), null=True, blank=True)
     next_sync_at = models.DateTimeField(_("next sync at"), null=True, blank=True)
+    last_event_at = models.DateTimeField(
+        _("last event received at"),
+        null=True,
+        blank=True,
+        help_text=_("When this subscription last produced at least one carrier event."),
+    )
+    sync_interval_minutes = models.PositiveIntegerField(
+        _("sync interval (minutes)"),
+        null=True,
+        blank=True,
+        help_text=_("Overrides the state-based polling interval for this subscription."),
+    )
 
     # Error tracking
     last_error_message = models.TextField(_("last error message"), blank=True)
@@ -94,6 +130,7 @@ class TrackingSubscription(BaseTeamModel):
             models.Index(fields=["team", "shipment"]),
             models.Index(fields=["team", "container"]),
             models.Index(fields=["next_sync_at"]),
+            models.Index(fields=["team", "tracking_status"]),
         ]
 
     def __str__(self) -> str:
@@ -352,7 +389,12 @@ class ETAHistory(BaseTeamModel):
 
 
 class TrackingSyncRun(BaseTeamModel):
-    """Logs each sync attempt for a tracking subscription."""
+    """Logs each sync attempt for a tracking subscription.
+
+    SKIPPED means nothing was attempted (adapter not implemented, integration not
+    configured, or another run already in progress) — it is neither a success nor
+    a failure, and must never be presented as "synced, no events".
+    """
 
     class Status(models.TextChoices):
         STARTED = "started", _("Started")
@@ -360,6 +402,22 @@ class TrackingSyncRun(BaseTeamModel):
         PARTIAL_SUCCESS = "partial_success", _("Partial Success")
         FAILED = "failed", _("Failed")
         SKIPPED = "skipped", _("Skipped")
+
+    class ErrorType(models.TextChoices):
+        """Why a run did not succeed, so failures can be told apart at a glance."""
+
+        NONE = "", _("None")
+        NOT_IMPLEMENTED = "not_implemented", _("Adapter not implemented")
+        NOT_CONFIGURED = "not_configured", _("Integration not configured")
+        ALREADY_RUNNING = "already_running", _("Sync already running")
+        UNSUPPORTED_REFERENCE = "unsupported_reference", _("Unsupported reference")
+        AUTHENTICATION = "authentication", _("Authentication failed")
+        RATE_LIMIT = "rate_limit", _("Rate limited")
+        TIMEOUT = "timeout", _("Timeout or network error")
+        SERVER_ERROR = "server_error", _("Carrier server error")
+        INVALID_RESPONSE = "invalid_response", _("Invalid or unparseable response")
+        PARSE_ERROR = "parse_error", _("Parser error")
+        UNEXPECTED = "unexpected", _("Unexpected error")
 
     subscription = models.ForeignKey(
         TrackingSubscription,
@@ -374,6 +432,9 @@ class TrackingSyncRun(BaseTeamModel):
         verbose_name=_("provider"),
     )
     status = models.CharField(_("status"), max_length=20, choices=Status.choices, default=Status.STARTED)
+    error_type = models.CharField(
+        _("error type"), max_length=30, choices=ErrorType.choices, blank=True, default=ErrorType.NONE
+    )
     started_at = models.DateTimeField(_("started at"), null=True, blank=True)
     finished_at = models.DateTimeField(_("finished at"), null=True, blank=True)
     events_created = models.PositiveIntegerField(_("events created"), default=0)

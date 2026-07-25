@@ -15,18 +15,31 @@ def sync_due_tracking_subscriptions() -> dict:
 
 
 @shared_task
-def sync_single_tracking_subscription(subscription_id: int) -> bool:
-    """Celery task: sync a single tracking subscription by ID."""
+def sync_single_tracking_subscription(subscription_id: int) -> dict:
+    """Celery task: sync a single tracking subscription by ID.
+
+    Returns the run's status and error classification so a caller can tell a
+    skipped run (nothing attempted) from a failed one.
+    """
     from .models import TrackingSubscription
     from .sync import sync_tracking_subscription
 
     try:
-        subscription = TrackingSubscription.objects.select_related("provider", "team").get(pk=subscription_id)
+        subscription = TrackingSubscription.objects.select_related("provider", "team", "shipment", "container").get(
+            pk=subscription_id
+        )
     except TrackingSubscription.DoesNotExist:
         logger.warning("sync_single_tracking_subscription: subscription %s not found.", subscription_id)
-        return False
+        return {"status": "not_found", "error_type": "", "events_created": 0}
 
-    return sync_tracking_subscription(subscription)
+    sync_run = sync_tracking_subscription(subscription)
+    if sync_run is None:
+        return {"status": "already_running", "error_type": "", "events_created": 0}
+    return {
+        "status": sync_run.status,
+        "error_type": sync_run.error_type,
+        "events_created": sync_run.events_created,
+    }
 
 
 @shared_task

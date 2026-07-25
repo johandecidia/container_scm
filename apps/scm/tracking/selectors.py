@@ -66,19 +66,34 @@ def get_latest_tracking_event_for_shipment(team: Team, shipment) -> TrackingEven
     )
 
 
+# A subscription left in SYNCING for longer than this is assumed to belong to a
+# worker that died; the sync lock — not this status — prevents double runs.
+STALE_SYNCING_MINUTES = 60
+
+
 def get_due_tracking_subscriptions(team: Team | None = None):
     """Return subscriptions that are due for syncing.
 
     A subscription is due when:
-    - status is ACTIVE or FAILED (not paused/completed/cancelled/syncing)
-    - next_sync_at is in the past or null
+    - status is ACTIVE or FAILED, or it has been stuck in SYNCING long enough that
+      the worker holding it is presumed dead (otherwise a crashed sync would
+      starve the subscription forever), and
+    - next_sync_at is in the past or null.
+
+    Concurrency is prevented by the sync lock, not by the SYNCING status.
     """
-    qs = TrackingSubscription.objects.filter(
-        status__in=[TrackingSubscription.Status.ACTIVE, TrackingSubscription.Status.FAILED]
-    ).filter(models.Q(next_sync_at__isnull=True) | models.Q(next_sync_at__lte=timezone.now()))
+    now = timezone.now()
+    stale_cutoff = now - timezone.timedelta(minutes=STALE_SYNCING_MINUTES)
+    runnable = models.Q(status__in=[TrackingSubscription.Status.ACTIVE, TrackingSubscription.Status.FAILED]) | models.Q(
+        status=TrackingSubscription.Status.SYNCING, updated_at__lte=stale_cutoff
+    )
+
+    qs = TrackingSubscription.objects.filter(runnable).filter(
+        models.Q(next_sync_at__isnull=True) | models.Q(next_sync_at__lte=now)
+    )
     if team is not None:
         qs = qs.filter(team=team)
-    return qs.select_related("provider", "team")
+    return qs.select_related("provider", "team", "shipment", "container")
 
 
 def get_tracking_sync_runs_for_subscription(team: Team, subscription: TrackingSubscription):

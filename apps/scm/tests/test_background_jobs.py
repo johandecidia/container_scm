@@ -71,7 +71,8 @@ class MissingObjectTests(TestCase):
 
     def test_sync_single_subscription_skips_missing_subscription(self):
         result = sync_single_tracking_subscription.run(999999)
-        self.assertFalse(result)
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["events_created"], 0)
 
     def test_process_webhook_skips_missing_event(self):
         result = process_integration_webhook_event.run(999999)

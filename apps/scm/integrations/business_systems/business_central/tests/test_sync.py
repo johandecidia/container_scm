@@ -248,7 +248,7 @@ class SyncLockTest(TestCase):
         # run — the DB advisory lock protects it instead.
         integration = _integration()
         with mock.patch(
-            "apps.scm.integrations.business_systems.business_central.locks.cache.add",
+            "apps.scm.integrations.locks.cache.add",
             side_effect=RuntimeError("cache down"),
         ):
             run = _sync(integration)
