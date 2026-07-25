@@ -14,10 +14,17 @@ from decimal import Decimal
 from typing import Any
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.teams.models import Team
 
-from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderEventType, PurchaseOrderLine
+from .models import (
+    PurchaseOrder,
+    PurchaseOrderEvent,
+    PurchaseOrderEventType,
+    PurchaseOrderLine,
+    PurchaseOrderSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +53,7 @@ class UpsertResult:
 def create_purchase_order(team: Team, **kwargs: Any) -> PurchaseOrder:
     """Create a manually entered purchase order with an auto-generated external_id."""
     external_id = f"manual-{uuid.uuid4().hex}"
+    kwargs.setdefault("source_system", PurchaseOrderSource.MANUAL)
     return PurchaseOrder.objects.create(team=team, external_id=external_id, **kwargs)
 
 
@@ -54,7 +62,13 @@ def create_purchase_order(team: Team, **kwargs: Any) -> PurchaseOrder:
 # ---------------------------------------------------------------------------
 
 
-def upsert_purchase_orders(team: Team, purchase_orders_data: list[dict[str, Any]]) -> UpsertResult:
+def upsert_purchase_orders(
+    team: Team,
+    purchase_orders_data: list[dict[str, Any]],
+    *,
+    source_system: str = PurchaseOrderSource.BUSINESS_CENTRAL,
+    source_company_id: str = "",
+) -> UpsertResult:
     """Upsert purchase orders (and their lines) from any normalised source.
 
     Idempotent — can be called multiple times with the same data without
@@ -64,23 +78,37 @@ def upsert_purchase_orders(team: Team, purchase_orders_data: list[dict[str, Any]
     own transaction so a single bad record fails in isolation without rolling
     back the rest of the batch.
 
+    ``last_synced_at`` is a technical field updated on every run (including for
+    unchanged records) and does not count as a business update.
+
     Args:
         team: The team that owns these purchase orders.
         purchase_orders_data: List of dicts with keys matching PurchaseOrder
             and PurchaseOrderLine fields (external_id, po_number, lines, …).
+        source_system: Which system these records came from.
+        source_company_id: Optional source company identifier (e.g. BC company id).
 
     Returns:
         UpsertResult with created/updated/unchanged/failed counts, the affected
         PurchaseOrder instances, and per-record errors keyed by external id.
     """
     result = UpsertResult()
+    now = timezone.now()
     for po_data in purchase_orders_data:
         external_id = po_data.get("external_id")
         try:
             if not external_id:
                 raise ValueError("purchase order data is missing 'external_id'")
             with transaction.atomic():
-                po = _upsert_single_purchase_order(team, external_id, po_data, result)
+                po = _upsert_single_purchase_order(
+                    team,
+                    external_id,
+                    po_data,
+                    result,
+                    source_system=source_system,
+                    source_company_id=source_company_id,
+                    now=now,
+                )
             result.purchase_orders.append(po)
         except Exception as exc:  # noqa: BLE001 — isolate one bad record from the batch
             result.failed += 1
@@ -101,6 +129,10 @@ def _upsert_single_purchase_order(
     external_id: str,
     po_data: dict[str, Any],
     result: UpsertResult,
+    *,
+    source_system: str,
+    source_company_id: str,
+    now,
 ) -> PurchaseOrder:
     lines_data = po_data.get("lines", [])
     defaults = {
@@ -112,23 +144,39 @@ def _upsert_single_purchase_order(
         "expected_receipt_date": po_data.get("expected_receipt_date"),
         "currency": po_data.get("currency", "EUR"),
     }
+    source_meta = {
+        "source_system": source_system,
+        "source_company_id": source_company_id,
+        "source_last_modified_at": po_data.get("source_last_modified"),
+        "raw_payload": po_data.get("raw_payload") or {},
+        "source_active": True,
+        "source_deleted_at": None,
+    }
 
     existing = PurchaseOrder.objects.filter(team=team, external_id=external_id).first()
     if existing is None:
-        po = PurchaseOrder.objects.create(team=team, external_id=external_id, **defaults)
-        _upsert_lines(team=team, purchase_order=po, lines_data=lines_data)
+        po = PurchaseOrder.objects.create(
+            team=team, external_id=external_id, last_synced_at=now, **defaults, **source_meta
+        )
+        _upsert_lines(team=team, purchase_order=po, lines_data=lines_data, now=now)
         result.created += 1
         logger.info("Created PurchaseOrder %s for team %s", po.po_number, team.slug)
         return po
 
     if _purchase_order_unchanged(existing, defaults, lines_data):
+        # Technical touch only — record we saw it, without a business update.
+        existing.last_synced_at = now
+        existing.source_active = True
+        existing.source_deleted_at = None
+        existing.save(update_fields=["last_synced_at", "source_active", "source_deleted_at", "updated_at"])
         result.unchanged += 1
         return existing
 
-    for attr, value in defaults.items():
+    for attr, value in {**defaults, **source_meta}.items():
         setattr(existing, attr, value)
-    existing.save(update_fields=[*defaults.keys(), "updated_at"])
-    _upsert_lines(team=team, purchase_order=existing, lines_data=lines_data)
+    existing.last_synced_at = now
+    existing.save(update_fields=[*defaults.keys(), *source_meta.keys(), "last_synced_at", "updated_at"])
+    _upsert_lines(team=team, purchase_order=existing, lines_data=lines_data, now=now)
     result.updated += 1
     return existing
 
@@ -138,7 +186,7 @@ def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[s
     return upsert_purchase_orders(team, purchase_orders_data).purchase_orders
 
 
-def _line_defaults(team: Team, line_data: dict[str, Any]) -> dict[str, Any]:
+def _line_defaults(team: Team, line_data: dict[str, Any], *, now=None) -> dict[str, Any]:
     raw_price = line_data.get("unit_price")
     return {
         "team": team,
@@ -150,15 +198,20 @@ def _line_defaults(team: Team, line_data: dict[str, Any]) -> dict[str, Any]:
         "received_qty": Decimal(str(line_data.get("received_qty", 0))),
         "unit_price": Decimal(str(raw_price)) if raw_price is not None else None,
         "expected_receipt_date": line_data.get("expected_receipt_date"),
+        "source_last_modified_at": line_data.get("source_last_modified"),
+        "raw_payload": line_data.get("raw_payload") or {},
+        "source_active": True,
+        "source_deleted_at": None,
+        "last_synced_at": now,
     }
 
 
-def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[dict[str, Any]]) -> None:
+def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[dict[str, Any]], *, now=None) -> None:
     for line_data in lines_data:
         PurchaseOrderLine.objects.update_or_create(
             purchase_order=purchase_order,
             external_id=line_data["external_id"],
-            defaults=_line_defaults(team, line_data),
+            defaults=_line_defaults(team, line_data, now=now),
         )
 
 

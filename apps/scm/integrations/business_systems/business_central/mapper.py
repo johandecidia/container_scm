@@ -52,6 +52,7 @@ def _map_purchase_order_line(raw_line: dict) -> NormalizedPurchaseOrderLine:
         ordered_qty=Decimal(str(raw_line.get("quantity", 0))),
         unit_price=Decimal(str(raw_line["directUnitCost"])) if raw_line.get("directUnitCost") is not None else None,
         expected_receipt_date=_parse_date(raw_line.get("expectedReceiptDate")),
+        source_last_modified=_parse_datetime(raw_line.get("lastModifiedDateTime")),
         raw_payload=raw_line,
     )
 

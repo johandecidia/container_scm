@@ -70,7 +70,7 @@ def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bo
 
 def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existing: bool = False) -> str:
     """Import a single PO row (one PO line). Returns 'created', 'updated', or 'skipped'."""
-    from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine
+    from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderSource
 
     data = row.validated_data
     po_external_id = data.get("po_external_id") or data.get("po_number", "")
@@ -104,6 +104,8 @@ def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existin
             "expected_receipt_date": data.get("expected_receipt_date"),
             "currency": data.get("currency", "EUR"),
             "status": "open",
+            # Document imports are a distinct source from the live BC OData sync.
+            "source_system": PurchaseOrderSource.DOCUMENT_IMPORT,
         },
     )
 

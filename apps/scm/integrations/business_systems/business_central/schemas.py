@@ -60,6 +60,7 @@ class NormalizedPurchaseOrderLine(BaseModel):
     received_qty: Decimal = Decimal("0")
     unit_price: Decimal | None = None
     expected_receipt_date: date | None = None
+    source_last_modified: datetime | None = None
     raw_payload: dict[str, Any] = PydanticField(default_factory=dict)
 
 

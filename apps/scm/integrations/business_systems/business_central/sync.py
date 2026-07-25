@@ -114,6 +114,7 @@ def _run_sync(
     client: BusinessCentralClient | None,
     trigger_type: str,
 ) -> IntegrationSyncRun:
+    from apps.scm.procurement.models import PurchaseOrderSource
     from apps.scm.procurement.services import upsert_purchase_orders
 
     team = integration.team
@@ -151,7 +152,12 @@ def _run_sync(
         _finish_failed(run, integration, exc)
         raise
 
-    upsert_result = upsert_purchase_orders(team=team, purchase_orders_data=normalized_data)
+    upsert_result = upsert_purchase_orders(
+        team=team,
+        purchase_orders_data=normalized_data,
+        source_system=PurchaseOrderSource.BUSINESS_CENTRAL,
+        source_company_id=(integration.config or {}).get("company_id", ""),
+    )
     watermark_to = max_modified or watermark_from or started
     _finish(run, integration, upsert_result, fetched=len(raw_pos), watermark_to=watermark_to)
     return run
