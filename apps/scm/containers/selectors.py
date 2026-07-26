@@ -1,11 +1,10 @@
 # Container selectors — all read/query operations.
-from dataclasses import dataclass, field
-
 from django.db.models import Count, Q, QuerySet
 
 from apps.teams.models import Team
 
 from .models import Container, ContainerLocation, EquipmentType
+from .workspace import ContainerWorkspace, get_container_workspace
 
 _SORT_MAP = {
     "newest": "-created_at",
@@ -86,46 +85,16 @@ def filter_containers(
     return qs.order_by(order_by)
 
 
-@dataclass
-class ContainerWorkspace:
-    container: Container
-    shipment_containers: list = field(default_factory=list)
-    tracking_subscriptions: list = field(default_factory=list)
-    latest_tracking_event: object = None  # TrackingEvent | None
-    movements: list = field(default_factory=list)
-
-
-def get_container_workspace(team: Team, container: Container) -> ContainerWorkspace:
-    """Gather all workspace data for a container detail view."""
-    from apps.scm.containers.models import ContainerMovement
-    from apps.scm.shipments.models import ShipmentContainer
-    from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
-
-    shipment_containers = list(
-        ShipmentContainer.objects.filter(container=container, shipment__team=team)
-        .select_related("shipment")
-        .order_by("-created_at")
-    )
-    tracking_subscriptions = list(
-        TrackingSubscription.objects.filter(team=team, container=container)
-        .select_related("provider")
-        .order_by("-created_at")
-    )
-    latest_event = (
-        TrackingEvent.objects.filter(team=team, container=container)
-        .select_related("provider")
-        .order_by("-event_datetime", "-created_at")
-        .first()
-    )
-    movements = list(
-        ContainerMovement.objects.filter(team=team, container=container)
-        .select_related("from_location", "to_location")
-        .order_by("-occurred_at")[:20]
-    )
-    return ContainerWorkspace(
-        container=container,
-        shipment_containers=shipment_containers,
-        tracking_subscriptions=tracking_subscriptions,
-        latest_tracking_event=latest_event,
-        movements=movements,
-    )
+# The container detail read model lives in workspace.py; re-exported here so callers
+# keep importing selectors for reads.
+__all__ = [
+    "ContainerWorkspace",
+    "filter_containers",
+    "get_active_equipment_types",
+    "get_container_by_id",
+    "get_container_workspace",
+    "get_equipment_types",
+    "get_team_containers",
+    "get_team_locations",
+    "get_team_locations_with_counts",
+]

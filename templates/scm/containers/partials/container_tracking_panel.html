@@ -1,0 +1,187 @@
+{% load i18n %}
+{# Carrier tracking for a container. Everything here is derived from the container's
+   shipment and its tracking events — none of it is stored on Container itself. #}
+<section class="app-card">
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <h2 class="text-lg font-semibold">{% translate "Carrier Tracking" %}</h2>
+    {% if workspace.tracking_status %}
+      <span class="badge badge-sm badge-outline">{{ workspace.tracking_status }}</span>
+    {% endif %}
+  </div>
+
+  {% if not workspace.active_subscription %}
+    <p class="text-sm text-base-content/60">
+      {% translate "No tracking subscription for this container yet." %}
+    </p>
+  {% else %}
+    {% if workspace.sync_problem %}
+      <div role="alert" class="alert alert-warning alert-soft mb-4">
+        <i class="fa fa-triangle-exclamation"></i>
+        <span class="text-sm">{{ workspace.sync_problem }}</span>
+      </div>
+    {% endif %}
+
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-3">
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Carrier" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.carrier_name|default:"—" }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Transport status" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.transport_status|default:"—" }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.vessel_name|default:"—" }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Voyage" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.voyage_number|default:"—" }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Current ETA" %}</dt>
+        <dd class="font-medium text-sm">
+          {{ workspace.current_eta|date:"Y-m-d"|default:"—" }}
+          {% if workspace.eta_delay_days > 0 %}
+            <span class="badge badge-xs badge-warning ml-1">
+              {% blocktranslate trimmed with days=workspace.eta_delay_days %}
+                {{ days }} days later
+              {% endblocktranslate %}
+            </span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Original ETA" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.original_eta|date:"Y-m-d"|default:"—" }}</dd>
+      </div>
+    </dl>
+
+    {# Last known position. The position type is always shown: a terminal coordinate
+       is not a live GPS fix and must not be read as one. #}
+    <div class="mt-4 pt-4 border-t border-base-300">
+      <dt class="text-xs text-base-content/60 mb-1">{% translate "Last known position" %}</dt>
+      {% if workspace.position %}
+        <dd class="text-sm">
+          <span class="font-medium">{{ workspace.position.label|default:"—" }}</span>
+          <span class="badge badge-xs badge-ghost ml-1">{{ workspace.position.get_position_type_display }}</span>
+          {% if workspace.position.observed_at %}
+            <span class="text-xs text-base-content/50 block mt-1">
+              {% blocktranslate trimmed with observed=workspace.position.observed_at|date:"Y-m-d H:i" %}
+                Reported {{ observed }}
+              {% endblocktranslate %}
+            </span>
+          {% endif %}
+          {% if not workspace.position.is_realtime %}
+            <span class="text-xs text-base-content/50 block">
+              {% translate "This is where the container was last reported, not a live position." %}
+            </span>
+          {% endif %}
+        </dd>
+      {% else %}
+        <dd class="text-sm text-base-content/60">{% translate "No position reported yet." %}</dd>
+      {% endif %}
+    </div>
+
+    {% if workspace.last_sync_run %}
+      <div class="mt-4 pt-4 border-t border-base-300">
+        <dt class="text-xs text-base-content/60 mb-1">{% translate "Last sync" %}</dt>
+        <dd class="text-sm">
+          {{ workspace.last_sync_run.get_status_display }}
+          <span class="text-base-content/50">
+            {{ workspace.last_sync_run.started_at|date:"Y-m-d H:i" }}
+          </span>
+          {% if workspace.last_sync_run.error_type %}
+            <span class="badge badge-xs badge-ghost ml-1">
+              {{ workspace.last_sync_run.get_error_type_display }}
+            </span>
+          {% endif %}
+        </dd>
+      </div>
+    {% endif %}
+
+    <div class="mt-4 pt-4 border-t border-base-300">
+      <div class="flex items-center justify-between mb-2">
+        <dt class="text-xs text-base-content/60">{% translate "Subscriptions" %}</dt>
+        <a href="{% url 'tracking:list' %}" class="btn btn-ghost btn-xs">{% translate "All tracking" %}</a>
+      </div>
+      <ul class="divide-y divide-base-200">
+        {% for sub in workspace.tracking_subscriptions %}
+          <li class="py-2 flex items-center justify-between gap-2">
+            <div>
+              <a href="{% url 'tracking:detail' sub.pk %}" class="text-sm font-mono link link-hover">
+                {{ sub.tracking_reference }}
+              </a>
+              <p class="text-xs text-base-content/50">{{ sub.provider }}</p>
+            </div>
+            {% include "scm/tracking/partials/_tracking_status_badge.html" with subscription=sub %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+</section>
+
+{# Chronological carrier timeline #}
+<section class="app-card">
+  <h2 class="text-lg font-semibold mb-4">{% translate "Tracking Timeline" %}</h2>
+  {% if workspace.timeline %}
+    <ol class="divide-y divide-base-200">
+      {% for event in workspace.timeline %}
+        <li class="py-3">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <p class="font-medium text-sm">
+                {{ event.get_event_type_display }}
+                {% if not event.is_actual %}
+                  <span class="badge badge-xs badge-ghost ml-1">{{ event.get_event_time_type_display }}</span>
+                {% endif %}
+              </p>
+              {% if event.location_name or event.location_unlocode %}
+                <p class="text-xs text-base-content/60">
+                  {{ event.location_name }}{% if event.location_unlocode %} ({{ event.location_unlocode }}){% endif %}
+                </p>
+              {% endif %}
+              {% if event.vessel_name %}
+                <p class="text-xs text-base-content/50">
+                  {{ event.vessel_name }}{% if event.voyage_number %} · {{ event.voyage_number }}{% endif %}
+                </p>
+              {% endif %}
+            </div>
+            <p class="text-xs text-base-content/50 shrink-0">{{ event.event_datetime|date:"Y-m-d H:i" }}</p>
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <p class="text-sm text-base-content/60">{% translate "No carrier events yet." %}</p>
+  {% endif %}
+</section>
+
+{# Purchase orders behind this container #}
+<section class="app-card">
+  <h2 class="text-lg font-semibold mb-4">{% translate "Purchase Orders" %}</h2>
+  {% if workspace.purchase_order_lines %}
+    <ul class="divide-y divide-base-200">
+      {% for line in workspace.purchase_order_lines %}
+        <li class="py-3 flex items-start justify-between gap-2">
+          <div>
+            <a
+              href="{% url 'procurement:purchase_order_detail' line.purchase_order.pk %}"
+              class="font-medium text-sm link link-hover"
+            >
+              {{ line.purchase_order.po_number }}
+            </a>
+            <p class="text-xs text-base-content/60">
+              {{ line.item_no }}{% if line.description %} — {{ line.description }}{% endif %}
+            </p>
+            <p class="text-xs text-base-content/50">{{ line.purchase_order.supplier_name }}</p>
+          </div>
+          <p class="text-xs text-base-content/50 shrink-0">{{ line.ordered_qty }}</p>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="text-sm text-base-content/60">{% translate "No purchase order lines linked to this container." %}</p>
+  {% endif %}
+</section>
