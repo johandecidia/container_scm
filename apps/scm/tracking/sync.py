@@ -377,6 +377,8 @@ def _apply_outcome(
     )
 
     if outcome.succeeded:
+        if outcome.events_seen:
+            _apply_events_to_shipment(subscription)
         _complete_if_shipment_is_terminal(subscription)
 
     logger.info(
@@ -395,6 +397,23 @@ def _integration_config(subscription: TrackingSubscription) -> dict:
 
     integration = get_carrier_integration(subscription.team, subscription.provider.code)
     return (integration.config or {}) if integration else {}
+
+
+def _apply_events_to_shipment(subscription: TrackingSubscription) -> None:
+    """Let the new events move the shipment's milestones, status and ETA.
+
+    Failing here must not fail the sync: the events are already stored, and the
+    derivation is deterministic, so it can be re-run.
+    """
+    from apps.scm.shipments.transport_status import apply_tracking_to_shipment
+
+    shipment = subscription.shipment
+    if shipment is None:
+        return
+    try:
+        apply_tracking_to_shipment(shipment, container=subscription.container)
+    except Exception:  # noqa: BLE001 — stored events must survive a derivation bug
+        logger.exception("Could not apply tracking to shipment %s.", shipment.pk)
 
 
 def _complete_if_shipment_is_terminal(subscription: TrackingSubscription) -> None:

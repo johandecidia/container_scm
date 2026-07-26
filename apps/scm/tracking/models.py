@@ -370,6 +370,12 @@ class ETAHistory(BaseTeamModel):
     """Records every ETA change for a shipment to allow drift analysis.
 
     Append-only — never update existing records.
+
+    ETAs are carried twice on purpose. ``previous_eta`` / ``new_eta`` are dates,
+    matching ``Shipment.eta``, which is the date the business plans around. Carriers
+    forecast to the hour, so ``previous_eta_at`` / ``new_eta_at`` keep that precision
+    and are what ``delta_minutes`` is computed from; without them a six-hour slip
+    would round away to zero.
     """
 
     shipment = models.ForeignKey(
@@ -386,9 +392,38 @@ class ETAHistory(BaseTeamModel):
         related_name="eta_history",
         verbose_name=_("container"),
     )
+    tracking_event = models.ForeignKey(
+        "scm_tracking.TrackingEvent",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="eta_changes",
+        verbose_name=_("tracking event"),
+        help_text=_("The carrier event this forecast came from, when it came from one."),
+    )
+
     previous_eta = models.DateField(_("previous ETA"), null=True, blank=True)
     new_eta = models.DateField(_("new ETA"), null=True, blank=True)
+    previous_eta_at = models.DateTimeField(_("previous ETA (precise)"), null=True, blank=True)
+    new_eta_at = models.DateTimeField(_("new ETA (precise)"), null=True, blank=True)
+    delta_minutes = models.IntegerField(
+        _("delta (minutes)"),
+        null=True,
+        blank=True,
+        help_text=_("Positive when the ETA moved later (a delay), negative when it moved earlier."),
+    )
+
     changed_at = models.DateTimeField(_("changed at"))
+    received_at = models.DateTimeField(
+        _("received at"),
+        null=True,
+        blank=True,
+        help_text=_("When we learned about this forecast, which can lag when the carrier issued it."),
+    )
+
+    location_name = models.CharField(_("location name"), max_length=200, blank=True)
+    location_unlocode = models.CharField(_("UN/LOCODE"), max_length=10, blank=True)
+
     source = models.CharField(_("source"), max_length=100, blank=True)
     raw_payload = models.JSONField(_("raw payload"), default=dict, blank=True)
 
@@ -398,12 +433,18 @@ class ETAHistory(BaseTeamModel):
             models.Index(fields=["team", "shipment"]),
             models.Index(fields=["team", "container"]),
             models.Index(fields=["changed_at"]),
+            models.Index(fields=["team", "shipment", "-changed_at"]),
         ]
         verbose_name = _("ETA History")
         verbose_name_plural = _("ETA History")
 
     def __str__(self) -> str:
         return f"ETA change for {self.shipment}: {self.previous_eta} → {self.new_eta} at {self.changed_at}"
+
+    @property
+    def is_delay(self) -> bool:
+        """True when this change pushed the arrival later."""
+        return bool(self.delta_minutes and self.delta_minutes > 0)
 
 
 class TrackingSyncRun(BaseTeamModel):
