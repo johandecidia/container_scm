@@ -35,18 +35,7 @@ from apps.scm.integrations.credentials import set_integration_credentials
 from apps.scm.integrations.models import Integration, IntegrationCredential
 from apps.teams.models import Team
 
-ALL_CARRIER_CODES = [
-    "maersk",
-    "msc",
-    "cma_cgm",
-    "cosco",
-    "hapag_lloyd",
-    "one",
-    "evergreen",
-    "hmm",
-    "yang_ming",
-    "zim",
-]
+from .carrier_status import ALL_CARRIER_CODES, IMPLEMENTED_CARRIER_CODES, STUB_CARRIER_CODES
 
 
 def _team(slug: str) -> Team:
@@ -321,13 +310,23 @@ class StubCarriersRaiseTypedNotImplementedTest(TestCase):
     """Unimplemented carriers raise the typed stub error, never an empty result."""
 
     def test_stub_clients_raise_carrier_not_implemented(self):
-        for code in ALL_CARRIER_CODES:
+        for code in STUB_CARRIER_CODES:
             with self.subTest(carrier=code):
                 client = build_carrier_client(code)
                 with self.assertRaises(CarrierNotImplementedError):
-                    client.fetch_tracking(container_number="MRKU1234567")
+                    client.fetch_tracking(container_number="MRKU1234563")
 
     def test_stub_parsers_raise_carrier_not_implemented(self):
-        for code in ALL_CARRIER_CODES:
+        for code in STUB_CARRIER_CODES:
             with self.subTest(carrier=code), self.assertRaises(CarrierNotImplementedError):
                 build_carrier_parser(code).parse_tracking_events({"events": []})
+
+    def test_implemented_clients_require_configuration_instead(self):
+        """An implemented carrier reports missing configuration, not a missing adapter."""
+        for code in IMPLEMENTED_CARRIER_CODES:
+            with self.subTest(carrier=code), self.assertRaises(CarrierConfigurationError):
+                build_carrier_client(code).fetch_tracking(container_number="MRKU1234563")
+
+    def test_at_least_one_carrier_is_implemented(self):
+        """Guards against the stub/implemented split silently classifying everything as a stub."""
+        self.assertTrue(IMPLEMENTED_CARRIER_CODES)

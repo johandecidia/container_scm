@@ -10,20 +10,10 @@ Each carrier must:
 import unittest
 
 from apps.scm.integrations.carriers.base import BaseCarrierClient, BaseCarrierParser
+from apps.scm.integrations.carriers.exceptions import CarrierError
 from apps.scm.integrations.carriers.registry import get_carrier_definition, list_carriers
 
-ALL_CARRIER_CODES = [
-    "maersk",
-    "msc",
-    "cma_cgm",
-    "cosco",
-    "hapag_lloyd",
-    "one",
-    "evergreen",
-    "hmm",
-    "yang_ming",
-    "zim",
-]
+from .carrier_status import ALL_CARRIER_CODES
 
 
 class CarrierClientInheritanceTest(unittest.TestCase):
@@ -97,42 +87,42 @@ class CarrierClientProviderCodeTest(unittest.TestCase):
 
 
 class CarrierClientMethodSignatureTest(unittest.TestCase):
-    """fetch_tracking must accept all four keyword-only reference arguments."""
+    """fetch_tracking must accept every contract reference as a keyword argument.
+
+    Only TypeError is a failure here. A stub raising NotImplementedError and an
+    implemented client raising a configuration error both prove the signature is
+    right — the interface is what is under test, not the implementation.
+    """
+
+    def _assert_accepts(self, code: str, **kwargs) -> None:
+        client = get_carrier_definition(code).client_class()
+        try:
+            client.fetch_tracking(**kwargs)
+        except TypeError as exc:
+            keyword = next(iter(kwargs))
+            self.fail(f"{code}: fetch_tracking does not accept {keyword} — {exc}")
+        except NotImplementedError, CarrierError:
+            pass
 
     def test_fetch_tracking_accepts_container_number(self):
         for code in ALL_CARRIER_CODES:
             with self.subTest(carrier=code):
-                client = get_carrier_definition(code).client_class()
-                # Must accept the kwarg (NotImplementedError is fine — it means the
-                # client is a stub, not that the interface is broken).
-                try:
-                    client.fetch_tracking(container_number="TEST1234567")
-                except NotImplementedError:
-                    pass
-                except TypeError as exc:
-                    self.fail(f"{code}: fetch_tracking does not accept container_number — {exc}")
+                self._assert_accepts(code, container_number="TEST1234567")
 
     def test_fetch_tracking_accepts_bill_of_lading_number(self):
         for code in ALL_CARRIER_CODES:
             with self.subTest(carrier=code):
-                client = get_carrier_definition(code).client_class()
-                try:
-                    client.fetch_tracking(bill_of_lading_number="BL-TEST")
-                except NotImplementedError:
-                    pass
-                except TypeError as exc:
-                    self.fail(f"{code}: fetch_tracking does not accept bill_of_lading_number — {exc}")
+                self._assert_accepts(code, bill_of_lading_number="BL-TEST")
 
     def test_fetch_tracking_accepts_booking_number(self):
         for code in ALL_CARRIER_CODES:
             with self.subTest(carrier=code):
-                client = get_carrier_definition(code).client_class()
-                try:
-                    client.fetch_tracking(booking_number="BKG-TEST")
-                except NotImplementedError:
-                    pass
-                except TypeError as exc:
-                    self.fail(f"{code}: fetch_tracking does not accept booking_number — {exc}")
+                self._assert_accepts(code, booking_number="BKG-TEST")
+
+    def test_fetch_tracking_accepts_shipment_reference(self):
+        for code in ALL_CARRIER_CODES:
+            with self.subTest(carrier=code):
+                self._assert_accepts(code, shipment_reference="SHP-TEST")
 
 
 class CarrierCapabilityConsistencyTest(unittest.TestCase):
