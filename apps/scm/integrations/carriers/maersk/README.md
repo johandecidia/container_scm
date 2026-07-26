@@ -5,6 +5,11 @@ off until the integration is configured** — the client has no hardcoded endpoi
 raises `CarrierConfigurationError` when a required value is missing, which the sync
 layer records as a `SKIPPED` run (never as "synced, no events").
 
+Maersk runs on the shared DCSA pipeline (`carriers/dcsa/client.py` and
+`carriers/dcsa/carrier_parser.py`), which every DCSA carrier uses. This package holds
+only Maersk's identity and capabilities; the configuration keys below are the shared
+ones and apply to any DCSA carrier.
+
 ## What must be confirmed before going live
 
 These values are deliberately configuration rather than constants, because they
