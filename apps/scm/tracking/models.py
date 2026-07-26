@@ -332,9 +332,21 @@ class TrackingRawPayload(BaseTeamModel):
     )
     payload_json = models.JSONField(_("payload JSON"), default=dict)
     payload_hash = models.CharField(_("payload hash"), max_length=64, blank=True)
+    payload_bytes = models.PositiveIntegerField(
+        _("payload size (bytes)"),
+        null=True,
+        blank=True,
+        help_text=_("Size of the original payload, retained after the body is archived away."),
+    )
     received_at = models.DateTimeField(_("received at"), null=True, blank=True)
     parsed_successfully = models.BooleanField(_("parsed successfully"), default=False)
     error_message = models.TextField(_("error message"), blank=True)
+    archived_at = models.DateTimeField(
+        _("archived at"),
+        null=True,
+        blank=True,
+        help_text=_("When the payload body was dropped by retention. Hash and metadata are kept."),
+    )
 
     class Meta:
         ordering = ["-received_at", "-created_at"]
@@ -342,10 +354,16 @@ class TrackingRawPayload(BaseTeamModel):
             models.Index(fields=["team", "provider"]),
             models.Index(fields=["team", "subscription"]),
             models.Index(fields=["received_at"]),
+            models.Index(fields=["archived_at", "received_at"]),
         ]
 
     def __str__(self) -> str:
         return f"{self.get_payload_type_display()} from {self.provider} at {self.received_at}"
+
+    @property
+    def is_archived(self) -> bool:
+        """True when the body has been dropped by retention but the record remains."""
+        return self.archived_at is not None
 
 
 class ETAHistory(BaseTeamModel):

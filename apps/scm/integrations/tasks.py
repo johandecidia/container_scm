@@ -166,14 +166,54 @@ def sync_enabled_business_central_integrations_task() -> dict:
     Runs on a fixed Celery Beat interval; the due check (interval, failure backoff,
     in-progress, enabled/active) decides which integrations are actually queued.
     One task is enqueued per integration, keeping teams isolated.
+
+    Set ``SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False`` to pause scheduled Business
+    Central syncing without removing the schedule or the implementation. Manual and
+    per-integration syncs still work.
     """
+    from django.conf import settings
+
     from .services import get_due_business_central_integrations
+
+    if not getattr(settings, "SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED", True):
+        logger.info("BC dispatcher: disabled by configuration — nothing queued.")
+        return {"queued": 0, "disabled": True}
 
     due = get_due_business_central_integrations()
     for integration in due:
         sync_business_central_purchase_orders_task.delay(integration.id, "scheduled")
     logger.info("BC dispatcher: queued %d integration(s)", len(due))
-    return {"queued": len(due)}
+    return {"queued": len(due), "disabled": False}
+
+
+@shared_task
+def dispatch_shipment_container_discovery_task() -> dict:
+    """Dispatcher: queue container discovery for each team with open shipments.
+
+    One task per team keeps teams isolated. Only teams that actually have a
+    candidate shipment are queued, so an idle team costs nothing.
+    """
+    from django.db.models import Q
+
+    from apps.scm.shipments.models import Shipment
+
+    team_ids = list(
+        Shipment.objects.exclude(status__in=[Shipment.Status.DELIVERED, Shipment.Status.CANCELLED])
+        .filter(shipment_containers__isnull=True)
+        .filter(Q(carrier_booking_reference__gt="") | Q(bill_of_lading_number__gt="") | Q(reference__gt=""))
+        .exclude(carrier="")
+        # order_by() clears Shipment's default ordering: the ordering column would
+        # end up in the SELECT list and defeat DISTINCT, queueing a team once per
+        # candidate shipment.
+        .order_by()
+        .values_list("team_id", flat=True)
+        .distinct()
+    )
+    for team_id in team_ids:
+        discover_containers_for_open_shipments_task.delay(team_id)
+
+    logger.info("Shipment discovery dispatcher: queued %d team(s).", len(team_ids))
+    return {"queued": len(team_ids)}
 
 
 @shared_task

@@ -538,11 +538,49 @@ SCHEDULED_TASKS: dict[str, Any] = {
         "expire_seconds": 60 * 60,
     },
     # Business Central PO sync dispatcher — runs often; the task itself decides
-    # which integrations are actually due per their configured interval.
+    # which integrations are actually due per their configured interval. Can be
+    # paused with SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False.
     "dispatch-business-central-po-sync": {
         "task": "apps.scm.integrations.tasks.sync_enabled_business_central_integrations_task",
         "schedule": timedelta(minutes=5),
         "expire_seconds": 5 * 60,
+    },
+    # Carrier tracking dispatcher — ticks often and queues one task per subscription
+    # that is actually due. The per-subscription polling policy (state-based interval,
+    # failure backoff, carrier minimum) decides what "due" means, so a frequent tick
+    # does not mean frequent carrier calls.
+    "dispatch-tracking-sync": {
+        "task": "apps.scm.tracking.tasks.dispatch_due_tracking_subscriptions",
+        "schedule": timedelta(minutes=10),
+        "expire_seconds": 10 * 60,
+    },
+    # Planned container discovery — polls carriers for container numbers that are
+    # expected but not yet known at the carrier. One task per team.
+    "dispatch-planned-container-discovery": {
+        "task": "apps.scm.containers.tasks.dispatch_planned_container_discovery",
+        "schedule": timedelta(minutes=30),
+        "expire_seconds": 30 * 60,
+    },
+    # Give up on planned numbers that never appeared, even if the discovery queue is
+    # backlogged or paused.
+    "expire-stale-planned-containers": {
+        "task": "apps.scm.containers.tasks.expire_stale_planned_containers",
+        "schedule": timedelta(hours=6),
+        "expire_seconds": 60 * 60,
+    },
+    # Shipment-based container discovery — finds the containers on booked shipments
+    # that have no containers linked yet.
+    "dispatch-shipment-container-discovery": {
+        "task": "apps.scm.integrations.tasks.dispatch_shipment_container_discovery_task",
+        "schedule": timedelta(hours=1),
+        "expire_seconds": 60 * 60,
+    },
+    # Raw carrier payload retention — archives bodies past the retention window and
+    # deletes records only if a deletion window is explicitly configured.
+    "tracking-raw-payload-retention": {
+        "task": "apps.scm.tracking.tasks.apply_tracking_raw_payload_retention",
+        "schedule": timedelta(days=1),
+        "expire_seconds": 60 * 60,
     },
     # Example of a crontab schedule
     # from celery import schedules
@@ -587,6 +625,22 @@ SCM_PDF_FASTAPI_TIMEOUT_SECONDS = env.int("SCM_PDF_FASTAPI_TIMEOUT_SECONDS", def
 # without extra configuration. Set an explicit, stable key in production so stored
 # credentials survive a SECRET_KEY rotation. Never commit a real key.
 SCM_INTEGRATION_ENCRYPTION_KEY = env.str("SCM_INTEGRATION_ENCRYPTION_KEY", default="")
+
+# SCM carrier tracking
+# Cap on how many subscriptions one dispatcher tick queues, so a backlog cannot
+# flood the broker. A capped tick is logged; the rest are picked up next tick.
+SCM_TRACKING_DISPATCH_LIMIT = env.int("SCM_TRACKING_DISPATCH_LIMIT", default=500)
+# Raw carrier responses are the audit trail, so retention archives before it deletes.
+# After RETENTION_DAYS the payload body is dropped but the record — hash, size,
+# timestamps, parse status — is kept. Records are only deleted outright if
+# DELETE_DAYS is set to a non-zero value. 0 disables that stage.
+SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS", default=90)
+SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS", default=0)
+
+# SCM Business Central
+# Pauses the scheduled Business Central dispatcher without removing the schedule or
+# the implementation. Manual and per-integration syncs are unaffected.
+SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED = env.bool("SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED", default=True)
 
 # Pegasus config
 
