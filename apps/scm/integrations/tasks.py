@@ -198,7 +198,9 @@ def discover_containers_for_open_shipments_task(team_id: int) -> dict:
     shipments = (
         Shipment.objects.filter(team_id=team_id)
         .exclude(status__in=[Shipment.Status.DELIVERED, Shipment.Status.CANCELLED])
-        .filter(containers__isnull=True)
+        # Containers hang off the ShipmentContainer through model (related name
+        # shipment_containers); there is no direct `containers` relation.
+        .filter(shipment_containers__isnull=True)
         .filter(
             Q(carrier_booking_reference__gt="") | Q(bill_of_lading_number__gt="") | Q(reference__gt=""),
         )

@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from django.db import transaction
+
 from .schemas import ContainerDiscoveryResult
 
 if TYPE_CHECKING:
@@ -21,20 +23,23 @@ logger = logging.getLogger(__name__)
 def create_or_link_discovered_container(
     *,
     team: Team,
-    shipment: Shipment,
+    shipment: Shipment | None,
     result: ContainerDiscoveryResult,
 ) -> dict:
-    """Create or retrieve a Container and link it to a Shipment and tracking.
+    """Create or retrieve a Container and link it to a shipment and tracking.
 
     Steps:
-      1. Normalise container_number to uppercase.
-      2. Parse the container ID into its ISO 6346 components.
-      3. Get or create the Container (skips creation if ID is invalid).
-      4. Set carrier on the container if it is currently empty.
-      5. Get or create the ShipmentContainer link.
-      6. Get or create a TrackingSubscription for the container.
+      1. Normalise container_number to uppercase and parse its ISO 6346 components.
+      2. Get or create the Container (skips creation if the ID is invalid).
+      3. Link it to the shipment, when one is known.
+      4. Get or create a TrackingSubscription for the container.
 
-    Returns a summary dict with boolean flags for what was created.
+    All writes happen in one transaction, so a discovered container can never end
+    up without its tracking subscription (or the reverse). ``shipment`` may be None:
+    a container discovered from a planned number is not always attached to a
+    shipment yet, and guessing one risks the wrong assignment.
+
+    Returns a summary dict: the container (or None) plus flags for what was created.
     """
     from django.core.exceptions import ValidationError
 
@@ -43,36 +48,30 @@ def create_or_link_discovered_container(
     container_number = result.container_number.strip().upper()
     summary = {
         "container_number": container_number,
+        "container": None,
         "container_created": False,
         "shipment_container_created": False,
         "subscription_created": False,
     }
 
-    # --- 1. Parse and validate container ID ---
     try:
         parts = parse_container_id(container_number)
     except (ValidationError, ValueError) as exc:
         logger.warning("Cannot parse container ID %r: %s — skipping.", container_number, exc)
         return summary
 
-    # --- 2. Get or create the Container ---
-    container = _get_or_create_container(team=team, parts=parts, result=result, summary=summary)
-    if container is None:
-        return summary
+    with transaction.atomic():
+        container = _get_or_create_container(team=team, parts=parts, result=result, summary=summary)
+        if container is None:
+            return summary
+        summary["container"] = container
 
-    # --- 3. Set carrier if missing ---
-    if result.carrier_code and not container.notes:
-        # Store carrier code in notes as a lightweight carrier hint until a carrier FK exists.
-        # This avoids adding a new field while keeping the info available.
-        pass  # No-op: carrier info is captured in TrackingSubscription / raw payload.
+        if shipment is not None:
+            _get_or_create_shipment_container(shipment=shipment, container=container, summary=summary)
 
-    # --- 4. Link Container to Shipment ---
-    _get_or_create_shipment_container(shipment=shipment, container=container, summary=summary)
-
-    # --- 5. Create TrackingSubscription ---
-    _get_or_create_tracking_subscription(
-        team=team, shipment=shipment, container=container, result=result, summary=summary
-    )
+        _get_or_create_tracking_subscription(
+            team=team, shipment=shipment, container=container, result=result, summary=summary
+        )
 
     return summary
 

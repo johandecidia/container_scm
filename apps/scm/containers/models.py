@@ -23,6 +23,21 @@ class PlannedContainerStatus(models.TextChoices):
     IN_TRANSIT = "in_transit", _("In Transit")
     ARRIVED = "arrived", _("Arrived")
     CANCELLED = "cancelled", _("Cancelled")
+    EXPIRED = "expired", _("Expired")
+
+
+class PlannedContainerResult(models.TextChoices):
+    """The outcome of the most recent discovery attempt.
+
+    NOT_FOUND is a valid answer — the carrier does not know the number yet — and is
+    kept distinct from SKIPPED (never asked) and ERROR (asked and failed).
+    """
+
+    PENDING = "pending", _("Not checked yet")
+    NOT_FOUND = "not_found", _("Not known at carrier yet")
+    DETECTED = "detected", _("Detected")
+    SKIPPED = "skipped", _("Skipped — carrier not available")
+    ERROR = "error", _("Error")
 
 
 def equipment_type_image_path(instance, filename: str) -> str:
@@ -271,6 +286,27 @@ class PlannedContainer(BaseTeamModel):
     )
     detected_at = models.DateTimeField(_("detected at"), null=True, blank=True)
     last_checked_at = models.DateTimeField(_("last checked at"), null=True, blank=True)
+    next_check_at = models.DateTimeField(_("next check at"), null=True, blank=True)
+    attempts = models.PositiveIntegerField(_("discovery attempts"), default=0)
+    max_attempts = models.PositiveIntegerField(
+        _("max attempts"),
+        null=True,
+        blank=True,
+        help_text=_("Give up after this many attempts. Falls back to the team/global default."),
+    )
+    expires_at = models.DateTimeField(
+        _("expires at"),
+        null=True,
+        blank=True,
+        help_text=_("Stop looking for this container number after this time."),
+    )
+    last_result = models.CharField(
+        _("last result"),
+        max_length=20,
+        choices=PlannedContainerResult.choices,
+        default=PlannedContainerResult.PENDING,
+    )
+    last_error_message = models.TextField(_("last error message"), blank=True)
     notes = models.TextField(_("notes"), blank=True)
 
     class Meta:
@@ -279,6 +315,7 @@ class PlannedContainer(BaseTeamModel):
             models.Index(fields=["team", "status"]),
             models.Index(fields=["team", "container_number"]),
             models.Index(fields=["last_checked_at"]),
+            models.Index(fields=["status", "next_check_at"]),
         ]
         constraints = [
             models.UniqueConstraint(
