@@ -25,6 +25,17 @@ def get_active_equipment_types() -> QuerySet[EquipmentType]:
     return EquipmentType.objects.filter(is_active=True)
 
 
+def get_default_equipment_type() -> EquipmentType | None:
+    """Return the equipment type to fall back on when nobody has chosen one.
+
+    Quick container registration and carrier auto-link both need *an* equipment
+    type because Container requires one; neither knows which. Active types win, and
+    ISO code order makes the answer stable rather than whatever the DB returns
+    first. None means no equipment types are configured at all.
+    """
+    return EquipmentType.objects.order_by("-is_active", "iso_code").first()
+
+
 def get_team_containers(team: Team) -> QuerySet[Container]:
     return Container.objects.filter(team=team).select_related("equipment_type", "current_location")
 
@@ -93,6 +104,7 @@ __all__ = [
     "get_active_equipment_types",
     "get_container_by_id",
     "get_container_workspace",
+    "get_default_equipment_type",
     "get_equipment_types",
     "get_team_containers",
     "get_team_locations",

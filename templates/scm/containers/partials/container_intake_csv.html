@@ -1,0 +1,38 @@
+{% load i18n %}
+
+<form
+  hx-post="{% url 'containers:import_csv' %}"
+  hx-target="#intake-body"
+  hx-swap="innerHTML"
+  hx-encoding="multipart/form-data"
+>
+  {% csrf_token %}
+
+  {% if intake_error %}
+    <div class="alert alert-error mb-3"><span>{{ intake_error }}</span></div>
+  {% endif %}
+
+  <div class="form-control mb-3">
+    <label class="label" for="{{ form.file.id_for_label }}">
+      <span class="label-text">{{ form.file.label }}</span>
+    </label>
+    {{ form.file }}
+    <span class="label-text-alt text-base-content/50 mt-1">{{ form.file.help_text }}</span>
+    {% for error in form.file.errors %}
+      <p class="text-error text-sm mt-1">{{ error }}</p>
+    {% endfor %}
+  </div>
+
+  <div class="mockup-code text-xs mb-4">
+    <pre data-prefix=""><code>container_number,carrier</code></pre>
+    <pre data-prefix=""><code>TRDU9258963,maersk</code></pre>
+    <pre data-prefix=""><code>MSCU1234567,</code></pre>
+  </div>
+
+  <div class="modal-action">
+    <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">
+      {% translate "Cancel" %}
+    </button>
+    <button type="submit" class="btn btn-primary">{% translate "Preview" %}</button>
+  </div>
+</form>

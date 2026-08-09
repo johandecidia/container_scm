@@ -7,8 +7,11 @@ from typing import Any
 from .models import ImportJob, ImportRow
 
 
-def _parse_csv(file_obj) -> list[dict[str, Any]]:
-    """Parse a CSV file object and return a list of row dicts."""
+def parse_csv_rows(file_obj) -> list[dict[str, Any]]:
+    """Parse a CSV file object and return a list of row dicts.
+
+    Public because container intake reads pasted/uploaded CSVs with the same reader.
+    """
     content = file_obj.read()
     if isinstance(content, bytes):
         content = content.decode("utf-8-sig")  # strip BOM if present
@@ -113,7 +116,7 @@ def parse_file(job: ImportJob) -> list[dict[str, Any]]:
         job.metadata["source_format"] = "pdf"
         job.save(update_fields=["metadata", "updated_at"])
         return _parse_pdf(job)
-    return _parse_csv(job.file)
+    return parse_csv_rows(job.file)
 
 
 def create_import_rows(job: ImportJob, raw_rows: list[dict[str, Any]]) -> None:

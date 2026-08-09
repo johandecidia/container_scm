@@ -186,9 +186,9 @@ def get_or_create_tracking_provider(*, carrier_code: str, carrier_name: str):
 def _get_default_equipment_type():
     """Return a fallback EquipmentType for discovered containers with unknown type.
 
-    Uses the first available EquipmentType ordered by ISO code.
-    Raises EquipmentType.DoesNotExist if no equipment types are configured.
+    Shares the container app's fallback so an auto-linked container and a manually
+    registered one land on the same type. None when none are configured.
     """
-    from apps.scm.containers.models import EquipmentType
+    from apps.scm.containers.selectors import get_default_equipment_type
 
-    return EquipmentType.objects.order_by("iso_code").first()
+    return get_default_equipment_type()

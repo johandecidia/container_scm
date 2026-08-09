@@ -26,7 +26,7 @@ from .selectors import (
     get_container_workspace,
     get_team_locations_with_counts,
 )
-from .services import create_container, create_location, delete_container, update_container, update_location
+from .services import create_location, delete_container, update_container, update_location
 
 CONTAINERS_PER_PAGE = 25
 
@@ -87,50 +87,8 @@ def container_detail(request, container_id):
     )
 
 
-@scm_login_required
-def container_create(request):
-    team = request.default_team
-    if request.method == "POST":
-        form = ContainerForm(request.POST, team=team)
-        if form.is_valid():
-            create_container(team=team, user=request.user, data=form.get_container_data())
-            if request.htmx:
-                containers_qs = filter_containers(team=team)
-                paginator = Paginator(containers_qs, CONTAINERS_PER_PAGE)
-                page_obj = paginator.get_page(1)
-                return render(
-                    request,
-                    "scm/containers/partials/container_table.html",
-                    {
-                        "containers": page_obj,
-                        "page_obj": page_obj,
-                        "equipment_types": get_active_equipment_types(),
-                        "team_slug": team.slug,
-                    },
-                )
-            messages.success(request, _("Container created."))
-            return redirect("containers:list")
-        if request.htmx:
-            return render(
-                request,
-                "scm/containers/partials/container_form.html",
-                {
-                    "form": form,
-                    "modal_title": _("New Container"),
-                    "form_action": request.path,
-                    "team_slug": team.slug,
-                },
-            )
-    else:
-        form = ContainerForm(team=team)
-
-    context = {
-        "form": form,
-        "modal_title": _("New Container"),
-        "form_action": request.path,
-        "team_slug": team.slug,
-    }
-    return render(request, "scm/containers/partials/container_form.html", context)
+# Creating a container lives in intake_views.py, next to paste and CSV import:
+# all three share one parse/validate/create path.
 
 
 @scm_login_required

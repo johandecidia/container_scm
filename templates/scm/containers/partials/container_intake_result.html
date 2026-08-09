@@ -1,0 +1,38 @@
+{% load i18n %}
+
+<div class="alert alert-success mb-4">
+  <span>{% translate "Import finished." %}</span>
+</div>
+
+<ul class="mb-4 space-y-1 text-sm">
+  <li><span class="font-semibold">{% translate "Created" %}:</span> {{ result.created_count }}</li>
+  <li><span class="font-semibold">{% translate "Already existed" %}:</span> {{ result.existed_count }}</li>
+  <li><span class="font-semibold">{% translate "Invalid" %}:</span> {{ result.invalid_count }}</li>
+</ul>
+
+{% if result.invalid %}
+  <div class="max-h-40 overflow-y-auto border border-base-300 rounded-box mb-4">
+    <table class="table table-sm">
+      <tbody>
+        {% for row in result.invalid %}
+          <tr>
+            <td class="font-mono">{{ row.number }}</td>
+            <td class="text-sm text-error">{{ row.error }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+<div class="modal-action">
+  <a class="btn btn-ghost" hx-get="{% url 'containers:import_paste' %}" hx-target="#modal-container" hx-swap="innerHTML">
+    {% translate "Import more" %}
+  </a>
+  <button type="button" class="btn btn-primary" onclick="document.getElementById('modal-container').innerHTML=''">
+    {% translate "Done" %}
+  </button>
+</div>
+
+{# Refresh the list behind the modal without closing it. #}
+{% include "scm/containers/partials/container_table.html" %}

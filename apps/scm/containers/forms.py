@@ -3,8 +3,100 @@ from typing import cast
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
+from .intake import carrier_choices, parse_and_validate_container_number
 from .models import Container, ContainerLocation, EquipmentType
 from .utils import parse_container_id, validate_container_id
+
+MAX_PASTED_CONTAINERS = 500
+
+
+class QuickContainerForm(forms.Form):
+    """The primary "Add Container" form: a container number, and nothing else required.
+
+    Everything technical — the four ID components, equipment type, status and
+    condition — is derived or defaulted, and can be changed afterwards through the
+    normal edit form.
+    """
+
+    container_number = forms.CharField(
+        label=_("Container number"),
+        max_length=20,
+        help_text=_("Full ISO 6346 number, e.g. MSCU1234567"),
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full font-mono uppercase",
+                "placeholder": "MSCU1234567",
+                "autocomplete": "off",
+                "autofocus": "autofocus",
+            }
+        ),
+    )
+    carrier = forms.ChoiceField(
+        label=_("Carrier"),
+        choices=carrier_choices,
+        required=False,
+        help_text=_("Optional. Never guessed from the container number."),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    def clean_container_number(self) -> str:
+        """Normalise and validate through the shared intake rules."""
+        parts = parse_and_validate_container_number(self.cleaned_data["container_number"])
+        self.parts = parts
+        return f"{parts['owner_code']}{parts['category_id']}{parts['serial_number']}{parts['check_digit']}"
+
+
+class ContainerPasteForm(forms.Form):
+    """Bulk intake by pasting a list of container numbers."""
+
+    numbers = forms.CharField(
+        label=_("Container numbers"),
+        help_text=_("One per line, or separated by comma, semicolon or tab — paste straight from Excel."),
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full font-mono",
+                "rows": 8,
+                "placeholder": "TRDU9258963\nMSCU1234567\nCMAU7654321",
+            }
+        ),
+    )
+    carrier = forms.ChoiceField(
+        label=_("Carrier"),
+        choices=carrier_choices,
+        required=False,
+        help_text=_("Optional. Applied to every container in this list."),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    def clean_numbers(self) -> str:
+        from .intake import split_container_numbers
+
+        numbers = split_container_numbers(self.cleaned_data["numbers"])
+        if not numbers:
+            raise forms.ValidationError(_("Enter at least one container number."))
+        if len(numbers) > MAX_PASTED_CONTAINERS:
+            raise forms.ValidationError(
+                _("Too many container numbers at once — the maximum is %(max)s.") % {"max": MAX_PASTED_CONTAINERS}
+            )
+        return self.cleaned_data["numbers"]
+
+
+class ContainerCsvImportForm(forms.Form):
+    """Bulk intake from a small CSV: a ``container_number`` column, optional ``carrier``."""
+
+    file = forms.FileField(
+        label=_("CSV file"),
+        help_text=_("A container_number column is required; a carrier column is optional."),
+        widget=forms.FileInput(attrs={"accept": ".csv,text/csv", "class": "file-input file-input-bordered w-full"}),
+    )
+
+    def clean_file(self):
+        uploaded = self.cleaned_data["file"]
+        if not uploaded.name.lower().endswith(".csv"):
+            raise forms.ValidationError(_("Upload a .csv file."))
+        if uploaded.size > 2 * 1024 * 1024:
+            raise forms.ValidationError(_("File too large. Maximum size is 2 MB."))
+        return uploaded
 
 
 class ContainerForm(forms.Form):

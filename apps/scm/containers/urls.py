@@ -1,12 +1,17 @@
 from django.urls import path
 
-from . import views
+from . import intake_views, views
 
 app_name = "containers"
 
 urlpatterns = [
     path("", views.container_list, name="list"),
-    path("create/", views.container_create, name="create"),
+    # Adding containers: single, pasted list, CSV
+    path("create/", intake_views.container_create, name="create"),
+    path("create/check/", intake_views.container_number_check, name="number_check"),
+    path("import/paste/", intake_views.container_import_paste, name="import_paste"),
+    path("import/csv/", intake_views.container_import_csv, name="import_csv"),
+    path("import/confirm/", intake_views.container_import_confirm, name="import_confirm"),
     path("<int:container_id>/", views.container_detail, name="detail"),
     path("<int:container_id>/edit/", views.container_update, name="update"),
     path("<int:container_id>/refresh-tracking/", views.container_refresh_tracking, name="refresh_tracking"),

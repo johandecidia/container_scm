@@ -40,19 +40,6 @@ def _make_container(team, owner=OWNER, serial=SERIAL) -> Container:
     )
 
 
-def _post_data(container_id=None) -> dict:
-    if container_id is None:
-        container_id = VALID_ID
-    et = _et()
-    return {
-        "container_id_input": container_id,
-        "equipment_type": et.pk,
-        "status": "AVAILABLE",
-        "condition": "GOOD",
-        "color_system": "UNKNOWN",
-    }
-
-
 @override_settings(STORAGES=_TEST_STORAGES)
 class ContainerListPermissionTest(TestCase):
     @classmethod
@@ -137,15 +124,16 @@ class ContainerCreateTest(TestCase):
         _et()  # ensure equipment type exists
         client = Client()
         client.force_login(self.user)
-        response = client.post(reverse("containers:create"), data=_post_data())
+        response = client.post(reverse("containers:create"), data={"container_number": VALID_ID})
         self.assertIn(response.status_code, [200, 302])
         self.assertTrue(Container.objects.filter(owner_code=OWNER, serial_number=SERIAL, team=self.team).exists())
 
     def test_invalid_post_shows_form_errors(self):
         client = Client()
         client.force_login(self.user)
-        response = client.post(reverse("containers:create"), data={"container_id_input": "INVALID"})
+        response = client.post(reverse("containers:create"), data={"container_number": "INVALID"})
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Invalid container ID format")
 
 
 @override_settings(STORAGES=_TEST_STORAGES)

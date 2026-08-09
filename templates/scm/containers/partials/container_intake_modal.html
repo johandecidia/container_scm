@@ -1,0 +1,48 @@
+{% load i18n %}
+
+{% comment %}
+  Shell for adding containers. The tabs are plain hx-get links that re-render this
+  whole dialog; the forms inside post into #intake-body only.
+{% endcomment %}
+
+<dialog id="container-intake-modal" class="modal modal-open">
+  <div class="modal-box max-w-3xl">
+    <button
+      type="button"
+      class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+      aria-label="{% translate 'Close' %}"
+      onclick="document.getElementById('modal-container').innerHTML=''"
+    >✕</button>
+
+    <h3 class="font-bold text-lg mb-4">{% translate "Add containers" %}</h3>
+
+    <div role="tablist" class="tabs tabs-bordered mb-4">
+      <a
+        role="tab"
+        class="tab {% if tab == 'single' %}tab-active{% endif %}"
+        hx-get="{% url 'containers:create' %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >{% translate "Single" %}</a>
+      <a
+        role="tab"
+        class="tab {% if tab == 'paste' or tab == 'preview-paste' %}tab-active{% endif %}"
+        hx-get="{% url 'containers:import_paste' %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >{% translate "Multiple" %}</a>
+      <a
+        role="tab"
+        class="tab {% if tab == 'csv' %}tab-active{% endif %}"
+        hx-get="{% url 'containers:import_csv' %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >{% translate "CSV" %}</a>
+    </div>
+
+    <div id="intake-body">
+      {% include body_template %}
+    </div>
+  </div>
+  <div class="modal-backdrop" onclick="document.getElementById('modal-container').innerHTML=''"></div>
+</dialog>
