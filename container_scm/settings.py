@@ -129,6 +129,8 @@ PROJECT_APPS = [
     "apps.scm.procurement.apps.ProcurementConfig",
     "apps.scm.supplier_deliveries.apps.SupplierDeliveriesConfig",
     "apps.scm.audit_log.apps.AuditLogConfig",
+    # Read-only composition layer over the apps above — owns no models.
+    "apps.scm.visibility.apps.VisibilityConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + PEGASUS_APPS + PROJECT_APPS + WAGTAIL_APPS
@@ -641,6 +643,17 @@ SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_DELETE_
 # Pauses the scheduled Business Central dispatcher without removing the schedule or
 # the implementation. Manual and per-integration syncs are unaffected.
 SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED = env.bool("SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED", default=True)
+
+# SCM supply chain visibility — Mapbox
+# The token is rendered into the page and is therefore public by definition: only
+# ever put a *public* (pk.) token here, URL-restricted in production. A secret (sk.)
+# token in this setting would be published to every visitor.
+#
+# Both settings are optional. Without a token the map card renders a configuration
+# notice and every other part of the page — timeline, ETA, tracking state — keeps
+# working; the map is an enhancement, not a dependency.
+MAPBOX_PUBLIC_TOKEN = env.str("MAPBOX_PUBLIC_TOKEN", default="")
+MAPBOX_STYLE_URL = env.str("MAPBOX_STYLE_URL", default="mapbox://styles/mapbox/standard")
 
 # Pegasus config
 
