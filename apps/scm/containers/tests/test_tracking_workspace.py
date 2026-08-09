@@ -337,7 +337,8 @@ class ContainerDetailRenderTest(WorkspaceTestBase):
     def test_page_renders_without_any_tracking(self):
         response = self._get_detail()
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "No tracking subscription")
+        self.assertContains(response, "Not tracked")
+        self.assertContains(response, "No tracking events yet")
 
 
 class PositionClassificationTest(WorkspaceTestBase):

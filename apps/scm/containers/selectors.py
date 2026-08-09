@@ -1,5 +1,5 @@
 # Container selectors — all read/query operations.
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 
 from apps.teams.models import Team
 
@@ -37,7 +37,32 @@ def get_default_equipment_type() -> EquipmentType | None:
 
 
 def get_team_containers(team: Team) -> QuerySet[Container]:
-    return Container.objects.filter(team=team).select_related("equipment_type", "current_location")
+    return (
+        Container.objects.filter(team=team)
+        .select_related("equipment_type", "current_location")
+        .annotate(**_tracking_annotations())
+    )
+
+
+def _tracking_annotations() -> dict:
+    """Carrier and tracking state for a list of containers, in two subqueries.
+
+    Annotated rather than followed per row: the list renders 25 containers and must
+    not issue a query each for their subscriptions. Cancelled watches are ignored so
+    a container someone stopped tracking reads as untracked, not as a stale carrier.
+    """
+    from apps.scm.tracking.models import TrackingSubscription
+
+    latest = (
+        TrackingSubscription.objects.filter(team=OuterRef("team"), container=OuterRef("pk"))
+        .exclude(status=TrackingSubscription.Status.CANCELLED)
+        .order_by("-created_at")
+    )
+    return {
+        "tracking_carrier_name": Subquery(latest.values("provider__name")[:1]),
+        "tracking_watch_status": Subquery(latest.values("status")[:1]),
+        "tracking_carrier_status": Subquery(latest.values("tracking_status")[:1]),
+    }
 
 
 def get_container_by_id(team: Team, container_id: int) -> Container:

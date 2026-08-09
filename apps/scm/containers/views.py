@@ -30,6 +30,10 @@ from .services import create_location, delete_container, update_container, updat
 
 CONTAINERS_PER_PAGE = 25
 
+# The tracking panel is its own HTMX component: the detail page includes it, and
+# a refresh re-renders exactly this and nothing else.
+TRACKING_PANEL_TEMPLATE = "scm/containers/partials/container_tracking_panel.html"
+
 # Maps a RefreshResult level onto the messages framework, so the tracking service
 # stays independent of it.
 _MESSAGE_LEVELS = {
@@ -153,11 +157,25 @@ def container_refresh_tracking(request, container_id):
     """Fetch this container's tracking from its carrier now and report the result.
 
     The carrier call runs in the request so the person who pressed the button sees
-    the real outcome; the page then reloads with the refreshed timeline.
+    the real outcome. An HTMX request gets the tracking panel back with the result
+    rendered inside it; anything else falls back to a message and a redirect.
     """
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
     result = refresh_container_tracking(team=team, container=container)
+
+    if request.htmx:
+        return render(
+            request,
+            TRACKING_PANEL_TEMPLATE,
+            {
+                "container": container,
+                "workspace": get_container_workspace(team=team, container=container),
+                "refresh": result,
+                "team_slug": team.slug,
+            },
+        )
+
     _MESSAGE_LEVELS[result.level](request, result.message)
     return redirect("containers:detail", container_id=container.pk)
 

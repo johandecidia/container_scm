@@ -18,6 +18,8 @@ parameter or an Authorization header cannot end up in the log table.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import time
 import uuid
@@ -43,6 +45,37 @@ logger = logging.getLogger(__name__)
 
 # Statuses worth retrying. 401 is handled separately (one token refresh).
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+# Ceilings applied to any carrier call made while someone is waiting for the page.
+# A background poll can afford 30s × 4 attempts; a person pressing a button cannot,
+# and a slow carrier must not be able to hold a web worker for minutes. These only
+# ever lower a configured value — a team that has already configured something
+# faster keeps it.
+INTERACTIVE_TIMEOUT_SECONDS = 15
+INTERACTIVE_MAX_RETRIES = 1
+INTERACTIVE_MAX_RETRY_AFTER_WAIT_SECONDS = 5
+
+_interactive = contextvars.ContextVar("carrier_http_interactive", default=False)
+
+
+@contextlib.contextmanager
+def interactive_carrier_requests():
+    """Bound carrier HTTP behaviour for calls made inside a user's request.
+
+    Wraps the *existing* transport rather than adding a second one: every client
+    resolves its behaviour through :meth:`HttpConfig.from_config`, which reads this
+    flag, so nothing about retries, backoff or error classification is duplicated.
+    """
+    token = _interactive.set(True)
+    try:
+        yield
+    finally:
+        _interactive.reset(token)
+
+
+def in_interactive_request() -> bool:
+    """True when carrier calls are currently bounded by the interactive ceilings."""
+    return _interactive.get()
 
 
 @dataclass(frozen=True)
@@ -75,11 +108,19 @@ class HttpConfig:
         statuses = config.get("no_data_statuses")
         no_data = frozenset(int(status) for status in statuses) if statuses else frozenset({404})
 
+        timeout = _int("request_timeout_seconds", 30)
+        retries = _int("max_retries", 3)
+        retry_after_wait = _int("max_retry_after_wait_seconds", 30)
+        if in_interactive_request():
+            timeout = min(timeout, INTERACTIVE_TIMEOUT_SECONDS)
+            retries = min(retries, INTERACTIVE_MAX_RETRIES)
+            retry_after_wait = min(retry_after_wait, INTERACTIVE_MAX_RETRY_AFTER_WAIT_SECONDS)
+
         return cls(
-            timeout_seconds=_int("request_timeout_seconds", 30),
-            max_retries=_int("max_retries", 3),
+            timeout_seconds=timeout,
+            max_retries=retries,
             retry_backoff_seconds=backoff,
-            max_retry_after_wait_seconds=_int("max_retry_after_wait_seconds", 30),
+            max_retry_after_wait_seconds=retry_after_wait,
             no_data_statuses=no_data,
         )
 

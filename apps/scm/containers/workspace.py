@@ -87,6 +87,44 @@ class ContainerWorkspace:
         return shipment.get_status_display() if shipment else ""
 
     @property
+    def current_status(self) -> str:
+        """Where the box is in its journey, in one line.
+
+        The shipment's transport status when there is a shipment, otherwise the last
+        thing the carrier actually reported. Nothing new is stored for this.
+        """
+        if self.transport_status:
+            return self.transport_status
+        event = self.latest_actual_event or self.latest_tracking_event
+        return event.get_event_type_display() if event else ""
+
+    @property
+    def last_refreshed_at(self):
+        """When the carrier was last asked about this container."""
+        subscription = self.active_subscription
+        return subscription.last_synced_at if subscription else None
+
+    @property
+    def is_tracking_active(self) -> bool:
+        """True when a live watch exists — the panel's green dot."""
+        from apps.scm.tracking.models import TrackingSubscription
+
+        subscription = self.active_subscription
+        return subscription is not None and subscription.status == TrackingSubscription.Status.ACTIVE
+
+    @property
+    def has_tracking_error(self) -> bool:
+        from apps.scm.tracking.models import TrackingSubscription
+
+        subscription = self.active_subscription
+        if subscription is None:
+            return False
+        return (
+            subscription.status == TrackingSubscription.Status.FAILED
+            or subscription.tracking_status == TrackingSubscription.TrackingStatus.ERROR
+        )
+
+    @property
     def tracking_status(self) -> str:
         """What the carrier is telling us, e.g. tracking or no data yet."""
         subscription = self.active_subscription

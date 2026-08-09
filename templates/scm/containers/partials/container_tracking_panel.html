@@ -1,58 +1,95 @@
 {% load i18n %}
-{# Carrier tracking for a container. Everything here is derived from the container's
-   shipment and its tracking events — none of it is stored on Container itself. #}
-<section class="app-card">
-  <div class="flex items-start justify-between gap-4 mb-4">
-    <h2 class="text-lg font-semibold">{% translate "Carrier Tracking" %}</h2>
-    <div class="flex items-center gap-2 shrink-0">
-      {% if workspace.tracking_status %}
-        <span class="badge badge-sm badge-outline">{{ workspace.tracking_status }}</span>
-      {% endif %}
-      {# A plain POST: the carrier is called in the request, then the page reloads with
-         the result as a message and the timeline below already updated. #}
-      <form method="post" action="{% url 'containers:refresh_tracking' container.pk %}">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-outline btn-xs">
-          <i class="fa fa-rotate"></i>
-          {% translate "Refresh tracking" %}
-        </button>
-      </form>
-    </div>
-  </div>
 
-  {% if not workspace.active_subscription %}
-    <p class="text-sm text-base-content/60">
-      {% translate "No tracking subscription for this container yet." %}
-    </p>
-  {% else %}
-    {% if workspace.sync_problem %}
+{% comment %}
+  Carrier tracking for one container — an HTMX component with a stable root id.
+  Refresh posts to containers:refresh_tracking and swaps this whole element, so the
+  summary, the result banner and the timeline can never disagree with each other.
+
+  Everything shown is derived from the container's shipment, its tracking
+  subscription and its tracking events. None of it is stored on Container.
+{% endcomment %}
+
+<div id="container-tracking-panel" class="flex flex-col gap-6">
+  <section class="app-card">
+    <div class="flex items-start justify-between gap-4 mb-4">
+      <div>
+        <h2 class="text-lg font-semibold">{% translate "Carrier Tracking" %}</h2>
+        <p class="text-sm mt-1">
+          <span class="font-medium">{{ workspace.carrier_name|default:_("No carrier assigned") }}</span>
+          {% if workspace.has_tracking_error %}
+            <span class="text-error ml-2">! {{ workspace.tracking_status|default:_("Error") }}</span>
+          {% elif workspace.is_tracking_active %}
+            <span class="text-success ml-2">● {{ workspace.tracking_status|default:_("Active") }}</span>
+          {% elif workspace.active_subscription %}
+            <span class="text-base-content/50 ml-2">○ {{ workspace.active_subscription.get_status_display }}</span>
+          {% else %}
+            <span class="text-base-content/50 ml-2">○ {% translate "Not tracked" %}</span>
+          {% endif %}
+        </p>
+        <p class="text-xs text-base-content/50 mt-0.5">
+          {% if workspace.last_refreshed_at %}
+            {% blocktranslate trimmed with when=workspace.last_refreshed_at|date:"d M H:i" %}
+              Last refreshed: {{ when }}
+            {% endblocktranslate %}
+          {% else %}
+            {% translate "Last refreshed: never" %}
+          {% endif %}
+        </p>
+      </div>
+
+      {% comment %}
+        One button, one request: hx-disabled-elt disables it for the duration, so a
+        double click cannot start a second refresh.
+      {% endcomment %}
+      <button
+        type="button"
+        class="btn btn-outline btn-sm shrink-0"
+        hx-post="{% url 'containers:refresh_tracking' container.pk %}"
+        hx-target="#container-tracking-panel"
+        hx-swap="outerHTML"
+        hx-disabled-elt="this"
+      >
+        <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+        <i class="fa fa-rotate htmx-request-hide"></i>
+        <span class="htmx-request-hide">{% translate "Refresh tracking" %}</span>
+        <span class="htmx-request-show">{% translate "Refreshing…" %}</span>
+      </button>
+    </div>
+
+    {% if refresh %}
+      {% include "scm/containers/partials/container_tracking_result.html" with refresh=refresh %}
+    {% elif workspace.sync_problem %}
       <div role="alert" class="alert alert-warning alert-soft mb-4">
         <i class="fa fa-triangle-exclamation"></i>
         <span class="text-sm">{{ workspace.sync_problem }}</span>
       </div>
     {% endif %}
 
-    <dl class="grid grid-cols-2 gap-x-4 gap-y-3">
+    <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       <div>
-        <dt class="text-xs text-base-content/60">{% translate "Carrier" %}</dt>
-        <dd class="font-medium text-sm">{{ workspace.carrier_name|default:"—" }}</dd>
+        <dt class="text-xs text-base-content/60">{% translate "Current status" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.current_status|default:"—" }}</dd>
       </div>
       <div>
-        <dt class="text-xs text-base-content/60">{% translate "Transport status" %}</dt>
-        <dd class="font-medium text-sm">{{ workspace.transport_status|default:"—" }}</dd>
+        <dt class="text-xs text-base-content/60">{% translate "Latest event" %}</dt>
+        {% with event=workspace.latest_tracking_event %}
+          {% if event %}
+            <dd class="text-sm">
+              <span class="font-medium">{{ event.get_event_type_display }}</span>
+              {% if event.location_name %}
+                <span class="block text-xs text-base-content/60">{{ event.location_name }}</span>
+              {% endif %}
+              <span class="block text-xs text-base-content/50">{{ event.event_datetime|date:"d M Y H:i"|default:"—" }}</span>
+            </dd>
+          {% else %}
+            <dd class="font-medium text-sm">—</dd>
+          {% endif %}
+        {% endwith %}
       </div>
       <div>
-        <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
-        <dd class="font-medium text-sm">{{ workspace.vessel_name|default:"—" }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs text-base-content/60">{% translate "Voyage" %}</dt>
-        <dd class="font-medium text-sm">{{ workspace.voyage_number|default:"—" }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs text-base-content/60">{% translate "Current ETA" %}</dt>
+        <dt class="text-xs text-base-content/60">{% translate "ETA" %}</dt>
         <dd class="font-medium text-sm">
-          {{ workspace.current_eta|date:"Y-m-d"|default:"—" }}
+          {{ workspace.current_eta|date:"d M Y"|default:"—" }}
           {% if workspace.eta_delay_days > 0 %}
             <span class="badge badge-xs badge-warning ml-1">
               {% blocktranslate trimmed with days=workspace.eta_delay_days %}
@@ -62,85 +99,61 @@
           {% endif %}
         </dd>
       </div>
-      <div>
-        <dt class="text-xs text-base-content/60">{% translate "Original ETA" %}</dt>
-        <dd class="font-medium text-sm">{{ workspace.original_eta|date:"Y-m-d"|default:"—" }}</dd>
-      </div>
     </dl>
 
-    {# Last known position. The position type is always shown: a terminal coordinate
-       is not a live GPS fix and must not be read as one. #}
-    <div class="mt-4 pt-4 border-t border-base-300">
-      <dt class="text-xs text-base-content/60 mb-1">{% translate "Last known position" %}</dt>
-      {% if workspace.position %}
-        <dd class="text-sm">
-          <span class="font-medium">{{ workspace.position.label|default:"—" }}</span>
-          <span class="badge badge-xs badge-ghost ml-1">{{ workspace.position.get_position_type_display }}</span>
-          {% if workspace.position.observed_at %}
-            <span class="text-xs text-base-content/50 block mt-1">
-              {% blocktranslate trimmed with observed=workspace.position.observed_at|date:"Y-m-d H:i" %}
-                Reported {{ observed }}
-              {% endblocktranslate %}
-            </span>
-          {% endif %}
-          {% if not workspace.position.is_realtime %}
-            <span class="text-xs text-base-content/50 block">
-              {% translate "This is where the container was last reported, not a live position." %}
-            </span>
-          {% endif %}
-        </dd>
-      {% else %}
-        <dd class="text-sm text-base-content/60">{% translate "No position reported yet." %}</dd>
-      {% endif %}
-    </div>
-
-    {% if workspace.last_sync_run %}
-      <div class="mt-4 pt-4 border-t border-base-300">
-        <dt class="text-xs text-base-content/60 mb-1">{% translate "Last sync" %}</dt>
-        <dd class="text-sm">
-          {{ workspace.last_sync_run.get_status_display }}
-          <span class="text-base-content/50">
-            {{ workspace.last_sync_run.started_at|date:"Y-m-d H:i" }}
-          </span>
-          {% if workspace.last_sync_run.error_type %}
-            <span class="badge badge-xs badge-ghost ml-1">
-              {{ workspace.last_sync_run.get_error_type_display }}
-            </span>
-          {% endif %}
-        </dd>
-      </div>
+    {% if workspace.vessel_name or workspace.position %}
+      <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-base-300">
+        {% if workspace.vessel_name %}
+          <div>
+            <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
+            <dd class="font-medium text-sm">
+              {{ workspace.vessel_name }}{% if workspace.voyage_number %} · {{ workspace.voyage_number }}{% endif %}
+            </dd>
+          </div>
+        {% endif %}
+        {% if workspace.position %}
+          {% comment %}
+            The position type is always shown: a terminal coordinate is not a live
+            GPS fix and must not be read as one.
+          {% endcomment %}
+          <div class="sm:col-span-2">
+            <dt class="text-xs text-base-content/60">{% translate "Last known position" %}</dt>
+            <dd class="text-sm">
+              <span class="font-medium">{{ workspace.position.label|default:"—" }}</span>
+              <span class="badge badge-xs badge-ghost ml-1">{{ workspace.position.get_position_type_display }}</span>
+              {% if not workspace.position.is_realtime %}
+                <span class="block text-xs text-base-content/50">
+                  {% translate "This is where the container was last reported, not a live position." %}
+                </span>
+              {% endif %}
+            </dd>
+          </div>
+        {% endif %}
+      </dl>
     {% endif %}
 
-    <div class="mt-4 pt-4 border-t border-base-300">
-      <div class="flex items-center justify-between mb-2">
-        <dt class="text-xs text-base-content/60">{% translate "Subscriptions" %}</dt>
-        <a href="{% url 'tracking:list' %}" class="btn btn-ghost btn-xs">{% translate "All tracking" %}</a>
+    {% if workspace.tracking_subscriptions %}
+      <div class="mt-4 pt-4 border-t border-base-300 flex items-center justify-between gap-2">
+        <div class="text-xs text-base-content/60">
+          {% for sub in workspace.tracking_subscriptions %}
+            <a href="{% url 'tracking:detail' sub.pk %}" class="font-mono link link-hover">{{ sub.tracking_reference }}</a>
+            <span class="text-base-content/40">({{ sub.provider }})</span>{% if not forloop.last %} · {% endif %}
+          {% endfor %}
+        </div>
+        <a href="{% url 'tracking:list' %}" class="btn btn-ghost btn-xs shrink-0">{% translate "All tracking" %}</a>
       </div>
-      <ul class="divide-y divide-base-200">
-        {% for sub in workspace.tracking_subscriptions %}
-          <li class="py-2 flex items-center justify-between gap-2">
-            <div>
-              <a href="{% url 'tracking:detail' sub.pk %}" class="text-sm font-mono link link-hover">
-                {{ sub.tracking_reference }}
-              </a>
-              <p class="text-xs text-base-content/50">{{ sub.provider }}</p>
-            </div>
-            {% include "scm/tracking/partials/_tracking_status_badge.html" with subscription=sub %}
-          </li>
-        {% endfor %}
-      </ul>
-    </div>
-  {% endif %}
-</section>
+    {% endif %}
+  </section>
 
-{# Chronological carrier timeline #}
-<section class="app-card">
-  <h2 class="text-lg font-semibold mb-4">{% translate "Tracking Timeline" %}</h2>
-  {% if workspace.timeline %}
-    <ol class="divide-y divide-base-200">
-      {% for event in workspace.timeline %}
-        <li class="py-3">
-          <div class="flex items-start justify-between gap-2">
+  <section class="app-card">
+    <h2 class="text-lg font-semibold mb-4">{% translate "Tracking Timeline" %}</h2>
+    {% if workspace.timeline %}
+      <ol class="divide-y divide-base-200">
+        {% for event in workspace.timeline %}
+          <li class="py-3 flex items-start gap-3">
+            <p class="text-xs text-base-content/50 shrink-0 w-28 pt-0.5">
+              {{ event.event_datetime|date:"d M H:i"|default:"—" }}
+            </p>
             <div>
               <p class="font-medium text-sm">
                 {{ event.get_event_type_display }}
@@ -148,6 +161,9 @@
                   <span class="badge badge-xs badge-ghost ml-1">{{ event.get_event_time_type_display }}</span>
                 {% endif %}
               </p>
+              {% if event.description and event.description != event.get_event_type_display %}
+                <p class="text-xs text-base-content/60">{{ event.description }}</p>
+              {% endif %}
               {% if event.location_name or event.location_unlocode %}
                 <p class="text-xs text-base-content/60">
                   {{ event.location_name }}{% if event.location_unlocode %} ({{ event.location_unlocode }}){% endif %}
@@ -159,40 +175,12 @@
                 </p>
               {% endif %}
             </div>
-            <p class="text-xs text-base-content/50 shrink-0">{{ event.event_datetime|date:"Y-m-d H:i" }}</p>
-          </div>
-        </li>
-      {% endfor %}
-    </ol>
-  {% else %}
-    <p class="text-sm text-base-content/60">{% translate "No carrier events yet." %}</p>
-  {% endif %}
-</section>
-
-{# Purchase orders behind this container #}
-<section class="app-card">
-  <h2 class="text-lg font-semibold mb-4">{% translate "Purchase Orders" %}</h2>
-  {% if workspace.purchase_order_lines %}
-    <ul class="divide-y divide-base-200">
-      {% for line in workspace.purchase_order_lines %}
-        <li class="py-3 flex items-start justify-between gap-2">
-          <div>
-            <a
-              href="{% url 'procurement:purchase_order_detail' line.purchase_order.pk %}"
-              class="font-medium text-sm link link-hover"
-            >
-              {{ line.purchase_order.po_number }}
-            </a>
-            <p class="text-xs text-base-content/60">
-              {{ line.item_no }}{% if line.description %} — {{ line.description }}{% endif %}
-            </p>
-            <p class="text-xs text-base-content/50">{{ line.purchase_order.supplier_name }}</p>
-          </div>
-          <p class="text-xs text-base-content/50 shrink-0">{{ line.ordered_qty }}</p>
-        </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p class="text-sm text-base-content/60">{% translate "No purchase order lines linked to this container." %}</p>
-  {% endif %}
-</section>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No tracking events yet." %}</p>
+      <p class="text-sm text-base-content/50">{% translate "Refresh tracking to check the carrier." %}</p>
+    {% endif %}
+  </section>
+</div>

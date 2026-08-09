@@ -8,10 +8,12 @@ Which carrier?
     A scheduled sync starts from a subscription, which already names its provider.
     A person pressing "Refresh tracking" starts from a container, which does not.
     :func:`resolve_carrier_code_for_container` works through the evidence in order
-    of how much it is worth — an existing subscription, the shipment's carrier, the
-    ISO 6346 owner prefix, and finally the team's single configured carrier — and
-    returns "" rather than picking between candidates. Asking the wrong carrier
-    produces an answer indistinguishable from "this container does not exist".
+    of how much it is worth — an existing subscription, the shipment's carrier, a
+    carrier recorded explicitly for this container number, and finally the team's
+    single configured carrier — and returns "" rather than picking between
+    candidates. The ISO 6346 owner prefix is deliberately *not* evidence: it names
+    who owns the box, not who is moving it, and asking the wrong carrier produces
+    an answer indistinguishable from "this container does not exist".
 
 Is it worth asking?
     Without an active carrier integration for the team there is nothing to call, so
@@ -20,6 +22,12 @@ Is it worth asking?
 
 Everything after that is :func:`apps.scm.tracking.sync.sync_tracking_subscription`:
 fetch, store the raw response, parse, persist idempotently, update the shipment.
+The call runs inside :func:`interactive_carrier_requests`, so a slow carrier cannot
+hold the web worker for minutes.
+
+What the user is told is decided here too, from the sync run's status and error
+type alone. Carrier error text can carry a response body or an echoed credential,
+so it is logged and never rendered.
 """
 
 from __future__ import annotations
@@ -28,6 +36,8 @@ import logging
 from dataclasses import dataclass
 
 from django.utils.translation import gettext_lazy as _
+
+from apps.scm.integrations.carriers.http import interactive_carrier_requests
 
 from .models import TrackingSubscription, TrackingSyncRun
 from .sync import sync_tracking_subscription
@@ -41,6 +51,14 @@ INFO = "info"
 WARNING = "warning"
 ERROR = "error"
 
+# What happened, as a value the panel can branch on without parsing the message.
+UPDATED = "updated"
+NO_DATA = "no_data"
+NOT_CONFIGURED = "not_configured"
+CARRIER_UNKNOWN = "carrier_unknown"
+UNAVAILABLE = "unavailable"
+IN_PROGRESS = "in_progress"
+
 
 @dataclass(frozen=True)
 class RefreshResult:
@@ -48,7 +66,9 @@ class RefreshResult:
 
     level: str
     message: str
+    state: str = UPDATED
     carrier_code: str = ""
+    carrier_name: str = ""
     events_created: int = 0
     events_updated: int = 0
     sync_run: TrackingSyncRun | None = None
@@ -64,10 +84,7 @@ def resolve_carrier_code_for_container(team, container) -> str:
     Never guesses between candidates: an empty string means the caller must tell
     the user what to configure, not that no carrier exists.
     """
-    from apps.scm.integrations.carriers.registry import (
-        resolve_carrier_code,
-        suggest_carrier_for_owner_code,
-    )
+    from apps.scm.integrations.carriers.registry import resolve_carrier_code
 
     # 1. An existing subscription already records who we ask about this container.
     subscription = (
@@ -96,12 +113,20 @@ def resolve_carrier_code_for_container(team, container) -> str:
         if code:
             return code
 
-    # 3. The ISO 6346 owner prefix. Only a hint — boxes are leased and interchanged —
-    #    but a better hint than nothing when no carrier has been recorded. The full
-    #    container ID is passed because the prefix is owner code + category identifier.
-    code = suggest_carrier_for_owner_code(container.container_id)
-    if code:
-        return code
+    # 3. A carrier recorded explicitly for this container number when it was planned.
+    #    Someone chose it; that outranks anything the system could infer.
+    from apps.scm.containers.models import PlannedContainer
+
+    planned = (
+        PlannedContainer.objects.filter(team=team, container_number=container.container_id)
+        .exclude(carrier="")
+        .order_by("-created_at")
+        .first()
+    )
+    if planned is not None:
+        code = resolve_carrier_code(planned.carrier)
+        if code:
+            return code
 
     # 4. The team's single configured carrier. With exactly one there is nothing to
     #    choose between; with none or several this stays silent.
@@ -176,11 +201,8 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
     if not carrier_code:
         return RefreshResult(
             level=ERROR,
-            message=_(
-                "Could not tell which carrier to ask about %(reference)s. Set the carrier on its "
-                "shipment, or start tracking it from the tracking workspace."
-            )
-            % {"reference": reference},
+            state=CARRIER_UNKNOWN,
+            message=_("Carrier could not be determined. Assign a carrier through the shipment or tracking setup."),
         )
 
     try:
@@ -188,7 +210,9 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
     except UnknownCarrierError:
         return RefreshResult(
             level=ERROR,
+            state=NOT_CONFIGURED,
             carrier_code=carrier_code,
+            carrier_name=carrier_code,
             message=_("'%(carrier)s' is not a carrier this system can call.") % {"carrier": carrier_code},
         )
 
@@ -197,8 +221,10 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
     if get_carrier_integration(team, carrier_code) is None:
         return RefreshResult(
             level=ERROR,
+            state=NOT_CONFIGURED,
             carrier_code=carrier_code,
-            message=_("%(carrier)s is not connected for this team yet, so there is nothing to fetch.")
+            carrier_name=definition.name,
+            message=_("Tracking is not configured for this container. %(carrier)s is not connected for this team yet.")
             % {"carrier": definition.name},
         )
 
@@ -211,43 +237,58 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
     if subscription is None:
         return RefreshResult(
             level=ERROR,
+            state=NOT_CONFIGURED,
             carrier_code=carrier_code,
+            carrier_name=definition.name,
             message=_("Could not start tracking %(reference)s.") % {"reference": reference},
         )
 
-    sync_run = sync_tracking_subscription(subscription)
+    # Bound the call: someone is waiting for this response.
+    with interactive_carrier_requests():
+        sync_run = sync_tracking_subscription(subscription)
+
     if sync_run is None:
         return RefreshResult(
             level=INFO,
+            state=IN_PROGRESS,
             carrier_code=carrier_code,
-            message=_("A tracking sync for %(reference)s is already running.") % {"reference": reference},
+            carrier_name=definition.name,
+            message=_("A tracking refresh for this container is already running."),
         )
     return _describe(sync_run, carrier_name=definition.name, carrier_code=carrier_code, reference=reference)
 
 
 def _describe(sync_run: TrackingSyncRun, *, carrier_name: str, carrier_code: str, reference: str) -> RefreshResult:
-    """Turn a finished sync run into something worth reading."""
+    """Turn a finished sync run into something worth reading.
+
+    The wording comes from the run's status and error type only. ``error_message``
+    can carry a carrier response body — it belongs in the log, not on the page.
+    """
     statuses = TrackingSyncRun.Status
     common = {
         "carrier_code": carrier_code,
+        "carrier_name": carrier_name,
         "events_created": sync_run.events_created,
         "events_updated": sync_run.events_updated,
         "sync_run": sync_run,
     }
 
+    if sync_run.status in (statuses.SKIPPED, statuses.FAILED):
+        _log_technical_failure(sync_run, carrier_code=carrier_code, reference=reference)
+
     if sync_run.status == statuses.SKIPPED:
         return RefreshResult(
             level=WARNING,
-            message=_("%(carrier)s was not called: %(reason)s")
-            % {"carrier": carrier_name, "reason": sync_run.error_message or sync_run.get_error_type_display()},
+            state=NOT_CONFIGURED,
+            message=_("Tracking is not configured for this container."),
             **common,
         )
 
     if sync_run.status == statuses.FAILED:
         return RefreshResult(
             level=ERROR,
-            message=_("%(carrier)s could not be reached: %(reason)s")
-            % {"carrier": carrier_name, "reason": sync_run.error_message or sync_run.get_error_type_display()},
+            state=_failure_state(sync_run.error_type),
+            message=_failure_message(sync_run.error_type, carrier_name),
             **common,
         )
 
@@ -256,18 +297,52 @@ def _describe(sync_run: TrackingSyncRun, *, carrier_name: str, carrier_code: str
         # The carrier answered and has nothing for this reference — a real answer.
         return RefreshResult(
             level=INFO,
-            message=_("%(carrier)s has no tracking data for %(reference)s yet.")
-            % {"carrier": carrier_name, "reference": reference},
+            state=NO_DATA,
+            message=_("No tracking data found for this container."),
             **common,
         )
 
-    message = _("%(carrier)s returned %(total)s event(s) for %(reference)s: %(created)s new, %(updated)s updated.") % {
-        "carrier": carrier_name,
+    message = _("Tracking updated — %(total)s events received · %(created)s new · %(updated)s unchanged") % {
         "total": total,
-        "reference": reference,
         "created": sync_run.events_created,
         "updated": sync_run.events_updated,
     }
     if sync_run.status == statuses.PARTIAL_SUCCESS:
-        return RefreshResult(level=WARNING, message=f"{message} {sync_run.error_message}".strip(), **common)
-    return RefreshResult(level=SUCCESS, message=message, **common)
+        return RefreshResult(
+            level=WARNING,
+            state=UPDATED,
+            message=_("%(summary)s. Some events could not be stored.") % {"summary": message},
+            **common,
+        )
+    return RefreshResult(level=SUCCESS, state=UPDATED, message=message, **common)
+
+
+def _failure_state(error_type: str) -> str:
+    """A configuration problem and an outage need different advice, so keep them apart."""
+    errors = TrackingSyncRun.ErrorType
+    if error_type in (errors.NOT_CONFIGURED, errors.NOT_IMPLEMENTED, errors.UNSUPPORTED_REFERENCE):
+        return NOT_CONFIGURED
+    return UNAVAILABLE
+
+
+def _failure_message(error_type: str, carrier_name: str):
+    errors = TrackingSyncRun.ErrorType
+    if _failure_state(error_type) == NOT_CONFIGURED:
+        return _("Tracking is not configured for this container.")
+    if error_type == errors.RATE_LIMIT:
+        return _("%(carrier)s is rate limiting us right now. Try again in a few minutes.") % {"carrier": carrier_name}
+    # Authentication failures are deliberately not spelled out to the user: the fix
+    # is an admin task, and the distinction only helps someone probing the setup.
+    return _("%(carrier)s tracking is temporarily unavailable.") % {"carrier": carrier_name}
+
+
+def _log_technical_failure(sync_run: TrackingSyncRun, *, carrier_code: str, reference: str) -> None:
+    """Keep the detail the user is not shown, where support can find it."""
+    logger.warning(
+        "Manual tracking refresh %s for %s/%s: error_type=%s detail=%s",
+        sync_run.status,
+        carrier_code,
+        reference,
+        sync_run.error_type or "none",
+        sync_run.error_message or "(none)",
+    )

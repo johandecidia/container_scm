@@ -145,9 +145,10 @@
     </section>
   </div>
 
-  {# Carrier tracking, timeline and linked purchase orders #}
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+  {# Carrier tracking (its own HTMX component) and linked purchase orders #}
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6 items-start">
     {% include "scm/containers/partials/container_tracking_panel.html" %}
+    {% include "scm/containers/partials/container_purchase_orders.html" %}
   </div>
 
   {# Location details #}
