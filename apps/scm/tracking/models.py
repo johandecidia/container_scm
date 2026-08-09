@@ -302,6 +302,46 @@ class TrackingEvent(BaseTeamModel):
         """True when the event time is a forecast, not an observation."""
         return self.event_time_type in (self.EventTimeType.ESTIMATED, self.EventTimeType.PLANNED)
 
+    @property
+    def is_unclassified(self) -> bool:
+        """True when no internal event type could be derived from what the carrier sent."""
+        return self.event_type == self.EventType.UNKNOWN
+
+    @property
+    def carrier_label(self) -> str:
+        """A readable label for the carrier's own event code, or "" when unknown.
+
+        Display only, and only for codes actually observed from carriers — it never
+        feeds status or ETA derivation.
+        """
+        from .statuses import describe_carrier_event
+
+        return describe_carrier_event(self.carrier_event_type, self.event_code)
+
+    @property
+    def carrier_reference(self) -> str:
+        """The carrier's own classification as "TYPE / CODE", e.g. "EQUIPMENT / GTIN".
+
+        Shown when an event could not be classified, so a mapping gap costs the
+        reader detail rather than all information about the event.
+        """
+        parts = [part for part in (self.carrier_event_type, self.event_code) if part]
+        return " / ".join(parts)
+
+    @property
+    def display_title(self) -> str:
+        """The headline to show for this event on any timeline.
+
+        For a classified event that is our own label. For one we could not classify,
+        it is the carrier's own wording where we have it, and a plain "Unknown event"
+        where we do not — never the bare word "Unknown", which reads as though the
+        carrier said nothing when in fact we failed to interpret it. Callers pair this
+        with ``carrier_reference`` so the raw codes stay visible either way.
+        """
+        if not self.is_unclassified:
+            return self.get_event_type_display()
+        return self.carrier_label or str(_("Unknown event"))
+
 
 class TrackingRawPayload(BaseTeamModel):
     """Saves original data from external systems for debugging and future re-parsing."""

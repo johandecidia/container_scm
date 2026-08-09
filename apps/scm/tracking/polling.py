@@ -57,6 +57,30 @@ def _min_interval(integration_config: dict | None) -> int:
     return max(configured, DEFAULT_MIN_INTERVAL_MINUTES)
 
 
+def _has_arrived(subscription: TrackingSubscription) -> bool:
+    """True when the carrier has reported this reference as arrived.
+
+    The shipment's own milestone is the cheaper and more authoritative answer where
+    there is a shipment. A container tracked on its own has no shipment to carry
+    that milestone, so its events are asked directly — otherwise a standalone
+    container would keep polling at the in-transit rate for the rest of its life.
+    """
+    from apps.scm.tracking.models import TrackingEvent
+
+    shipment = subscription.shipment
+    if shipment is not None:
+        return shipment.actual_arrival_at is not None
+
+    if subscription.container_id is None:
+        return False
+    return TrackingEvent.objects.filter(
+        team_id=subscription.team_id,
+        container_id=subscription.container_id,
+        event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        event_type__in=(TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED),
+    ).exists()
+
+
 def base_interval_minutes(subscription: TrackingSubscription) -> int:
     """Return the state-based polling interval, before failure backoff."""
     if subscription.sync_interval_minutes:
@@ -67,10 +91,7 @@ def base_interval_minutes(subscription: TrackingSubscription) -> int:
     if subscription.last_event_at is None:
         return INTERVAL_BEFORE_FIRST_EVENT
 
-    shipment = subscription.shipment
-    if shipment is not None and shipment.actual_arrival_at is not None:
-        return INTERVAL_AFTER_ARRIVAL
-    return INTERVAL_IN_TRANSIT
+    return INTERVAL_AFTER_ARRIVAL if _has_arrived(subscription) else INTERVAL_IN_TRANSIT
 
 
 def next_sync_at(

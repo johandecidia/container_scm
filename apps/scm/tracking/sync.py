@@ -397,6 +397,12 @@ def apply_sync_outcome(
     if outcome.events_seen:
         subscription.last_event_at = timezone.now()
 
+    # Move the shipment's milestones first: the polling interval depends on whether
+    # the box has arrived, and deriving that after scheduling would leave every
+    # arrival being polled at the in-transit rate for one more cycle.
+    if outcome.succeeded and outcome.events_seen:
+        _apply_events_to_shipment(subscription)
+
     integration_config = _integration_config(subscription)
     scheduled_at = next_sync_at(
         subscription,
@@ -415,9 +421,7 @@ def apply_sync_outcome(
     )
 
     if outcome.succeeded:
-        if outcome.events_seen:
-            _apply_events_to_shipment(subscription)
-        _complete_if_shipment_is_terminal(subscription)
+        _complete_if_terminal(subscription)
 
     logger.info(
         "Sync %s for subscription %s: %d created, %d updated (%s).",
@@ -454,21 +458,42 @@ def _apply_events_to_shipment(subscription: TrackingSubscription) -> None:
         logger.exception("Could not apply tracking to shipment %s.", shipment.pk)
 
 
-def _complete_if_shipment_is_terminal(subscription: TrackingSubscription) -> None:
-    """Stop watching once the shipment has reached a terminal state."""
+def _complete_if_terminal(subscription: TrackingSubscription) -> None:
+    """Stop watching once there is nothing left to learn.
+
+    The shipment's status is the terminal signal wherever there is a shipment — it is
+    the same judgement the rest of the system works from. Only a container tracked on
+    its own falls back to its own delivery event, because otherwise nothing would ever
+    stop polling it.
+    """
+    reason = _terminal_reason(subscription)
+    if not reason:
+        return
+
+    complete_tracking_subscription(subscription)
+    logger.info("Subscription %s completed — %s.", subscription.pk, reason)
+
+
+def _terminal_reason(subscription: TrackingSubscription) -> str:
+    """Return why this watch is finished, or "" while it still has work to do."""
     from apps.scm.shipments.models import Shipment
+    from apps.scm.tracking.models import TrackingEvent
 
     shipment = subscription.shipment
-    if shipment is None:
-        return
-    if shipment.status in (Shipment.Status.DELIVERED, Shipment.Status.CANCELLED):
-        complete_tracking_subscription(subscription)
-        logger.info(
-            "Subscription %s completed — shipment %s is %s.",
-            subscription.pk,
-            shipment.pk,
-            shipment.status,
-        )
+    if shipment is not None:
+        if shipment.status in (Shipment.Status.DELIVERED, Shipment.Status.CANCELLED):
+            return f"shipment {shipment.pk} is {shipment.status}"
+        return ""
+
+    if subscription.container_id is None:
+        return ""
+    delivered = TrackingEvent.objects.filter(
+        team_id=subscription.team_id,
+        container_id=subscription.container_id,
+        event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        event_type=TrackingEvent.EventType.DELIVERED,
+    ).exists()
+    return "the carrier reported the container delivered" if delivered else ""
 
 
 def store_error_payload(

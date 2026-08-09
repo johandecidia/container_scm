@@ -8,6 +8,11 @@ tracking events, so there is one source of truth for each and nothing to keep in
 sync. Container keeps what is genuinely its own: ISO identity, equipment type,
 business status and condition.
 
+**A container without a shipment is still tracked.** Status and ETA used to come
+only from the shipment, so a container tracked on its own showed neither, however
+much the carrier had told us. Both now fall back to the container's own events —
+derived here, not stored, so there is still one source of truth for each.
+
 **Three different statuses, kept apart.** The container's business status
 (available, reserved, sold), the shipment's transport status (in transit, arrived)
 and the tracking subscription's status (tracking, no data, error) answer different
@@ -51,6 +56,8 @@ class ContainerWorkspace:
     # Tracking
     latest_tracking_event: object = None
     latest_actual_event: object = None
+    latest_meaningful_actual_event: object = None
+    tracking_eta_event: object = None
     position: ContainerPosition | None = None
     timeline: list = field(default_factory=list)
     recent_sync_runs: list = field(default_factory=list)
@@ -112,22 +119,45 @@ class ContainerWorkspace:
         return shipment.get_status_display() if shipment else ""
 
     @property
+    def tracking_current_status(self) -> str:
+        """What the carrier last observed happening to this container.
+
+        Kept separate from the shipment's transport status and from the container's
+        own business status: this one answers "where is the box in its journey",
+        which is a question only the carrier's events can answer.
+        """
+        event = self.latest_meaningful_actual_event
+        return event.get_event_type_display() if event else ""
+
+    @property
     def current_status(self) -> str:
         """Where the box is in its journey, in one line.
 
-        The shipment's transport status when there is a shipment, otherwise the last
-        thing the carrier actually reported. Nothing new is stored for this.
+        Tracking leads: the carrier's last observed event is the most specific and
+        most current answer there is. The shipment's transport status stands in when
+        nothing has been tracked — it is derived from the same events plus whatever
+        was entered by hand, so it is a summary, not a contradiction.
         """
-        if self.transport_status:
-            return self.transport_status
-        event = self.latest_actual_event or self.latest_tracking_event
-        return event.get_event_type_display() if event else ""
+        return self.tracking_current_status or self.transport_status
 
     @property
     def last_refreshed_at(self):
         """When the carrier was last asked about this container."""
         subscription = self.active_subscription
         return subscription.last_synced_at if subscription else None
+
+    @property
+    def next_check_at(self):
+        """When the scheduler will next ask the carrier, or None.
+
+        Only meaningful while the watch is live: a completed or paused subscription
+        may still carry an old ``next_sync_at`` that nothing will act on, and showing
+        it would promise an update that is never coming.
+        """
+        subscription = self.active_subscription
+        if subscription is None or not self.is_tracking_active:
+            return None
+        return subscription.next_sync_at
 
     @property
     def is_tracking_active(self) -> bool:
@@ -156,19 +186,69 @@ class ContainerWorkspace:
         return subscription.get_tracking_status_display() if subscription else ""
 
     @property
+    def carriage_event(self):
+        """The most recent event that names a vessel, or None.
+
+        Not simply the latest event: the last thing to happen to a box is often a
+        truck movement, which names no vessel. Falling back to the most recent one
+        that does keeps the voyage on screen instead of blanking it.
+        """
+        for event in self.timeline:
+            if event.vessel_name:
+                return event
+        return None
+
+    @property
     def vessel_name(self) -> str:
-        event = self.latest_actual_event or self.latest_tracking_event
+        event = self.carriage_event
         return event.vessel_name if event else ""
 
     @property
     def voyage_number(self) -> str:
-        event = self.latest_actual_event or self.latest_tracking_event
+        event = self.carriage_event
         return event.voyage_number if event else ""
 
     @property
+    def tracking_eta_at(self):
+        """The carrier's arrival forecast for this container, to the hour.
+
+        Full precision on purpose: a slip from 06:00 to 22:00 is a working day lost,
+        and rounding it to a date would hide it.
+        """
+        event = self.tracking_eta_event
+        return event.event_datetime if event else None
+
+    @property
+    def tracking_eta(self):
+        """The carrier's arrival forecast for this container, as a date."""
+        from django.utils import timezone
+
+        eta_at = self.tracking_eta_at
+        if eta_at is None:
+            return None
+        return timezone.localtime(eta_at).date() if timezone.is_aware(eta_at) else eta_at.date()
+
+    @property
     def current_eta(self):
+        """When the container is expected to arrive.
+
+        The shipment's ETA when there is one — it is the planned date the business
+        works to, and tracking already feeds it through ``apply_tracking_to_shipment``.
+        A container tracked on its own has no shipment to carry that, so its own
+        forecast events answer instead of showing nothing.
+        """
         shipment = self.active_shipment
-        return shipment.eta if shipment else None
+        if shipment is not None and shipment.eta:
+            return shipment.eta
+        return self.tracking_eta
+
+    @property
+    def eta_source(self) -> str:
+        """Which of the two ETAs is being shown: "shipment", "tracking" or ""."""
+        shipment = self.active_shipment
+        if shipment is not None and shipment.eta:
+            return "shipment"
+        return "tracking" if self.tracking_eta else ""
 
     @property
     def original_eta(self):
@@ -232,6 +312,7 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
     from apps.scm.supplier_deliveries.models import SupplierDeliveryLine
     from apps.scm.tracking.models import TrackingEvent, TrackingSubscription, TrackingSyncRun
     from apps.scm.tracking.positions import get_latest_container_position
+    from apps.scm.tracking.selectors import get_container_tracking_eta_event, get_latest_meaningful_actual_event
 
     from .models import ContainerMovement
 
@@ -290,6 +371,8 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
         supplier_delivery_lines=delivery_lines,
         latest_tracking_event=latest_event,
         latest_actual_event=latest_actual_event,
+        latest_meaningful_actual_event=get_latest_meaningful_actual_event(team, container),
+        tracking_eta_event=get_container_tracking_eta_event(team, container),
         position=get_latest_container_position(team, container),
         timeline=timeline,
         recent_sync_runs=recent_sync_runs,

@@ -119,8 +119,8 @@ def get_merged_shipment_timeline(team: Team, shipment: Shipment) -> list[Shipmen
         items.append(
             ShipmentTimelineItem(
                 occurred_at=event.event_datetime,
-                title=event.get_event_type_display(),
-                description=event.description or event.status,
+                title=event.display_title,
+                description=event.description or event.status or event.carrier_reference,
                 source="tracking",
                 event_type=event.event_type,
                 location=location,

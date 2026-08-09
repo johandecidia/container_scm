@@ -68,7 +68,13 @@ services:
       args:
         MY_UID: ${MY_UID:-1000}
         MY_GID: ${MY_GID:-1000}
-    command: celery -A container_scm worker -l INFO --beat --pool=solo
+    # Beat runs the DatabaseScheduler, so the schedule lives in the database rather
+    # than in settings. Bootstrapping it here — in the container that owns beat —
+    # means starting the stack is enough for scheduled work to actually run, instead
+    # of depending on someone having remembered a one-off management command.
+    command: >
+      sh -c "python manage.py bootstrap_celery_tasks &&
+             celery -A container_scm worker -l INFO --beat --pool=solo"
     volumes:
       - .:/code
     env_file:

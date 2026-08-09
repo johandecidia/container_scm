@@ -72,9 +72,17 @@ def classify_position(event: TrackingEvent) -> str:
     """Return the PositionType for an event, without upgrading its quality.
 
     An estimated event describes a forecast, so its place is estimated no matter how
-    precise the coordinates look. Coordinates on a vessel movement locate the vessel;
-    coordinates elsewhere locate the container. Without coordinates, the best we have
-    is the terminal or port the event happened at.
+    precise the coordinates look.
+
+    Coordinates on a vessel movement locate the vessel, not the box once discharged.
+
+    Coordinates that arrive alongside a named terminal or UN/LOCODE are that place's
+    coordinates — DCSA carries them inside the event's location object. They read as
+    a precise fix and are nothing of the kind: the container passed through that
+    terminal, which is a facility position however many decimals it has.
+
+    Only coordinates with no place attached to them are treated as a fix of the
+    container itself.
     """
     if event.is_estimated:
         return PositionType.ESTIMATED
@@ -85,7 +93,11 @@ def classify_position(event: TrackingEvent) -> str:
             TrackingEvent.TransportMode.VESSEL,
             TrackingEvent.TransportMode.BARGE,
         )
-        return PositionType.VESSEL if on_a_vessel else PositionType.GPS
+        if on_a_vessel:
+            return PositionType.VESSEL
+        if event.location_unlocode or event.location_name:
+            return PositionType.FACILITY
+        return PositionType.GPS
 
     if event.location_unlocode or event.location_name:
         return PositionType.FACILITY

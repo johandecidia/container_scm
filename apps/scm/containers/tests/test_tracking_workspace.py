@@ -144,6 +144,156 @@ class WorkspaceDerivesFromRelationsTest(WorkspaceTestBase):
         self.assertEqual(workspace.active_subscription.pk, active.pk)
 
 
+class StandaloneContainerTrackingTest(WorkspaceTestBase):
+    """A container tracked without a shipment still has a status, an ETA and a vessel.
+
+    Everything here used to come only from the shipment, so a container tracked on
+    its own showed "—" no matter how much the carrier had told us about it.
+    """
+
+    team_slug = "workspace-standalone"
+
+    def test_current_status_is_the_latest_observed_event(self):
+        self._event(TrackingEvent.EventType.LOADED_ON_VESSEL, LOADED_AT)
+        self._event(TrackingEvent.EventType.GATE_IN, ARRIVED_AT)
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.tracking_current_status, "Gate In")
+        self.assertEqual(workspace.current_status, "Gate In")
+
+    def test_a_forecast_never_becomes_the_current_status(self):
+        """Otherwise a box would read as arrived days before it was."""
+        self._event(TrackingEvent.EventType.LOADED_ON_VESSEL, LOADED_AT)
+        self._event(
+            TrackingEvent.EventType.VESSEL_ARRIVED,
+            ARRIVED_AT,
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.tracking_current_status, "Loaded on Vessel")
+
+    def test_an_unclassified_event_does_not_blank_the_status(self):
+        """A gap in our mapping tables must not erase what we do know."""
+        self._event(TrackingEvent.EventType.GATE_IN, LOADED_AT)
+        self._event(TrackingEvent.EventType.UNKNOWN, ARRIVED_AT, event_code="RELS")
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.tracking_current_status, "Gate In")
+
+    def test_tracking_leads_over_the_shipments_transport_status(self):
+        self._shipment(status=Shipment.Status.IN_TRANSIT)
+        self._event(TrackingEvent.EventType.DISCHARGED, ARRIVED_AT)
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.current_status, "Discharged")
+
+    def test_the_shipment_status_stands_in_when_nothing_is_tracked(self):
+        self._shipment(status=Shipment.Status.IN_TRANSIT)
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.tracking_current_status, "")
+        self.assertEqual(workspace.current_status, "In Transit")
+
+    def test_eta_comes_from_an_estimated_arrival_event(self):
+        self._event(
+            TrackingEvent.EventType.VESSEL_ARRIVED,
+            ARRIVED_AT,
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.tracking_eta_at, ARRIVED_AT)
+        self.assertEqual(workspace.current_eta, timezone.localtime(ARRIVED_AT).date())
+        self.assertEqual(workspace.eta_source, "tracking")
+
+    def test_eta_uses_full_precision_not_just_the_date(self):
+        """A slip from 06:00 to 22:00 is a working day lost; a date would hide it."""
+        self._event(
+            TrackingEvent.EventType.ETA_UPDATED,
+            ARRIVED_AT,
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.tracking_eta_at.hour, ARRIVED_AT.hour)
+
+    def test_the_latest_forecast_wins(self):
+        later = ARRIVED_AT + timedelta(days=4)
+        self._event(
+            TrackingEvent.EventType.VESSEL_ARRIVED,
+            ARRIVED_AT,
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        self._event(
+            TrackingEvent.EventType.ETA_UPDATED,
+            later,
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.tracking_eta_at, later)
+
+    def test_an_actual_arrival_retires_the_forecast(self):
+        """Once it has arrived, an ETA is not an estimate — it is a contradiction."""
+        self._event(
+            TrackingEvent.EventType.VESSEL_ARRIVED,
+            ARRIVED_AT + timedelta(days=2),
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        self._event(TrackingEvent.EventType.VESSEL_ARRIVED, ARRIVED_AT)
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertIsNone(workspace.tracking_eta)
+        self.assertIsNone(workspace.current_eta)
+
+    def test_a_forecast_departure_is_not_an_eta(self):
+        self._event(
+            TrackingEvent.EventType.VESSEL_DEPARTED,
+            LOADED_AT,
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertIsNone(workspace.tracking_eta)
+
+    def test_the_shipments_eta_still_wins_when_there_is_one(self):
+        shipment = self._shipment()
+        shipment.eta = ARRIVED_AT.date()
+        shipment.save(update_fields=["eta"])
+        self._event(
+            TrackingEvent.EventType.ETA_UPDATED,
+            ARRIVED_AT + timedelta(days=9),
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.current_eta, ARRIVED_AT.date())
+        self.assertEqual(workspace.eta_source, "shipment")
+
+    def test_vessel_survives_a_later_truck_movement(self):
+        """The last thing to happen to a box is often a truck, which names no vessel."""
+        self._event(
+            TrackingEvent.EventType.VESSEL_ARRIVED,
+            LOADED_AT,
+            vessel_name="JEBEL ALI",
+            voyage_number="623W",
+        )
+        self._event(TrackingEvent.EventType.GATE_IN, ARRIVED_AT, transport_mode=TrackingEvent.TransportMode.TRUCK)
+        workspace = get_container_workspace(self.team, self.container)
+        self.assertEqual(workspace.vessel_name, "JEBEL ALI")
+        self.assertEqual(workspace.voyage_number, "623W")
+
+    def test_next_check_is_shown_only_for_a_live_watch(self):
+        when = timezone.now() + timedelta(hours=1)
+        subscription = self._subscription(next_sync_at=when)
+        self.assertEqual(get_container_workspace(self.team, self.container).next_check_at, when)
+
+        subscription.status = TrackingSubscription.Status.COMPLETED
+        subscription.save(update_fields=["status"])
+        self.assertIsNone(get_container_workspace(self.team, self.container).next_check_at)
+
+    def test_derived_values_stay_inside_the_team(self):
+        other_team = _team("workspace-standalone-other")
+        self._event(
+            TrackingEvent.EventType.VESSEL_ARRIVED,
+            ARRIVED_AT,
+            event_time_type=TrackingEvent.EventTimeType.ESTIMATED,
+        )
+        workspace = get_container_workspace(other_team, self.container)
+        self.assertIsNone(workspace.tracking_eta)
+        self.assertEqual(workspace.tracking_current_status, "")
+
+
 class WorkspaceTimelineAndSyncTest(WorkspaceTestBase):
     team_slug = "workspace-timeline"
 
@@ -368,7 +518,7 @@ class PositionClassificationTest(WorkspaceTestBase):
         )
         self.assertEqual(classify_position(event), PositionType.VESSEL)
 
-    def test_truck_event_with_coordinates_is_a_gps_fix(self):
+    def test_truck_event_with_bare_coordinates_is_a_gps_fix(self):
         event = self._event(
             TrackingEvent.EventType.GATE_OUT,
             ARRIVED_AT,
@@ -377,6 +527,21 @@ class PositionClassificationTest(WorkspaceTestBase):
             transport_mode=TrackingEvent.TransportMode.TRUCK,
         )
         self.assertEqual(classify_position(event), PositionType.GPS)
+
+    def test_a_terminals_coordinates_are_a_facility_not_a_fix(self):
+        """DCSA puts the terminal's coordinates on the event. Six decimals of a
+        terminal are still a terminal — the box is not sitting on that pin."""
+        event = self._event(
+            TrackingEvent.EventType.GATE_IN,
+            ARRIVED_AT,
+            location_name="Gothenburg, Oceanterminalen",
+            location_unlocode="SEGOT",
+            location_latitude=Decimal("57.696629"),
+            location_longitude=Decimal("11.858448"),
+            transport_mode=TrackingEvent.TransportMode.TRUCK,
+        )
+        self.assertEqual(classify_position(event), PositionType.FACILITY)
+        self.assertFalse(get_latest_container_position(self.team, self.container).is_realtime)
 
     def test_estimated_event_is_estimated_however_precise(self):
         event = self._event(

@@ -2,6 +2,8 @@
 # All TextChoices classes mirror the inner classes on the model but are exported
 # here so services, tasks, and tests can import from one place.
 
+from django.utils.translation import gettext_lazy as _
+
 from .models import (
     TrackingEvent,
     TrackingProvider,
@@ -144,3 +146,45 @@ def normalize_dcsa_event_type(carrier_event_type: str, event_code: str, descript
     if description:
         return normalize_event_type(description)
     return TrackingEventType.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# Carrier wording for events we deliberately do not classify
+# ---------------------------------------------------------------------------
+
+# Codes seen in live DCSA responses that have no honest counterpart in
+# TrackingEventType.
+#
+# The SHIPMENT ones are transport-document milestones rather than movements of a box,
+# and there is no physical event type they could map to without claiming something
+# happened that did not.
+#
+# PICK and DROP are movements, but DCSA defines them as generic pick-up and drop-off
+# at a facility, which is not the same as a gate movement or a delivery. Reading a
+# laden DROP as DELIVERED would be an inference, and an expensive one: DELIVERED is a
+# terminal state that stops polling, so guessing it wrong silently ends tracking.
+#
+# These labels are display-only. They never influence event_type, status derivation,
+# ETA or the polling lifecycle — they exist so an unclassified event can say what the
+# carrier reported instead of only "Unknown". A code that is not listed here still
+# shows its raw carrier type and code, so nothing the carrier sent is ever hidden.
+_CARRIER_EVENT_LABELS: dict[tuple[str, str], str] = {
+    ("SHIPMENT", "DRFT"): _("Transport document drafted"),
+    ("SHIPMENT", "ISSU"): _("Transport document issued"),
+    ("SHIPMENT", "PENA"): _("Pending approval"),
+    ("SHIPMENT", "RELS"): _("Released by carrier"),
+    ("EQUIPMENT", "PICK"): _("Picked up"),
+    ("EQUIPMENT", "DROP"): _("Dropped off"),
+}
+
+
+def describe_carrier_event(carrier_event_type: str, event_code: str) -> str:
+    """Return a readable label for a carrier event code, or "" when there is none.
+
+    Only codes actually observed in carrier responses are listed; an unrecognised
+    code returns "" rather than a guess, and the caller falls back to showing the
+    raw carrier type and code.
+    """
+    key = ((carrier_event_type or "").upper().strip(), (event_code or "").upper().strip())
+    label = _CARRIER_EVENT_LABELS.get(key)
+    return str(label) if label else ""

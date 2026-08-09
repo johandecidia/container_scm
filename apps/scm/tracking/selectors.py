@@ -66,6 +66,78 @@ def get_latest_tracking_event_for_shipment(team: Team, shipment) -> TrackingEven
     )
 
 
+# ---------------------------------------------------------------------------
+# Container-level derivation
+#
+# A container that is tracked without being on a shipment still has a status and an
+# arrival forecast — they are just not on any row of any table. Both are derived
+# here, from the container's own events, so nothing has to be stored twice and a
+# standalone tracked container is not a second-class citizen in the UI.
+# ---------------------------------------------------------------------------
+
+# Estimated events that forecast an arrival. A forecast departure is not an ETA.
+_ETA_EVENT_TYPES = (TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.ETA_UPDATED)
+
+
+def get_latest_meaningful_actual_event(team: Team, container) -> TrackingEvent | None:
+    """Return the container's most recent classified, observed event.
+
+    Three filters, each load-bearing:
+
+    *actual* — a forecast says where the carrier expects the box to be, which is not
+    where it is. A status derived from an estimate would report arrival before it
+    happened.
+
+    *classified* — an event we could not map has no status to offer; skipping it lets
+    the last event we do understand stand, instead of blanking the status.
+
+    *most recent* — not the furthest point in a nominal progression. Carriers reuse
+    codes across a journey (a box is gated in on export and again on empty return),
+    so ranking codes would report an earlier movement as the current state.
+    """
+    return (
+        TrackingEvent.objects.filter(
+            team=team,
+            container=container,
+            event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        )
+        .exclude(event_type=TrackingEvent.EventType.UNKNOWN)
+        .exclude(event_datetime__isnull=True)
+        .select_related("provider")
+        .order_by("-event_datetime", "-created_at")
+        .first()
+    )
+
+
+def get_container_tracking_eta_event(team: Team, container) -> TrackingEvent | None:
+    """Return the carrier's current arrival forecast for a container, or None.
+
+    The latest ESTIMATED or PLANNED arrival event — but only while it is still a
+    forecast. Once the carrier reports an *actual* arrival at or after it, the
+    forecast has been answered and showing it as an ETA would contradict what
+    happened, which is the same rule the shipment ETA already follows.
+    """
+    events = TrackingEvent.objects.filter(team=team, container=container).exclude(event_datetime__isnull=True)
+
+    forecast = (
+        events.filter(
+            event_time_type__in=[TrackingEvent.EventTimeType.ESTIMATED, TrackingEvent.EventTimeType.PLANNED],
+            event_type__in=_ETA_EVENT_TYPES,
+        )
+        .select_related("provider")
+        .order_by("-event_datetime", "-created_at")
+        .first()
+    )
+    if forecast is None:
+        return None
+
+    has_arrived = events.filter(
+        event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        event_type__in=(TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED),
+    ).exists()
+    return None if has_arrived else forecast
+
+
 # A subscription left in SYNCING for longer than this is assumed to belong to a
 # worker that died; the sync lock — not this status — prevents double runs.
 STALE_SYNCING_MINUTES = 60

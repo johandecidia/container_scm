@@ -1,0 +1,255 @@
+{
+  "events": [
+    {
+      "eventID": "00000000-0000-4000-8000-000000000001D1",
+      "eventType": "TRANSPORT",
+      "references": [
+        {
+          "referenceType": "EQ",
+          "referenceValue": "TRDU9258963"
+        }
+      ],
+      "eventDateTime": "2026-06-02T22:30:00+08:00",
+      "transportCall": {
+        "vessel": {
+          "vesselFlag": "LR",
+          "vesselName": "JEBEL ALI",
+          "vesselIMONumber": "9525936",
+          "vesselCallSignNumber": "5LLI4"
+        },
+        "location": {
+          "latitude": "30.882240",
+          "longitude": "121.874470",
+          "locationName": "YANGSHAN SGH GUANDONG TERMINAL"
+        },
+        "facilityCode": "SGICT",
+        "otherFacility": "YANGSHAN SGH GUANDONG TERMINAL No.1, Tonghui Rd. Luchao Town, Nanhu Shanghai China 201308",
+        "UNLocationCode": "CNSHA",
+        "modeOfTransport": "VESSEL",
+        "facilityTypeCode": "POTE",
+        "exportVoyageNumber": "623W",
+        "carrierVoyageNumber": "623W",
+        "facilityCodeListProvider": "SMDG",
+        "transportCallSequenceNumber": 1
+      },
+      "documentReferences": [
+        {
+          "documentReferenceType": "BKG",
+          "documentReferenceValue": "BKG0000001"
+        },
+        {
+          "documentReferenceType": "TRD",
+          "documentReferenceValue": "BKG0000001"
+        },
+        {
+          "documentReferenceType": "TRD",
+          "documentReferenceValue": "TRD0000002"
+        }
+      ],
+      "eventClassifierCode": "EST",
+      "eventCreatedDateTime": "2026-08-02T00:00:00Z",
+      "transportEventTypeCode": "DEPA"
+    },
+    {
+      "eventID": "00000000-0000-4000-8000-000000000002A1",
+      "eventType": "TRANSPORT",
+      "references": [
+        {
+          "referenceType": "EQ",
+          "referenceValue": "TRDU9258963"
+        }
+      ],
+      "eventDateTime": "2026-07-16T20:27:00+02:00",
+      "transportCall": {
+        "vessel": {
+          "vesselFlag": "LR",
+          "vesselName": "JEBEL ALI",
+          "vesselIMONumber": "9525936",
+          "vesselCallSignNumber": "5LLI4"
+        },
+        "location": {
+          "latitude": "57.697938",
+          "longitude": "11.856845",
+          "locationName": "APM Terminals Gothenburg AB"
+        },
+        "facilityCode": "CT1",
+        "otherFacility": "APM Terminals Gothenburg AB 4 INDISKA OCEANEN Gothenburg Sweden 418 34",
+        "UNLocationCode": "SEGOT",
+        "modeOfTransport": "VESSEL",
+        "facilityTypeCode": "POTE",
+        "exportVoyageNumber": "623W",
+        "carrierVoyageNumber": "623W",
+        "facilityCodeListProvider": "SMDG",
+        "transportCallSequenceNumber": 1
+      },
+      "documentReferences": [
+        {
+          "documentReferenceType": "BKG",
+          "documentReferenceValue": "BKG0000001"
+        },
+        {
+          "documentReferenceType": "TRD",
+          "documentReferenceValue": "BKG0000001"
+        },
+        {
+          "documentReferenceType": "TRD",
+          "documentReferenceValue": "TRD0000002"
+        }
+      ],
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-08-02T00:00:00Z",
+      "transportEventTypeCode": "ARRI"
+    },
+    {
+      "eventID": "10000000001",
+      "eventType": "SHIPMENT",
+      "documentID": "TRD0000002",
+      "eventDateTime": "2026-05-29T00:59:26Z",
+      "documentTypeCode": "SHI",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-05-29T00:59:26Z",
+      "shipmentEventTypeCode": "RECE"
+    },
+    {
+      "eventID": "10000000002",
+      "eventType": "SHIPMENT",
+      "documentID": "TRD0000002",
+      "eventDateTime": "2026-05-29T00:59:32Z",
+      "documentTypeCode": "TRD",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-05-29T00:59:32Z",
+      "shipmentEventTypeCode": "DRFT"
+    },
+    {
+      "eventID": "10000000003",
+      "eventType": "SHIPMENT",
+      "documentID": "TRD0000002",
+      "eventDateTime": "2026-06-08T03:24:28Z",
+      "documentTypeCode": "TRD",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-06-08T03:24:28Z",
+      "shipmentEventTypeCode": "ISSU"
+    },
+    {
+      "eventID": "10000000004",
+      "eventType": "SHIPMENT",
+      "documentID": "TRD0000002",
+      "eventDateTime": "2026-07-16T00:04:42Z",
+      "documentTypeCode": "SRM",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-07-16T00:04:42Z",
+      "shipmentEventTypeCode": "PENA"
+    },
+    {
+      "eventID": "10000000005",
+      "eventType": "SHIPMENT",
+      "documentID": "TRD0000002",
+      "eventDateTime": "2026-07-16T13:05:40Z",
+      "documentTypeCode": "SRM",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-07-16T13:05:40Z",
+      "shipmentEventTypeCode": "RELS"
+    },
+    {
+      "eventID": "10000000006",
+      "eventType": "EQUIPMENT",
+      "eventDateTime": "2026-05-28T09:30:00+08:00",
+      "transportCall": {
+        "location": {
+          "latitude": "31.241212",
+          "longitude": "121.669736",
+          "locationName": "Chuangyuan 6th Depot"
+        },
+        "otherFacility": "Chuangyuan 6th Depot PuDong, Shanghai, China. No. 2100 Hua Dong road, Shanghai China 201208",
+        "UNLocationCode": "CNSHA",
+        "modeOfTransport": "TRUCK",
+        "facilityTypeCode": "DEPO",
+        "transportCallSequenceNumber": 0
+      },
+      "ISOEquipmentCode": "22G1",
+      "documentReferences": [
+        {
+          "documentReferenceType": "BKG",
+          "documentReferenceValue": "BKG0000001"
+        },
+        {
+          "documentReferenceType": "TRD",
+          "documentReferenceValue": "TRD0000002"
+        }
+      ],
+      "emptyIndicatorCode": "EMPTY",
+      "equipmentReference": "TRDU9258963",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-06-01T07:53:47Z",
+      "equipmentEventTypeCode": "GTOT"
+    },
+    {
+      "eventID": "10000000007",
+      "eventType": "EQUIPMENT",
+      "eventDateTime": "2026-05-29T17:38:00+08:00",
+      "transportCall": {
+        "location": {
+          "latitude": "30.882240",
+          "longitude": "121.874470",
+          "locationName": "YANGSHAN SGH GUANDONG TERMINAL"
+        },
+        "facilityCode": "SGICT",
+        "otherFacility": "YANGSHAN SGH GUANDONG TERMINAL No.1, Tonghui Rd. Luchao Town, Nanhu Shanghai China 201308",
+        "UNLocationCode": "CNSHA",
+        "modeOfTransport": "TRUCK",
+        "facilityTypeCode": "POTE",
+        "facilityCodeListProvider": "SMDG",
+        "transportCallSequenceNumber": 1
+      },
+      "ISOEquipmentCode": "22G1",
+      "documentReferences": [
+        {
+          "documentReferenceType": "BKG",
+          "documentReferenceValue": "BKG0000001"
+        },
+        {
+          "documentReferenceType": "TRD",
+          "documentReferenceValue": "TRD0000002"
+        }
+      ],
+      "emptyIndicatorCode": "LADEN",
+      "equipmentReference": "TRDU9258963",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-06-01T07:53:47Z",
+      "equipmentEventTypeCode": "GTIN"
+    },
+    {
+      "eventID": "00000000-0000-4000-8000-000000000003",
+      "eventType": "EQUIPMENT",
+      "eventDateTime": "2026-07-24T19:15:00+02:00",
+      "transportCall": {
+        "location": {
+          "latitude": "57.696629",
+          "longitude": "11.858448",
+          "locationName": "Gothenburg, Oceanterminalen"
+        },
+        "otherFacility": "Gothenburg, Oceanterminalen Indiska Oceanen 4 Gothenburg Sweden 418 34",
+        "UNLocationCode": "SEGOT",
+        "modeOfTransport": "TRUCK",
+        "facilityTypeCode": "COFS",
+        "transportCallSequenceNumber": 0
+      },
+      "ISOEquipmentCode": "22G1",
+      "documentReferences": [
+        {
+          "documentReferenceType": "BKG",
+          "documentReferenceValue": "BKG0000001"
+        },
+        {
+          "documentReferenceType": "TRD",
+          "documentReferenceValue": "TRD0000002"
+        }
+      ],
+      "emptyIndicatorCode": "EMPTY",
+      "equipmentReference": "TRDU9258963",
+      "eventClassifierCode": "ACT",
+      "eventCreatedDateTime": "2026-08-02T11:46:19Z",
+      "equipmentEventTypeCode": "GTIN"
+    }
+  ]
+}

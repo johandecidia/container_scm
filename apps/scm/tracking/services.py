@@ -46,9 +46,16 @@ def resume_tracking_subscription(subscription: TrackingSubscription) -> Tracking
 
 
 def complete_tracking_subscription(subscription: TrackingSubscription) -> TrackingSubscription:
-    """Mark a tracking subscription as completed."""
+    """Mark a tracking subscription as completed and stop scheduling it.
+
+    Clearing ``next_sync_at`` is part of completing, not a separate step: the
+    dispatcher reads a null next_sync_at as "due now", so a completed subscription
+    that kept a stale timestamp would become pollable again the moment anything
+    reopened its status.
+    """
     subscription.status = TrackingSubscription.Status.COMPLETED
-    subscription.save(update_fields=["status", "updated_at"])
+    subscription.next_sync_at = None
+    subscription.save(update_fields=["status", "next_sync_at", "updated_at"])
     return subscription
 
 
