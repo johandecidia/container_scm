@@ -194,7 +194,7 @@ def _run_sync(subscription: TrackingSubscription) -> TrackingSyncRun:
             error_message=f"{type(exc).__name__}: {exc}",
         )
 
-    _apply_outcome(subscription, sync_run, outcome)
+    apply_sync_outcome(subscription, sync_run, outcome)
     return sync_run
 
 
@@ -276,10 +276,19 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
     mark_raw_payload_parsed(raw_payload_record, success=True)
 
     # 6. Persist normalised events.
+    return _persist_events(subscription, normalised_events, raw_payload_record)
+
+
+def _persist_events(
+    subscription: TrackingSubscription,
+    events: list,
+    raw_payload_record: TrackingRawPayload,
+) -> SyncOutcome:
+    """Write a parsed batch of events for a subscription and report what happened."""
     result = persist_normalised_events(
         team=subscription.team,
         provider=subscription.provider,
-        events=normalised_events,
+        events=events,
         subscription=subscription,
         shipment=subscription.shipment,
         container=subscription.container,
@@ -294,6 +303,30 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
         raw_payloads_created=1,
         error_message=(f"{result['failed']} event(s) could not be stored." if result["failed"] else ""),
     )
+
+
+def store_verified_carrier_result(
+    subscription: TrackingSubscription,
+    *,
+    raw_payload: dict,
+    events: list,
+) -> SyncOutcome:
+    """Persist a carrier response that was already fetched and parsed elsewhere.
+
+    A manual refresh of an untracked container asks the carrier *before* there is a
+    subscription to attach anything to — that is the point: a candidate carrier only
+    becomes this container's tracking source once it has answered with data. By the
+    time the subscription exists the response is already in hand, so this covers
+    steps 4–6 of :func:`_fetch_normalise_and_store` for it, through the same writes.
+    """
+    raw_payload_record = store_raw_payload(
+        team=subscription.team,
+        provider=subscription.provider,
+        payload=raw_payload if isinstance(raw_payload, dict) else {"payload": raw_payload},
+        subscription=subscription,
+        parsed_successfully=True,
+    )
+    return _persist_events(subscription, events, raw_payload_record)
 
 
 def _outcome_for_carrier_error(exc: CarrierError) -> SyncOutcome:
@@ -336,12 +369,17 @@ def _tracking_status_for(subscription: TrackingSubscription, outcome: SyncOutcom
     return statuses.NO_DATA
 
 
-def _apply_outcome(
+def apply_sync_outcome(
     subscription: TrackingSubscription,
     sync_run: TrackingSyncRun,
     outcome: SyncOutcome,
 ) -> None:
-    """Close the sync run and move the subscription to its new state."""
+    """Close the sync run and move the subscription to its new state.
+
+    Public because the manual refresh finishes a run it started itself, once a probe
+    has proved the carrier has data — the state transition must be the same one a
+    scheduled sync makes.
+    """
     finish_sync_run(
         sync_run,
         status=outcome.status,

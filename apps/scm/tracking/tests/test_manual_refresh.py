@@ -30,7 +30,7 @@ from apps.scm.tracking.manual_refresh import (
     refresh_container_tracking,
     resolve_carrier_code_for_container,
 )
-from apps.scm.tracking.models import TrackingEvent, TrackingRawPayload, TrackingSubscription
+from apps.scm.tracking.models import TrackingEvent, TrackingRawPayload, TrackingSubscription, TrackingSyncRun
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
 from apps.users.models import CustomUser
@@ -360,6 +360,208 @@ class RefreshContainerTrackingTest(TestCase):
 
         self.assertLessEqual(seen["config"].timeout_seconds, INTERACTIVE_TIMEOUT_SECONDS)
         self.assertLessEqual(seen["config"].max_retries, INTERACTIVE_MAX_RETRIES)
+
+
+@override_settings(CACHES=_LOCMEM)
+class SubscriptionFollowsVerifiedDataTest(TestCase):
+    """A carrier becomes a container's tracking source by answering, not by being asked.
+
+    The distinction these tests defend: resolving Maersk as the carrier to *try* is a
+    transient decision inside one request, while a TrackingSubscription is a lasting
+    claim that Maersk tracks this box. Only carrier data may turn one into the other —
+    otherwise a container is silently locked to the first carrier anyone probed, and
+    Hapag-Lloyd or MSC never get asked.
+    """
+
+    def setUp(self):
+        self.team = Team.objects.create(name="verified-team", slug="verified-team")
+        self.container = _container(self.team)
+        self.integration = _maersk_integration(self.team)
+
+    def _refresh(self, session, *, container=None, team=None):
+        client = MaerskClient(self.integration, session=session)
+        with mock.patch(
+            "apps.scm.integrations.carriers.factory.build_carrier_client",
+            return_value=client,
+        ):
+            return refresh_container_tracking(team=team or self.team, container=container or self.container)
+
+    def _subscriptions(self):
+        return TrackingSubscription.objects.filter(team=self.team, container=self.container)
+
+    # -- Nothing tracks the container yet ---------------------------------
+
+    def test_data_found_creates_the_subscription_and_the_events(self):
+        result = self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]))
+
+        self.assertEqual(result.level, SUCCESS)
+        self.assertTrue(result.tracked)
+        subscription = self._subscriptions().get()
+        self.assertEqual(subscription.provider.code, "maersk")
+        self.assertEqual(subscription.status, TrackingSubscription.Status.ACTIVE)
+        self.assertEqual(subscription.tracking_status, TrackingSubscription.TrackingStatus.TRACKING)
+        self.assertEqual(TrackingEvent.objects.filter(team=self.team, container=self.container).count(), 2)
+
+    def test_a_carrier_with_no_data_is_not_assigned(self):
+        result = self._refresh(FakeSession([FakeResponse(404)]))
+
+        self.assertEqual(result.state, NO_DATA)
+        self.assertFalse(result.tracked)
+        self.assertFalse(self._subscriptions().exists())
+        self.assertEqual(TrackingEvent.objects.filter(team=self.team).count(), 0)
+
+    def test_an_empty_but_successful_response_is_not_data(self):
+        """HTTP 200 is not the test — a normalised event is."""
+        result = self._refresh(FakeSession([FakeResponse(200, {"events": []})]))
+
+        self.assertEqual(result.state, NO_DATA)
+        self.assertFalse(self._subscriptions().exists())
+
+    def test_an_authentication_failure_does_not_assign_the_carrier(self):
+        result = self._refresh(FakeSession([FakeResponse(401), FakeResponse(401)]))
+
+        self.assertEqual(result.state, UNAVAILABLE)
+        self.assertFalse(result.tracked)
+        self.assertFalse(self._subscriptions().exists())
+
+    def test_a_timeout_does_not_assign_the_carrier(self):
+        result = self._refresh(FakeSession(error=requests.Timeout("timed out")))
+
+        self.assertEqual(result.state, UNAVAILABLE)
+        self.assertFalse(self._subscriptions().exists())
+
+    def test_a_server_error_does_not_assign_the_carrier(self):
+        result = self._refresh(FakeSession([FakeResponse(500), FakeResponse(500)]))
+
+        self.assertEqual(result.state, UNAVAILABLE)
+        self.assertFalse(self._subscriptions().exists())
+
+    def test_an_unverified_probe_leaves_no_sync_run_to_explain_later(self):
+        """A sync run is a subscription's history; a probe has no subscription."""
+        self._refresh(FakeSession([FakeResponse(404)]))
+        self.assertEqual(TrackingSyncRun.objects.filter(team=self.team).count(), 0)
+
+    def test_an_unverified_probe_is_still_recorded_as_a_request(self):
+        """The call itself is not lost: request history keeps it, tracking does not."""
+        from apps.scm.integrations.models import IntegrationRequestLog
+
+        self._refresh(FakeSession([FakeResponse(404)]))
+        log = IntegrationRequestLog.objects.filter(team=self.team, provider_code="maersk").latest("created_at")
+        self.assertEqual(log.status_code, 404)
+
+    def test_a_verified_refresh_records_a_sync_run(self):
+        self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]))
+        sync_run = TrackingSyncRun.objects.get(team=self.team)
+        self.assertEqual(sync_run.status, TrackingSyncRun.Status.SUCCESS)
+        self.assertEqual(sync_run.events_created, 2)
+
+    def test_the_raw_payload_is_kept_for_a_verified_result(self):
+        self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]))
+        stored = TrackingRawPayload.objects.get(team=self.team)
+        self.assertEqual(stored.payload_json, PAYLOAD)
+        self.assertTrue(stored.parsed_successfully)
+        self.assertEqual(stored.subscription, self._subscriptions().get())
+
+    # -- Another carrier must stay reachable -------------------------------
+
+    def test_a_carrier_that_had_nothing_can_be_replaced_by_one_that_does(self):
+        """Maersk drawing a blank must not stop Hapag-Lloyd from being tried and winning."""
+        from apps.scm.containers.models import PlannedContainer
+
+        self._refresh(FakeSession([FakeResponse(404)]))
+        self.assertFalse(self._subscriptions().exists())
+
+        PlannedContainer.objects.create(
+            team=self.team,
+            container_number=self.container.container_id,
+            carrier="hapag_lloyd",
+        )
+        Integration.objects.filter(pk=self.integration.pk).update(provider_code="hapag_lloyd")
+        self.integration.refresh_from_db()
+        self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]))
+
+        self.assertEqual(self._subscriptions().get().provider.code, "hapag_lloyd")
+
+    # -- Once verified, a watch survives a bad day -------------------------
+
+    def _track(self):
+        """Establish a real subscription the way the product does: with carrier data."""
+        self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]))
+        return self._subscriptions().get()
+
+    def test_an_established_subscription_survives_a_later_empty_answer(self):
+        subscription = self._track()
+        result = self._refresh(FakeSession([FakeResponse(404)]))
+
+        self.assertEqual(result.state, NO_DATA)
+        self.assertTrue(result.tracked)
+        self.assertEqual(self._subscriptions().count(), 1)
+        subscription.refresh_from_db()
+        self.assertEqual(subscription.status, TrackingSubscription.Status.ACTIVE)
+
+    def test_an_established_subscription_survives_a_temporary_api_error(self):
+        self._track()
+        result = self._refresh(FakeSession([FakeResponse(500), FakeResponse(500)]))
+
+        self.assertEqual(result.state, UNAVAILABLE)
+        self.assertEqual(self._subscriptions().count(), 1)
+
+    def test_an_established_subscription_keeps_its_events_through_an_empty_answer(self):
+        self._track()
+        self._refresh(FakeSession([FakeResponse(404)]))
+        self.assertEqual(TrackingEvent.objects.filter(team=self.team, container=self.container).count(), 2)
+
+    def test_a_second_successful_refresh_does_not_add_a_second_subscription(self):
+        self._track()
+        self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]))
+        self.assertEqual(self._subscriptions().count(), 1)
+
+    # -- The shipment's carrier is nobody else's business ------------------
+
+    def test_a_shipment_carrier_is_untouched_by_an_empty_answer(self):
+        shipment = Shipment.objects.create(team=self.team, shipment_number="SHP-KEEP", carrier="Maersk")
+        ShipmentContainer.objects.create(shipment=shipment, container=self.container)
+
+        self._refresh(FakeSession([FakeResponse(404)]))
+
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.carrier, "Maersk")
+        self.assertFalse(self._subscriptions().exists())
+
+    def test_a_shipment_carrier_is_untouched_by_a_carrier_error(self):
+        shipment = Shipment.objects.create(team=self.team, shipment_number="SHP-KEEP-2", carrier="Maersk")
+        ShipmentContainer.objects.create(shipment=shipment, container=self.container)
+
+        self._refresh(FakeSession([FakeResponse(500), FakeResponse(500)]))
+
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.carrier, "Maersk")
+        self.assertFalse(self._subscriptions().exists())
+
+    # -- Tenancy ------------------------------------------------------------
+
+    def test_a_verified_subscription_belongs_to_one_team_only(self):
+        other = Team.objects.create(name="verified-other", slug="verified-other")
+        self._track()
+        self.assertFalse(TrackingSubscription.objects.filter(team=other).exists())
+        self.assertFalse(TrackingEvent.objects.filter(team=other).exists())
+
+    def test_another_teams_subscription_does_not_make_this_container_tracked(self):
+        """A neighbour's watch on the same box must not stand in for our own probe."""
+        from apps.scm.integrations.carriers.auto_link import get_or_create_tracking_provider
+
+        other = Team.objects.create(name="verified-neighbour", slug="verified-neighbour")
+        TrackingSubscription.objects.create(
+            team=other,
+            provider=get_or_create_tracking_provider(carrier_code="maersk", carrier_name="Maersk"),
+            container=self.container,
+            tracking_reference=self.container.container_id,
+        )
+
+        self._refresh(FakeSession([FakeResponse(404)]))
+
+        self.assertFalse(self._subscriptions().exists())
+        self.assertEqual(TrackingSubscription.objects.filter(team=other).count(), 1)
 
 
 @override_settings(CACHES=_LOCMEM)

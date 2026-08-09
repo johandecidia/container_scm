@@ -1,10 +1,10 @@
 """Refreshing one container's carrier tracking on demand, from the UI.
 
 This is a thin orchestration over parts that already exist — it adds no transport,
-no parser and no second write path. All it does is answer the two questions the
+no parser and no second write path. All it does is answer the questions the
 scheduled poller never has to ask, and then hand over:
 
-Which carrier?
+Which carrier *might* know this container?
     A scheduled sync starts from a subscription, which already names its provider.
     A person pressing "Refresh tracking" starts from a container, which does not.
     :func:`resolve_carrier_code_for_container` works through the evidence in order
@@ -17,17 +17,28 @@ Which carrier?
 
 Is it worth asking?
     Without an active carrier integration for the team there is nothing to call, so
-    the refresh says so instead of creating a subscription and a sync run that can
-    only ever be SKIPPED.
+    the refresh says so instead of recording a sync run that can only be SKIPPED.
 
-Everything after that is :func:`apps.scm.tracking.sync.sync_tracking_subscription`:
-fetch, store the raw response, parse, persist idempotently, update the shipment.
-The call runs inside :func:`interactive_carrier_requests`, so a slow carrier cannot
-hold the web worker for minutes.
+Does that carrier actually track this container?
+    A candidate carrier is not a tracking source. Asking Maersk about a box does not
+    make Maersk its carrier, so an untracked container is *probed* — through
+    :func:`apps.scm.integrations.carriers.probe.probe_container_number`, the same
+    question planned-container discovery asks — and the ``TrackingSubscription`` is
+    created only once that probe comes back with at least one normalised event. No
+    data, an outage or a rejected credential all leave the container exactly as it
+    was: unassigned, free to be tried against another carrier later.
 
-What the user is told is decided here too, from the sync run's status and error
-type alone. Carrier error text can carry a response body or an echoed credential,
-so it is logged and never rendered.
+Once a container *is* tracked, a refresh is an ordinary sync cycle through
+:func:`apps.scm.tracking.sync.sync_tracking_subscription`. A later empty answer or
+carrier outage never withdraws a subscription that has already proved itself — that
+would throw away a working tracking source over a transient blip.
+
+Either way the call runs inside :func:`interactive_carrier_requests`, so a slow
+carrier cannot hold the web worker for minutes.
+
+What the user is told is decided here too, from the outcome's status and error type
+alone. Carrier error text can carry a response body or an echoed credential, so it
+is logged and never rendered.
 """
 
 from __future__ import annotations
@@ -40,7 +51,8 @@ from django.utils.translation import gettext_lazy as _
 from apps.scm.integrations.carriers.http import interactive_carrier_requests
 
 from .models import TrackingSubscription, TrackingSyncRun
-from .sync import sync_tracking_subscription
+from .services import create_sync_run
+from .sync import apply_sync_outcome, store_verified_carrier_result, sync_tracking_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +84,9 @@ class RefreshResult:
     events_created: int = 0
     events_updated: int = 0
     sync_run: TrackingSyncRun | None = None
+    # Whether the container has a verified tracking source after this refresh.
+    # ``carrier_name`` alone cannot say: it names the carrier that was *asked*.
+    tracked: bool = False
 
     @property
     def events_seen(self) -> int:
@@ -146,11 +161,36 @@ def resolve_carrier_code_for_container(team, container) -> str:
     return ""
 
 
-def get_or_create_container_subscription(*, team, container, carrier_code: str, carrier_name: str = ""):
-    """Return the container-number subscription for this container and carrier.
+def get_verified_tracking_subscription(*, team, container, carrier_code: str):
+    """Return this container's established subscription with ``carrier_code``, or None.
 
-    Matches what container discovery creates, on the same natural key, so pressing
-    Refresh on a container that discovery later finds does not produce two watches.
+    "Established" means it exists and has not been cancelled — every subscription is
+    created from carrier data, so the presence of one *is* the record that this
+    carrier tracks this container. None means the carrier is still only a candidate.
+    """
+    from apps.scm.integrations.carriers.registry import resolve_carrier_code
+
+    subscriptions = (
+        TrackingSubscription.objects.filter(team=team, container=container)
+        .exclude(status=TrackingSubscription.Status.CANCELLED)
+        .select_related("provider", "shipment")
+        .order_by("-created_at")
+    )
+    for subscription in subscriptions:
+        if subscription.provider_id and resolve_carrier_code(subscription.provider.code) == carrier_code:
+            return subscription
+    return None
+
+
+def get_or_create_container_subscription(*, team, container, carrier_code: str, carrier_name: str = ""):
+    """Start tracking this container with this carrier, or return the existing watch.
+
+    Only ever called once the carrier has returned tracking data for the container:
+    a subscription is an assertion that this carrier is a verified tracking source,
+    not a note of who we intend to ask.
+
+    Matches what container discovery creates, on the same natural key, so a container
+    that discovery later finds does not end up with two watches.
     """
     from apps.scm.integrations.carriers.auto_link import get_or_create_tracking_provider
     from apps.scm.shipments.models import ShipmentContainer
@@ -178,7 +218,7 @@ def get_or_create_container_subscription(*, team, container, carrier_code: str, 
     )
     if created:
         logger.info(
-            "Created TrackingSubscription for container %s / provider %s from a manual refresh.",
+            "Created TrackingSubscription for container %s: provider %s returned tracking data for it.",
             container.container_id,
             provider.code,
         )
@@ -189,9 +229,9 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
     """Fetch this container's tracking from its carrier now, and report the result.
 
     Runs in the caller's thread so the person who pressed the button sees the real
-    outcome rather than "queued". No carrier failure escapes as an exception — the
-    sync engine classifies every one of them — so the result is always something the
-    UI can show.
+    outcome rather than "queued". No carrier failure escapes as an exception — both
+    the sync engine and the probe classify every one of them — so the result is
+    always something the UI can show.
     """
     from apps.scm.integrations.carriers.factory import get_carrier_integration
     from apps.scm.integrations.carriers.registry import UnknownCarrierError, get_carrier_definition
@@ -228,19 +268,14 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
             % {"carrier": definition.name},
         )
 
-    subscription = get_or_create_container_subscription(
-        team=team,
-        container=container,
-        carrier_code=carrier_code,
-        carrier_name=definition.name,
-    )
+    subscription = get_verified_tracking_subscription(team=team, container=container, carrier_code=carrier_code)
     if subscription is None:
-        return RefreshResult(
-            level=ERROR,
-            state=NOT_CONFIGURED,
+        # The carrier is only a candidate so far. Ask it before assigning it.
+        return _probe_and_activate(
+            team=team,
+            container=container,
             carrier_code=carrier_code,
             carrier_name=definition.name,
-            message=_("Could not start tracking %(reference)s.") % {"reference": reference},
         )
 
     # Bound the call: someone is waiting for this response.
@@ -253,12 +288,106 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
             state=IN_PROGRESS,
             carrier_code=carrier_code,
             carrier_name=definition.name,
+            tracked=True,
             message=_("A tracking refresh for this container is already running."),
         )
-    return _describe(sync_run, carrier_name=definition.name, carrier_code=carrier_code, reference=reference)
+    return _describe(
+        sync_run,
+        carrier_name=definition.name,
+        carrier_code=carrier_code,
+        reference=reference,
+        tracked=True,
+    )
 
 
-def _describe(sync_run: TrackingSyncRun, *, carrier_name: str, carrier_code: str, reference: str) -> RefreshResult:
+def _probe_and_activate(*, team, container, carrier_code: str, carrier_name: str) -> RefreshResult:
+    """Ask a candidate carrier about a container that nothing tracks yet.
+
+    The subscription is created between the two halves of this function, and only
+    there: everything above it can leave the container unassigned, everything below
+    it runs because the carrier produced events. A carrier that has nothing, is down
+    or rejects our credentials is therefore never recorded as a tracking source, and
+    the same container can be tried against a different carrier tomorrow.
+
+    The attempt itself is not lost — the HTTP call is in IntegrationRequestLog, and
+    the outcome is logged here against the container number.
+    """
+    from apps.scm.integrations.carriers.probe import ProbeOutcome, probe_container_number
+
+    reference = container.container_id
+    common = {"carrier_code": carrier_code, "carrier_name": carrier_name}
+
+    with interactive_carrier_requests():
+        probe = probe_container_number(team=team, container_number=reference, carrier_code=carrier_code)
+
+    if probe.outcome != ProbeOutcome.FOUND:
+        _log_probe(probe, carrier_code=carrier_code, reference=reference)
+
+    if probe.outcome == ProbeOutcome.SKIPPED:
+        return RefreshResult(
+            level=WARNING,
+            state=NOT_CONFIGURED,
+            message=_("Tracking is not configured for this container."),
+            **common,
+        )
+
+    if probe.outcome == ProbeOutcome.ERROR:
+        return RefreshResult(
+            level=ERROR,
+            state=_failure_state(probe.error_kind),
+            message=_failure_message(probe.error_kind, carrier_name),
+            **common,
+        )
+
+    if not probe.found:
+        # The carrier answered and has nothing for this container — a real answer,
+        # and not one that makes it this container's carrier.
+        return RefreshResult(
+            level=INFO,
+            state=NO_DATA,
+            message=_(
+                "No tracking data found at %(carrier)s. "
+                "The carrier has not been assigned as a tracking source for this container."
+            )
+            % {"carrier": carrier_name},
+            **common,
+        )
+
+    # Verified: this carrier knows the container, so it becomes its tracking source.
+    subscription = get_or_create_container_subscription(
+        team=team,
+        container=container,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+    )
+    if subscription is None:
+        return RefreshResult(
+            level=ERROR,
+            state=NOT_CONFIGURED,
+            message=_("Could not start tracking %(reference)s.") % {"reference": reference},
+            **common,
+        )
+
+    sync_run = create_sync_run(team=team, subscription=subscription, provider=subscription.provider)
+    outcome = store_verified_carrier_result(subscription, raw_payload=probe.raw_payload, events=probe.events)
+    apply_sync_outcome(subscription, sync_run, outcome)
+    return _describe(
+        sync_run,
+        carrier_name=carrier_name,
+        carrier_code=carrier_code,
+        reference=reference,
+        tracked=True,
+    )
+
+
+def _describe(
+    sync_run: TrackingSyncRun,
+    *,
+    carrier_name: str,
+    carrier_code: str,
+    reference: str,
+    tracked: bool,
+) -> RefreshResult:
     """Turn a finished sync run into something worth reading.
 
     The wording comes from the run's status and error type only. ``error_message``
@@ -271,6 +400,7 @@ def _describe(sync_run: TrackingSyncRun, *, carrier_name: str, carrier_code: str
         "events_created": sync_run.events_created,
         "events_updated": sync_run.events_updated,
         "sync_run": sync_run,
+        "tracked": tracked,
     }
 
     if sync_run.status in (statuses.SKIPPED, statuses.FAILED):
@@ -294,11 +424,21 @@ def _describe(sync_run: TrackingSyncRun, *, carrier_name: str, carrier_code: str
 
     total = sync_run.events_created + sync_run.events_updated
     if not total:
+        if sync_run.status == statuses.PARTIAL_SUCCESS:
+            # Events arrived but none of them could be stored — not "no data".
+            return RefreshResult(
+                level=ERROR,
+                state=UNAVAILABLE,
+                message=_("%(carrier)s tracking is temporarily unavailable.") % {"carrier": carrier_name},
+                **common,
+            )
         # The carrier answered and has nothing for this reference — a real answer.
+        # An established watch survives it: a carrier that goes quiet for one call
+        # has not stopped being this container's carrier.
         return RefreshResult(
             level=INFO,
             state=NO_DATA,
-            message=_("No tracking data found for this container."),
+            message=_("No tracking data found at %(carrier)s for this container.") % {"carrier": carrier_name},
             **common,
         )
 
@@ -334,6 +474,22 @@ def _failure_message(error_type: str, carrier_name: str):
     # Authentication failures are deliberately not spelled out to the user: the fix
     # is an admin task, and the distinction only helps someone probing the setup.
     return _("%(carrier)s tracking is temporarily unavailable.") % {"carrier": carrier_name}
+
+
+def _log_probe(probe, *, carrier_code: str, reference: str) -> None:
+    """Record that a candidate carrier was asked and did not become a tracking source.
+
+    The subscription table deliberately says nothing about this — it holds carrier
+    relations, not attempts — so this line and the IntegrationRequestLog entry for
+    the call are what remain of "we checked %s at %s and got nothing".
+    """
+    logger.info(
+        "Tracking probe: %s checked against %s → %s. No subscription created. (%s)",
+        reference,
+        carrier_code,
+        probe.outcome.upper(),
+        probe.error_message or probe.error_kind or "no detail",
+    )
 
 
 def _log_technical_failure(sync_run: TrackingSyncRun, *, carrier_code: str, reference: str) -> None:

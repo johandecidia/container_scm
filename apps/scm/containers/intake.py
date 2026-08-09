@@ -12,8 +12,8 @@ what those two do not cover — normalising messy input, telling *new* from
 losing the good ones.
 
 Carrier is optional and never inferred: an ISO owner prefix says who owns the box,
-not who is moving it. When one is chosen it is recorded as a tracking subscription,
-which is where "ask this carrier about this container" already lives.
+not who is moving it. When one is chosen it is recorded as the carrier to *ask* —
+not as one that tracks the box, which only the carrier's own data can establish.
 """
 
 from __future__ import annotations
@@ -290,28 +290,29 @@ def bulk_create_containers(*, team: Team, user: CustomUser, entries: list[tuple[
 
 
 def link_container_carrier(*, team: Team, container: Container, carrier: str) -> None:
-    """Record a manually chosen carrier for a container.
+    """Record a manually chosen carrier as the one to ask about a container.
 
-    Container has no carrier column and does not need one: a tracking subscription
-    is already how the system records which carrier to ask about a box, and reusing
-    it means "Refresh tracking" on the container works straight away. An
-    unrecognised carrier is ignored rather than guessed at.
+    Container has no carrier column and does not need one. The choice is kept as a
+    planned-container entry, which already means exactly this — "this number, at
+    this carrier, not confirmed there yet" — so "Refresh tracking" on the container
+    knows who to ask, and discovery keeps looking in the background.
+
+    Deliberately *not* a TrackingSubscription: that asserts a carrier is tracking
+    the box, which only the carrier's own data can establish. Someone typing
+    "Maersk" into a form has not made Maersk answer. An unrecognised carrier is
+    ignored rather than guessed at.
     """
-    from apps.scm.integrations.carriers.registry import (
-        UnknownCarrierError,
-        get_carrier_definition,
-        resolve_carrier_code,
-    )
-    from apps.scm.tracking.manual_refresh import get_or_create_container_subscription
+    from apps.scm.integrations.carriers.registry import resolve_carrier_code
+
+    from .discovery import add_planned_container
 
     code = resolve_carrier_code(carrier)
     if not code:
         return
-    try:
-        name = get_carrier_definition(code).name
-    except UnknownCarrierError:  # pragma: no cover — resolve_carrier_code only returns registered codes
-        name = code
-    get_or_create_container_subscription(team=team, container=container, carrier_code=code, carrier_name=name)
+    planned = add_planned_container(team=team, container_number=container.container_id, carrier=code)
+    if planned.container_id != container.pk:
+        planned.container = container
+        planned.save(update_fields=["container", "updated_at"])
 
 
 def carrier_choices() -> list[tuple[str, str]]:

@@ -249,7 +249,36 @@ class RefreshResultStatesTest(TrackingPanelTestBase):
     def test_no_data_is_reported_without_alarm(self):
         integration = _maersk_integration(self.team)
         response = self._refresh(FakeSession([FakeResponse(404)]), integration=integration)
-        self.assertContains(response, "No tracking data found for this container")
+        self.assertContains(response, "No tracking data found at Maersk")
+
+    def test_a_carrier_with_no_data_is_not_shown_as_an_active_tracking_source(self):
+        """The panel may say we asked Maersk; it may not say Maersk tracks the box."""
+        integration = _maersk_integration(self.team)
+        shipment = Shipment.objects.create(team=self.team, shipment_number="SHP-P2", carrier="Maersk")
+        ShipmentContainer.objects.create(shipment=shipment, container=self.container)
+
+        response = self._refresh(FakeSession([FakeResponse(404)]), integration=integration)
+
+        self.assertContains(response, "Not tracked")
+        self.assertContains(response, "has not been assigned as a tracking source")
+        self.assertNotContains(response, "● Active")
+        self.assertFalse(TrackingSubscription.objects.filter(team=self.team, container=self.container).exists())
+
+    def test_a_shipment_carrier_is_shown_as_context_not_as_tracking(self):
+        shipment = Shipment.objects.create(team=self.team, shipment_number="SHP-P3", carrier="Maersk")
+        ShipmentContainer.objects.create(shipment=shipment, container=self.container)
+        response = self._detail()
+        self.assertContains(response, "Shipment carrier: Maersk")
+        self.assertContains(response, "No tracking data available yet")
+        self.assertContains(response, "Not tracked")
+
+    def test_a_verified_carrier_is_shown_as_active(self):
+        integration = _maersk_integration(self.team)
+        self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]), integration=integration)
+        response = self._detail()
+        self.assertContains(response, "Maersk")
+        self.assertContains(response, "● Tracking")
+        self.assertNotContains(response, "Not tracked")
 
     def test_an_api_error_is_shown_as_temporarily_unavailable(self):
         integration = _maersk_integration(self.team)

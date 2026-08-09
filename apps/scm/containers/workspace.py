@@ -74,9 +74,34 @@ class ContainerWorkspace:
     @property
     def carrier_name(self) -> str:
         """The carrier, taken from tracking if known and from the shipment otherwise."""
+        return self.tracking_carrier_name or self.shipment_carrier
+
+    @property
+    def is_tracked(self) -> bool:
+        """True when a carrier has been verified as this container's tracking source.
+
+        A subscription is only ever created from carrier data, so its existence — not
+        the shipment's carrier field, and not which carrier we happen to ask — is what
+        makes tracking real.
+        """
+        return self.active_subscription is not None
+
+    @property
+    def tracking_carrier_name(self) -> str:
+        """The carrier that actually tracks this container, or "" when none does."""
         subscription = self.active_subscription
         if subscription is not None and subscription.provider_id:
             return subscription.provider.name
+        return ""
+
+    @property
+    def shipment_carrier(self) -> str:
+        """The carrier named on the shipment: who we would ask, not who answers.
+
+        Kept apart from :attr:`tracking_carrier_name` on purpose — a shipment booked
+        with Maersk that Maersk has not published events for yet is a normal state,
+        and showing it as tracked would be a lie.
+        """
         shipment = self.active_shipment
         return shipment.carrier if shipment else ""
 

@@ -170,26 +170,33 @@ class CreateOrGetContainerTest(TestCase):
         with self.assertRaises(ValidationError):
             create_or_get_container(team=self.team, user=self.user, number=VALID_A)
 
-    def test_chosen_carrier_is_linked_as_a_tracking_subscription(self):
+    def test_chosen_carrier_is_recorded_as_the_carrier_to_ask(self):
+        from apps.scm.containers.models import PlannedContainer
+
+        container, _ = create_or_get_container(team=self.team, user=self.user, number=VALID_A, carrier="maersk")
+        planned = PlannedContainer.objects.get(team=self.team, container_number=VALID_A)
+        self.assertEqual(planned.carrier, "maersk")
+        self.assertEqual(planned.container_id, container.pk)
+
+    def test_choosing_a_carrier_does_not_make_it_a_tracking_source(self):
+        """Typing "Maersk" into a form has not made Maersk answer about this box."""
         from apps.scm.tracking.models import TrackingSubscription
 
         container, _ = create_or_get_container(team=self.team, user=self.user, number=VALID_A, carrier="maersk")
-        subscription = TrackingSubscription.objects.get(team=self.team, container=container)
-        self.assertEqual(subscription.provider.code, "maersk")
-        self.assertEqual(subscription.tracking_reference, VALID_A)
+        self.assertFalse(TrackingSubscription.objects.filter(team=self.team, container=container).exists())
 
     def test_owner_prefix_alone_never_links_a_carrier(self):
-        from apps.scm.tracking.models import TrackingSubscription
+        from apps.scm.containers.models import PlannedContainer
 
         # TRDU is an owner code, not a carrier — nothing may be inferred from it.
-        container, _ = create_or_get_container(team=self.team, user=self.user, number=VALID_A)
-        self.assertFalse(TrackingSubscription.objects.filter(team=self.team, container=container).exists())
+        create_or_get_container(team=self.team, user=self.user, number=VALID_A)
+        self.assertFalse(PlannedContainer.objects.filter(team=self.team, container_number=VALID_A).exists())
 
     def test_unknown_carrier_is_ignored_rather_than_guessed(self):
-        from apps.scm.tracking.models import TrackingSubscription
+        from apps.scm.containers.models import PlannedContainer
 
-        container, _ = create_or_get_container(team=self.team, user=self.user, number=VALID_A, carrier="not-a-carrier")
-        self.assertFalse(TrackingSubscription.objects.filter(team=self.team, container=container).exists())
+        create_or_get_container(team=self.team, user=self.user, number=VALID_A, carrier="not-a-carrier")
+        self.assertFalse(PlannedContainer.objects.filter(team=self.team, container_number=VALID_A).exists())
 
 
 class PreviewContainersTest(TestCase):
@@ -266,14 +273,14 @@ class BulkCreateContainersTest(TestCase):
         self.assertEqual(Container.objects.filter(team=self.other_team).count(), 0)
 
     def test_carrier_applies_to_every_container_in_the_list(self):
-        from apps.scm.tracking.models import TrackingSubscription
+        from apps.scm.containers.models import PlannedContainer
 
         bulk_create_containers(
             team=self.team,
             user=self.user,
             entries=entries_from_text(f"{VALID_A}\n{VALID_B}", carrier="maersk"),
         )
-        self.assertEqual(TrackingSubscription.objects.filter(team=self.team).count(), 2)
+        self.assertEqual(PlannedContainer.objects.filter(team=self.team, carrier="maersk").count(), 2)
 
 
 class EntriesFromCsvTest(TestCase):

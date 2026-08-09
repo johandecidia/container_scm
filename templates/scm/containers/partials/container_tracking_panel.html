@@ -7,6 +7,12 @@
 
   Everything shown is derived from the container's shipment, its tracking
   subscription and its tracking events. None of it is stored on Container.
+
+  The carrier we would ask and the carrier that actually tracks the box are two
+  different things and are shown as such: a subscription exists only where a carrier
+  has returned data, so "Maersk ● Active" is never shown for a carrier that was
+  merely tried. A shipment booked with Maersk that Maersk has no events for yet
+  reads as an untracked container with a shipment carrier — which is what it is.
 {% endcomment %}
 
 <div id="container-tracking-panel" class="flex flex-col gap-6">
@@ -15,17 +21,44 @@
       <div>
         <h2 class="text-lg font-semibold">{% translate "Carrier Tracking" %}</h2>
         <p class="text-sm mt-1">
-          <span class="font-medium">{{ workspace.carrier_name|default:_("No carrier assigned") }}</span>
-          {% if workspace.has_tracking_error %}
-            <span class="text-error ml-2">! {{ workspace.tracking_status|default:_("Error") }}</span>
-          {% elif workspace.is_tracking_active %}
-            <span class="text-success ml-2">● {{ workspace.tracking_status|default:_("Active") }}</span>
-          {% elif workspace.active_subscription %}
-            <span class="text-base-content/50 ml-2">○ {{ workspace.active_subscription.get_status_display }}</span>
+          {% if workspace.is_tracked %}
+            <span class="font-medium">{{ workspace.tracking_carrier_name }}</span>
+            {% if workspace.has_tracking_error %}
+              <span class="text-error ml-2">! {{ workspace.tracking_status|default:_("Error") }}</span>
+            {% elif workspace.is_tracking_active %}
+              <span class="text-success ml-2">● {{ workspace.tracking_status|default:_("Active") }}</span>
+            {% else %}
+              <span class="text-base-content/50 ml-2">○ {{ workspace.active_subscription.get_status_display }}</span>
+            {% endif %}
           {% else %}
-            <span class="text-base-content/50 ml-2">○ {% translate "Not tracked" %}</span>
+            <span class="text-base-content/50">○ {% translate "Not tracked" %}</span>
           {% endif %}
         </p>
+
+        {% comment %}
+          The shipment's carrier is context, not a tracking state: it says who we
+          would ask. Shown whenever it is not already the verified tracking carrier,
+          so "Not tracked" reads as an answer about Maersk rather than a gap in the
+          setup. What the last refresh actually returned is the banner's job.
+        {% endcomment %}
+        {% if not workspace.is_tracked %}
+          <p class="text-xs text-base-content/60 mt-1">
+            {% if workspace.shipment_carrier %}
+              {% blocktranslate trimmed with carrier=workspace.shipment_carrier %}
+                Shipment carrier: {{ carrier }}. No tracking data available yet.
+              {% endblocktranslate %}
+            {% else %}
+              {% translate "No carrier has been assigned as a tracking source." %}
+            {% endif %}
+          </p>
+        {% elif workspace.shipment_carrier and workspace.shipment_carrier != workspace.tracking_carrier_name %}
+          <p class="text-xs text-base-content/60 mt-1">
+            {% blocktranslate trimmed with carrier=workspace.shipment_carrier %}
+              Shipment carrier: {{ carrier }}
+            {% endblocktranslate %}
+          </p>
+        {% endif %}
+
         <p class="text-xs text-base-content/50 mt-0.5">
           {% if workspace.last_refreshed_at %}
             {% blocktranslate trimmed with when=workspace.last_refreshed_at|date:"d M H:i" %}
