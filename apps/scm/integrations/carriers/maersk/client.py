@@ -20,6 +20,33 @@ from apps.scm.integrations.carriers.dcsa.client import DcsaCarrierClient, resolv
 PROVIDER_CODE = "maersk"
 CARRIER_NAME = "Maersk"
 
+# The verified settings for Maersk's public Track & Trace events endpoint, which
+# answers on an API key alone — no account number, no OAuth token exchange. This is
+# configuration data, not a secret: the consumer key itself is stored encrypted
+# through the credential service and never appears here.
+#
+# Applied to a team's Integration by the ``setup_maersk_integration`` management
+# command. A team may still override any of it on its own Integration.config, e.g.
+# to point at a contracted product with a different path or auth style.
+PUBLIC_TRACK_AND_TRACE_CONFIG: dict = {
+    "base_url": "https://api.maersk.com",
+    "tracking_path": "/track-and-trace/public-events",
+    "auth_style": "api_key_header",
+    "reference_params": {
+        "container_number": "equipmentReference",
+    },
+    "api_key_header_name": "consumer-key",
+    "extra_headers": {
+        "API-Version": "1",
+        "Accept": "application/json",
+    },
+    "test_connection_reference": "TRDU9258963",
+    "request_timeout_seconds": 30,
+    "max_retries": 3,
+    "retry_backoff_seconds": 0.5,
+    "no_data_statuses": [404],
+}
+
 
 def resolve_config(config: dict, *, provider_code: str = PROVIDER_CODE):
     """Validate Maersk's live configuration, or explain exactly what is missing."""
@@ -42,5 +69,9 @@ class MaerskClient(DcsaCarrierClient):
         supports_schedules=True,
         supports_discovery=True,
         requires_customer_approval=True,
-        requires_account_number=True,
+        # The public Track & Trace events endpoint authenticates on the consumer key
+        # alone and returns data without an account number, so declaring one as
+        # required would misdescribe the integration. Contracted Maersk products that
+        # do need an account number carry it in their own Integration.config.
+        requires_account_number=False,
     )

@@ -69,7 +69,9 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 supports_schedules=True,
                 supports_booking=False,
                 requires_customer_approval=True,
-                requires_account_number=True,
+                # The public Track & Trace events endpoint works on the consumer key
+                # alone — see carriers/maersk/client.py.
+                requires_account_number=False,
             ),
             owner_prefixes=("MAEU", "MRKU", "MSKU", "MRSU"),
         ),

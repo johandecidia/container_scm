@@ -21,7 +21,12 @@ from apps.scm.integrations.carriers.exceptions import (
     CarrierTimeoutError,
     CarrierUnsupportedReferenceError,
 )
-from apps.scm.integrations.carriers.maersk.client import MaerskClient, resolve_config
+from apps.scm.integrations.carriers.factory import build_carrier_client
+from apps.scm.integrations.carriers.maersk.client import (
+    PUBLIC_TRACK_AND_TRACE_CONFIG,
+    MaerskClient,
+    resolve_config,
+)
 from apps.scm.integrations.carriers.maersk.parser import MaerskParser
 from apps.scm.integrations.credentials import set_integration_credentials
 from apps.scm.integrations.models import Integration, IntegrationCredential, IntegrationRequestLog
@@ -522,6 +527,200 @@ class MaerskParserTest(TestCase):
     def test_a_malformed_event_does_not_lose_the_others(self):
         payload = {"events": [{"eventID": "GOOD", "eventType": "EQUIPMENT"}, None]}
         self.assertEqual(len(self.parser.parse_tracking_events(payload)), 1)
+
+
+class MaerskPublicEndpointTest(TestCase):
+    """The shipped public Track & Trace config produces exactly the verified request.
+
+    These assertions pin the contract that was confirmed against the live endpoint:
+    ``GET https://api.maersk.com/track-and-trace/public-events?equipmentReference=…``
+    with ``consumer-key`` and ``API-Version: 1``. A change to any of them here is a
+    change to what we send Maersk, and should have to be justified.
+    """
+
+    def setUp(self):
+        self.team = _team("maersk-public-team")
+
+    def _client(self, session):
+        return _client(
+            self.team,
+            dict(PUBLIC_TRACK_AND_TRACE_CONFIG),
+            session=session,
+            credentials={"api_key": API_KEY},
+        )
+
+    def test_config_is_valid_and_builds_the_public_events_url(self):
+        config = resolve_config(PUBLIC_TRACK_AND_TRACE_CONFIG)
+        self.assertEqual(config.tracking_url, "https://api.maersk.com/track-and-trace/public-events")
+
+    def test_container_number_is_sent_as_equipment_reference(self):
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        self._client(session).fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(session.requests[0]["params"], {"equipmentReference": "TRDU9258963"})
+
+    def test_consumer_key_header_carries_the_api_key(self):
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        self._client(session).fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(session.requests[0]["headers"]["consumer-key"], API_KEY)
+
+    def test_api_version_header_is_sent(self):
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        self._client(session).fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(session.requests[0]["headers"]["API-Version"], "1")
+
+    def test_accept_json_header_is_sent(self):
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        self._client(session).fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(session.requests[0]["headers"]["Accept"], "application/json")
+
+    def test_configured_timeout_is_thirty_seconds(self):
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        self._client(session).fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(session.requests[0]["timeout"], 30)
+
+    def test_404_is_no_data_for_the_public_endpoint(self):
+        session = FakeSession([FakeResponse(404)])
+        with self.assertRaises(CarrierNoDataError):
+            self._client(session).fetch_tracking(container_number="TRDU9258963")
+
+    def test_401_is_an_authentication_error_and_is_not_retried_forever(self):
+        session = FakeSession([FakeResponse(401), FakeResponse(401)])
+        with self.assertRaises(CarrierAuthenticationError):
+            self._client(session).fetch_tracking(container_number="TRDU9258963")
+        self.assertLessEqual(len(session.requests), 2)
+
+    def test_403_is_an_authentication_error(self):
+        session = FakeSession([FakeResponse(403)])
+        with self.assertRaises(CarrierAuthenticationError):
+            self._client(session).fetch_tracking(container_number="TRDU9258963")
+
+    def test_429_reports_the_carriers_retry_after(self):
+        session = FakeSession([FakeResponse(429, headers={"Retry-After": "600"})])
+        with self.assertRaises(CarrierRateLimitError) as ctx:
+            self._client(session).fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(ctx.exception.retry_after, 600)
+
+    def test_no_secret_reaches_the_request_log(self):
+        session = FakeSession([FakeResponse(401), FakeResponse(401)])
+        with self.assertRaises(CarrierAuthenticationError):
+            self._client(session).fetch_tracking(container_number="TRDU9258963")
+        for log in IntegrationRequestLog.objects.filter(team=self.team):
+            self.assertNotIn(API_KEY, log.endpoint + log.error_message)
+            self.assertNotIn("consumer-key", log.endpoint)
+
+    def test_the_config_carries_no_credential(self):
+        """The endpoint settings ship in code, so they must hold no credential value."""
+        for forbidden in ("api_key", "client_id", "client_secret", "password", "token", "secret"):
+            self.assertNotIn(forbidden, PUBLIC_TRACK_AND_TRACE_CONFIG)
+        # extra_headers is sent verbatim on every request and must stay non-secret.
+        self.assertEqual(
+            set(PUBLIC_TRACK_AND_TRACE_CONFIG["extra_headers"]),
+            {"API-Version", "Accept"},
+        )
+
+    def test_the_key_comes_from_the_credential_service_not_the_config(self):
+        client = _client(self.team, dict(PUBLIC_TRACK_AND_TRACE_CONFIG), session=FakeSession())
+        with self.assertRaises(CarrierConfigurationError):
+            client.fetch_tracking(container_number="TRDU9258963")
+
+    def test_bill_of_lading_is_refused_rather_than_guessed(self):
+        """Only container tracking is configured for the public endpoint."""
+        session = FakeSession()
+        with self.assertRaises(CarrierConfigurationError):
+            self._client(session).fetch_tracking(bill_of_lading_number="MAEU-BL-1")
+        self.assertEqual(session.requests, [])
+
+
+class MaerskTeamIsolationTest(TestCase):
+    """One team's Maersk integration is never reachable from another team."""
+
+    def setUp(self):
+        self.team_a = _team("maersk-tenant-a")
+        self.team_b = _team("maersk-tenant-b")
+        self.key_a = "team-a-consumer-key"
+        self.key_b = "team-b-consumer-key"
+
+    def _configure(self, team, api_key):
+        integration = _integration(team, dict(PUBLIC_TRACK_AND_TRACE_CONFIG))
+        set_integration_credentials(integration, IntegrationCredential.AuthType.API_KEY, {"api_key": api_key})
+        return integration
+
+    def test_a_team_without_an_integration_cannot_borrow_another_teams(self):
+        self._configure(self.team_b, self.key_b)
+        with self.assertRaises(CarrierConfigurationError):
+            build_carrier_client("maersk", team=self.team_a, require_integration=True)
+
+    def test_an_unconfigured_team_gets_a_client_that_refuses_to_call(self):
+        self._configure(self.team_b, self.key_b)
+        client = build_carrier_client("maersk", team=self.team_a)
+        with self.assertRaises(CarrierConfigurationError):
+            client.fetch_tracking(container_number="TRDU9258963")
+
+    def test_each_team_sends_its_own_key(self):
+        self._configure(self.team_a, self.key_a)
+        self._configure(self.team_b, self.key_b)
+
+        session_a = FakeSession([FakeResponse(200, {"events": []})])
+        client_a = MaerskClient(
+            build_carrier_client("maersk", team=self.team_a).integration,
+            session=session_a,
+        )
+        client_a.fetch_tracking(container_number="TRDU9258963")
+
+        session_b = FakeSession([FakeResponse(200, {"events": []})])
+        client_b = MaerskClient(
+            build_carrier_client("maersk", team=self.team_b).integration,
+            session=session_b,
+        )
+        client_b.fetch_tracking(container_number="TRDU9258963")
+
+        self.assertEqual(session_a.requests[0]["headers"]["consumer-key"], self.key_a)
+        self.assertEqual(session_b.requests[0]["headers"]["consumer-key"], self.key_b)
+
+    def test_request_logs_stay_with_the_calling_team(self):
+        self._configure(self.team_a, self.key_a)
+        self._configure(self.team_b, self.key_b)
+        client = MaerskClient(
+            build_carrier_client("maersk", team=self.team_a).integration,
+            session=FakeSession([FakeResponse(200, {"events": []})]),
+        )
+        client.fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(IntegrationRequestLog.objects.filter(team=self.team_a).count(), 1)
+        self.assertEqual(IntegrationRequestLog.objects.filter(team=self.team_b).count(), 0)
+
+    def test_a_business_system_integration_is_never_used_as_a_carrier(self):
+        Integration.objects.create(
+            team=self.team_a,
+            name="Not a carrier",
+            provider_code="maersk",
+            provider_family=Integration.ProviderFamily.BUSINESS_SYSTEM,
+            config=dict(PUBLIC_TRACK_AND_TRACE_CONFIG),
+            is_active=True,
+        )
+        with self.assertRaises(CarrierConfigurationError):
+            build_carrier_client("maersk", team=self.team_a, require_integration=True)
+
+
+class MaerskCapabilityTest(TestCase):
+    """The public endpoint needs no account number, and must not claim otherwise."""
+
+    def test_account_number_is_not_required(self):
+        self.assertFalse(MaerskClient().capabilities.requires_account_number)
+
+    def test_container_tracking_is_supported(self):
+        self.assertTrue(MaerskClient().capabilities.supports_tracking_by_container)
+
+    def test_an_api_key_alone_is_enough_to_call(self):
+        team = _team("maersk-no-account-number")
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        client = _client(
+            team,
+            dict(PUBLIC_TRACK_AND_TRACE_CONFIG),
+            session=session,
+            credentials={"api_key": API_KEY},
+        )
+        client.fetch_tracking(container_number="TRDU9258963")
+        self.assertEqual(len(session.requests), 1)
 
 
 class MaerskDiscoveryTest(TestCase):

@@ -4,9 +4,20 @@
 <section class="app-card">
   <div class="flex items-start justify-between gap-4 mb-4">
     <h2 class="text-lg font-semibold">{% translate "Carrier Tracking" %}</h2>
-    {% if workspace.tracking_status %}
-      <span class="badge badge-sm badge-outline">{{ workspace.tracking_status }}</span>
-    {% endif %}
+    <div class="flex items-center gap-2 shrink-0">
+      {% if workspace.tracking_status %}
+        <span class="badge badge-sm badge-outline">{{ workspace.tracking_status }}</span>
+      {% endif %}
+      {# A plain POST: the carrier is called in the request, then the page reloads with
+         the result as a message and the timeline below already updated. #}
+      <form method="post" action="{% url 'containers:refresh_tracking' container.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-outline btn-xs">
+          <i class="fa fa-rotate"></i>
+          {% translate "Refresh tracking" %}
+        </button>
+      </form>
+    </div>
   </div>
 
   {% if not workspace.active_subscription %}

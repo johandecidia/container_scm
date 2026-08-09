@@ -5,10 +5,12 @@ from django.core.paginator import Paginator
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
+from django.views.decorators.http import require_POST
 
 from apps.scm.analytics.models import SavedFilter
 from apps.scm.analytics.selectors import get_saved_filters
 from apps.scm.decorators import scm_login_required
+from apps.scm.tracking.manual_refresh import refresh_container_tracking
 
 from .discovery import (
     add_planned_container,
@@ -27,6 +29,15 @@ from .selectors import (
 from .services import create_container, create_location, delete_container, update_container, update_location
 
 CONTAINERS_PER_PAGE = 25
+
+# Maps a RefreshResult level onto the messages framework, so the tracking service
+# stays independent of it.
+_MESSAGE_LEVELS = {
+    "success": messages.success,
+    "info": messages.info,
+    "warning": messages.warning,
+    "error": messages.error,
+}
 
 
 @scm_login_required
@@ -176,6 +187,21 @@ def container_delete(request, container_id):
         "scm/containers/pages/container_detail.html",
         {"container": container, "team_slug": team.slug},
     )
+
+
+@scm_login_required
+@require_POST
+def container_refresh_tracking(request, container_id):
+    """Fetch this container's tracking from its carrier now and report the result.
+
+    The carrier call runs in the request so the person who pressed the button sees
+    the real outcome; the page then reloads with the refreshed timeline.
+    """
+    team = request.default_team
+    container = get_object_or_404(Container, pk=container_id, team=team)
+    result = refresh_container_tracking(team=team, container=container)
+    _MESSAGE_LEVELS[result.level](request, result.message)
+    return redirect("containers:detail", container_id=container.pk)
 
 
 # ---------------------------------------------------------------------------

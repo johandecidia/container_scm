@@ -138,7 +138,7 @@ def _get_or_create_tracking_subscription(
     """Create a TrackingSubscription for the discovered container if one does not exist."""
     from apps.scm.tracking.models import TrackingSubscription
 
-    provider = _get_or_create_tracking_provider(carrier_code=result.carrier_code, carrier_name=result.carrier_name)
+    provider = get_or_create_tracking_provider(carrier_code=result.carrier_code, carrier_name=result.carrier_name)
     if provider is None:
         return
 
@@ -162,8 +162,12 @@ def _get_or_create_tracking_subscription(
         )
 
 
-def _get_or_create_tracking_provider(*, carrier_code: str, carrier_name: str):
-    """Get or create a TrackingProvider for the given carrier code."""
+def get_or_create_tracking_provider(*, carrier_code: str, carrier_name: str):
+    """Get or create the TrackingProvider for a carrier code, or None without one.
+
+    Public because every path that starts tracking a container — discovery and the
+    manual refresh on container detail — must land on the same provider row.
+    """
     from apps.scm.tracking.models import TrackingProvider
 
     if not carrier_code:

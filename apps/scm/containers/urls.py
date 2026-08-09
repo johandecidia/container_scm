@@ -9,6 +9,7 @@ urlpatterns = [
     path("create/", views.container_create, name="create"),
     path("<int:container_id>/", views.container_detail, name="detail"),
     path("<int:container_id>/edit/", views.container_update, name="update"),
+    path("<int:container_id>/refresh-tracking/", views.container_refresh_tracking, name="refresh_tracking"),
     path("<int:container_id>/delete/", views.container_delete, name="delete"),
     # Container discovery
     path("discovery/", views.planned_container_dashboard, name="discovery_dashboard"),
