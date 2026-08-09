@@ -40,6 +40,17 @@ _CONGESTION_KEYWORDS = ("congestion", "congested", "port delay", "terminal delay
 def check_container_exceptions(team: Team, container) -> ExceptionReport:
     """Return an ExceptionReport for a container based on its tracking events."""
     events = TrackingEvent.objects.filter(team=team, container=container).order_by("-event_datetime", "-created_at")
+    return evaluate_container_exceptions(events)
+
+
+def evaluate_container_exceptions(events) -> ExceptionReport:
+    """Return an ExceptionReport from an already-loaded set of a container's events.
+
+    Split out from :func:`check_container_exceptions` so a caller that has already
+    loaded events for many containers — the visibility overview — can reuse this
+    engine instead of growing a second one. ``events`` must be newest first.
+    """
+    events = list(events)
 
     exception_types: list[str] = []
     details: list[str] = []
@@ -60,7 +71,7 @@ def check_container_exceptions(team: Team, container) -> ExceptionReport:
             details.append(f"Port congestion: {event.description or event.location_name}")
 
     # Check for stale tracking (no event in 5 days for active containers)
-    latest_event = events.first()
+    latest_event = events[0] if events else None
     if latest_event and latest_event.event_datetime:
         age = timezone.now() - latest_event.event_datetime
         if age > timedelta(days=5):

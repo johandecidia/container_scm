@@ -29,10 +29,17 @@ logger = logging.getLogger(__name__)
 
 _EventType = TrackingEvent.EventType
 
-# Event types that prove departure and arrival, in the order we trust them.
-_DEPARTURE_EVENTS = (_EventType.VESSEL_DEPARTED, _EventType.LOADED_ON_VESSEL)
-_ARRIVAL_EVENTS = (_EventType.VESSEL_ARRIVED, _EventType.DISCHARGED)
-_DELIVERY_EVENTS = (_EventType.DELIVERED,)
+# Event types that prove departure, arrival and delivery, in the order we trust
+# them. Public because visibility buckets objects by the same milestones, and two
+# copies of these tuples would eventually disagree about what "arrived" means.
+#
+# Note what is *not* here. GATE_IN and GATE_OUT are deliberately absent: a box is
+# gated in on export and again on import, so neither code says which end of the
+# journey it happened at, and reading one as progress would report an arriving
+# container as not yet departed.
+DEPARTURE_EVENT_TYPES = (_EventType.VESSEL_DEPARTED, _EventType.LOADED_ON_VESSEL)
+ARRIVAL_EVENT_TYPES = (_EventType.VESSEL_ARRIVED, _EventType.DISCHARGED)
+DELIVERY_EVENT_TYPES = (_EventType.DELIVERED,)
 
 
 @dataclass
@@ -84,9 +91,9 @@ def get_transport_snapshot(shipment: Shipment) -> TransportSnapshot:
     ]
 
     return TransportSnapshot(
-        actual_departure_at=_first_time(_DEPARTURE_EVENTS),
-        actual_arrival_at=_first_time(_ARRIVAL_EVENTS),
-        delivered_at=_first_time(_DELIVERY_EVENTS),
+        actual_departure_at=_first_time(DEPARTURE_EVENT_TYPES),
+        actual_arrival_at=_first_time(ARRIVAL_EVENT_TYPES),
+        delivered_at=_first_time(DELIVERY_EVENT_TYPES),
         latest_event=events[-1],
         latest_actual_event=actual[-1] if actual else None,
         latest_estimated_arrival=estimated_arrivals[-1] if estimated_arrivals else None,

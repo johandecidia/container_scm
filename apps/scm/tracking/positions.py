@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from django.db import models
 from django.db.models import TextChoices
 from django.utils.translation import gettext_lazy as _
 
@@ -120,20 +121,37 @@ def position_from_event(event: TrackingEvent) -> ContainerPosition:
     )
 
 
+# An event describes a place when the carrier attached one to it. Document
+# milestones — a bill of lading drafted, issued, released — carry no place at all.
+HAS_A_PLACE = (
+    models.Q(location_unlocode__gt="") | models.Q(location_name__gt="") | models.Q(location_latitude__isnull=False)
+)
+
+
 def get_latest_container_position(team, container) -> ContainerPosition | None:
     """Return the container's last reported position, or None if never reported.
 
-    Prefers the most recent *actual* event: an estimate tells you where the carrier
-    thinks it will be, which is not a position. Only when there is no actual event at
-    all does the estimate stand in, and then it is labelled ESTIMATED.
+    Two preferences, in order.
+
+    *Observed over forecast*: an estimate tells you where the carrier thinks the box
+    will be, which is not a position. Only when there is no actual event at all does
+    the estimate stand in, and then it is labelled ESTIMATED.
+
+    *Located over placeless*: the last thing a carrier reports is often paperwork —
+    a transport document released, say — which happens nowhere. Letting that be the
+    position would throw away a place we know, and report "unknown" about a box last
+    confirmed at a named terminal. The most recent *located* observation wins, and
+    its timestamp is when the box was there.
     """
     events = TrackingEvent.objects.filter(team=team, container=container).exclude(event_datetime__isnull=True)
 
-    latest_actual = (
-        events.filter(event_time_type=TrackingEvent.EventTimeType.ACTUAL).order_by("-event_datetime").first()
+    # The created_at tiebreak makes the answer deterministic when a carrier reports
+    # two events at the same instant, and matches what the bulk builder in
+    # containers.workspace picks, so both paths name the same position.
+    actual = events.filter(event_time_type=TrackingEvent.EventTimeType.ACTUAL).order_by(
+        "-event_datetime", "-created_at"
     )
-    if latest_actual is not None:
-        return position_from_event(latest_actual)
-
-    latest_any = events.order_by("-event_datetime").first()
-    return position_from_event(latest_any) if latest_any else None
+    anchor = actual.filter(HAS_A_PLACE).first() or actual.first()
+    if anchor is None:
+        anchor = events.order_by("-event_datetime", "-created_at").first()
+    return position_from_event(anchor) if anchor else None

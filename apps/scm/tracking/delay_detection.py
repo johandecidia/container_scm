@@ -35,6 +35,21 @@ def check_shipment_delay(team: Team, shipment) -> DelayReport:
     2. DELAY tracking event exists.
     3. Arrival event is missing after original ETA has passed.
     """
+    has_delay_event = TrackingEvent.objects.filter(
+        team=team,
+        shipment=shipment,
+        event_type=TrackingEvent.EventType.DELAY,
+    ).exists()
+    return evaluate_shipment_delay(shipment, has_delay_event=has_delay_event)
+
+
+def evaluate_shipment_delay(shipment, *, has_delay_event: bool) -> DelayReport:
+    """Return a DelayReport from a shipment plus one already-answered question.
+
+    Split out from :func:`check_shipment_delay` so a caller checking many shipments
+    — the visibility overview — can answer "does a DELAY event exist" once in bulk
+    and still run this one engine, rather than growing a second one beside it.
+    """
     original_eta = shipment.original_eta
     current_eta = shipment.eta
     now_date = timezone.now().date()
@@ -45,11 +60,6 @@ def check_shipment_delay(team: Team, shipment) -> DelayReport:
         return DelayReport(is_delayed=True, reason="ETA moved forward", eta_drift_days=drift)
 
     # 2. Explicit carrier delay event
-    has_delay_event = TrackingEvent.objects.filter(
-        team=team,
-        shipment=shipment,
-        event_type=TrackingEvent.EventType.DELAY,
-    ).exists()
     if has_delay_event:
         return DelayReport(is_delayed=True, reason="Carrier delay event received")
 

@@ -42,7 +42,14 @@ _SYNC_RUN_LIMIT = 5
 
 @dataclass
 class ContainerWorkspace:
-    """Read model for the container detail view."""
+    """Read model for the container detail view.
+
+    Also built in bulk by :func:`get_container_workspaces` for the visibility
+    overview, which needs the same tracking derivations for many containers at
+    once. A bulk-built workspace has ``tracking_only`` set: its tracking fields are
+    complete, and its movements, purchase orders and supplier deliveries are empty
+    because they were never loaded, not because there are none.
+    """
 
     container: Container
 
@@ -58,9 +65,18 @@ class ContainerWorkspace:
     latest_actual_event: object = None
     latest_meaningful_actual_event: object = None
     tracking_eta_event: object = None
+    carriage_event: object = None
     position: ContainerPosition | None = None
     timeline: list = field(default_factory=list)
     recent_sync_runs: list = field(default_factory=list)
+
+    # Every internal event type the carrier has actually *observed* for this
+    # container. Forecasts are excluded on purpose: an estimated arrival must never
+    # let anything conclude the box has arrived.
+    observed_event_types: set = field(default_factory=set)
+
+    # True when only the tracking sections were loaded — see the class docstring.
+    tracking_only: bool = False
 
     @property
     def active_shipment(self):
@@ -184,19 +200,6 @@ class ContainerWorkspace:
         """What the carrier is telling us, e.g. tracking or no data yet."""
         subscription = self.active_subscription
         return subscription.get_tracking_status_display() if subscription else ""
-
-    @property
-    def carriage_event(self):
-        """The most recent event that names a vessel, or None.
-
-        Not simply the latest event: the last thing to happen to a box is often a
-        truck movement, which names no vessel. Falling back to the most recent one
-        that does keeps the voyage on screen instead of blanking it.
-        """
-        for event in self.timeline:
-            if event.vessel_name:
-                return event
-        return None
 
     @property
     def vessel_name(self) -> str:
@@ -335,6 +338,11 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
         .first()
     )
     timeline = list(events.order_by("-event_datetime", "-created_at")[:_TIMELINE_LIMIT])
+    observed_event_types = set(
+        events.filter(event_time_type=TrackingEvent.EventTimeType.ACTUAL)
+        .exclude(event_type=TrackingEvent.EventType.UNKNOWN)
+        .values_list("event_type", flat=True)
+    )
 
     movements = list(
         ContainerMovement.objects.filter(team=team, container=container)
@@ -373,7 +381,132 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
         latest_actual_event=latest_actual_event,
         latest_meaningful_actual_event=get_latest_meaningful_actual_event(team, container),
         tracking_eta_event=get_container_tracking_eta_event(team, container),
+        carriage_event=_first_event_with_a_vessel(timeline),
         position=get_latest_container_position(team, container),
         timeline=timeline,
         recent_sync_runs=recent_sync_runs,
+        observed_event_types=observed_event_types,
     )
+
+
+def _first_event_with_a_vessel(events):
+    """Return the most recent event that names a vessel, or None.
+
+    Not simply the latest event: the last thing to happen to a box is often a truck
+    movement, which names no vessel. Falling back to the most recent one that does
+    keeps the voyage on screen instead of blanking it. ``events`` must be newest
+    first.
+    """
+    for event in events:
+        if event.vessel_name:
+            return event
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Bulk construction
+#
+# The visibility overview needs the tracking derivations above for every tracked
+# container at once, and calling get_container_workspace in a loop would issue
+# eight queries per container. The builder below answers the same questions with a
+# fixed number of queries, whatever the number of containers, and reuses the same
+# derivation code — position classification, ETA rules, status rules — so there is
+# one implementation of each rather than a faster, subtly different second one.
+# ---------------------------------------------------------------------------
+
+
+def get_container_workspaces(team: Team, containers) -> dict[int, ContainerWorkspace]:
+    """Return tracking-only workspaces for many containers, keyed by container id.
+
+    Every returned workspace has ``tracking_only=True``: movements, purchase orders
+    and supplier deliveries are deliberately not loaded. Reading them from one of
+    these workspaces would report "none" for data that was simply never fetched.
+    """
+    from apps.scm.shipments.models import ShipmentContainer
+    from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
+    from apps.scm.tracking.positions import HAS_A_PLACE, position_from_event
+    from apps.scm.tracking.selectors import ARRIVAL_FORECAST_EVENT_TYPES
+
+    containers = list(containers)
+    container_ids = [container.pk for container in containers]
+    if not container_ids:
+        return {}
+
+    links = _group_by_container(
+        ShipmentContainer.objects.filter(container_id__in=container_ids, shipment__team=team)
+        .select_related("shipment")
+        .order_by("-created_at")
+    )
+    subscriptions = _group_by_container(
+        TrackingSubscription.objects.filter(team=team, container_id__in=container_ids)
+        .select_related("provider", "shipment")
+        .order_by("-created_at")
+    )
+
+    events = TrackingEvent.objects.filter(team=team, container_id__in=container_ids).select_related("provider")
+    dated = events.exclude(event_datetime__isnull=True)
+    actual = dated.filter(event_time_type=TrackingEvent.EventTimeType.ACTUAL)
+
+    classified_actual = actual.exclude(event_type=TrackingEvent.EventType.UNKNOWN)
+
+    latest = _latest_per_container(dated)
+    latest_actual = _latest_per_container(actual)
+    # The same two preferences get_latest_container_position applies: observed over
+    # forecast, and located over placeless.
+    latest_located_actual = _latest_per_container(actual.filter(HAS_A_PLACE))
+    latest_meaningful = _latest_per_container(classified_actual)
+    latest_carriage = _latest_per_container(dated.exclude(vessel_name=""))
+    forecasts = _latest_per_container(
+        dated.filter(
+            event_time_type__in=[TrackingEvent.EventTimeType.ESTIMATED, TrackingEvent.EventTimeType.PLANNED],
+            event_type__in=ARRIVAL_FORECAST_EVENT_TYPES,
+        )
+    )
+    # A forecast that the carrier has already answered with an actual arrival is no
+    # longer an ETA — the same rule get_container_tracking_eta_event applies.
+    arrived_ids = set(
+        actual.filter(
+            event_type__in=(TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED)
+        ).values_list("container_id", flat=True)
+    )
+
+    observed: dict[int, set[str]] = {}
+    for container_id, event_type in classified_actual.values_list("container_id", "event_type").distinct():
+        observed.setdefault(container_id, set()).add(event_type)
+
+    workspaces = {}
+    for container in containers:
+        anchor = latest_located_actual.get(container.pk) or latest_actual.get(container.pk) or latest.get(container.pk)
+        workspaces[container.pk] = ContainerWorkspace(
+            container=container,
+            shipment_containers=links.get(container.pk, []),
+            tracking_subscriptions=subscriptions.get(container.pk, []),
+            latest_tracking_event=latest.get(container.pk),
+            latest_actual_event=latest_actual.get(container.pk),
+            latest_meaningful_actual_event=latest_meaningful.get(container.pk),
+            tracking_eta_event=None if container.pk in arrived_ids else forecasts.get(container.pk),
+            carriage_event=latest_carriage.get(container.pk),
+            position=position_from_event(anchor) if anchor is not None else None,
+            observed_event_types=observed.get(container.pk, set()),
+            tracking_only=True,
+        )
+    return workspaces
+
+
+def _group_by_container(queryset) -> dict[int, list]:
+    """Bucket an already-ordered queryset of container-linked rows by container id."""
+    grouped: dict[int, list] = {}
+    for row in queryset:
+        grouped.setdefault(row.container_id, []).append(row)
+    return grouped
+
+
+def _latest_per_container(queryset) -> dict[int, object]:
+    """Return the newest row per container, in one query.
+
+    ``DISTINCT ON`` keeps this to a single round trip however many containers are
+    involved; the ``created_at`` tiebreak makes the choice deterministic when a
+    carrier reports two events at the same instant.
+    """
+    rows = queryset.order_by("container_id", "-event_datetime", "-created_at").distinct("container_id")
+    return {row.container_id: row for row in rows}

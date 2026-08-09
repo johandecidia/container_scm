@@ -76,7 +76,9 @@ def get_latest_tracking_event_for_shipment(team: Team, shipment) -> TrackingEven
 # ---------------------------------------------------------------------------
 
 # Estimated events that forecast an arrival. A forecast departure is not an ETA.
-_ETA_EVENT_TYPES = (TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.ETA_UPDATED)
+# Public because the bulk workspace builder applies the same rule to many
+# containers at once, and two copies of this tuple would eventually disagree.
+ARRIVAL_FORECAST_EVENT_TYPES = (TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.ETA_UPDATED)
 
 
 def get_latest_meaningful_actual_event(team: Team, container) -> TrackingEvent | None:
@@ -122,7 +124,7 @@ def get_container_tracking_eta_event(team: Team, container) -> TrackingEvent | N
     forecast = (
         events.filter(
             event_time_type__in=[TrackingEvent.EventTimeType.ESTIMATED, TrackingEvent.EventTimeType.PLANNED],
-            event_type__in=_ETA_EVENT_TYPES,
+            event_type__in=ARRIVAL_FORECAST_EVENT_TYPES,
         )
         .select_related("provider")
         .order_by("-event_datetime", "-created_at")
