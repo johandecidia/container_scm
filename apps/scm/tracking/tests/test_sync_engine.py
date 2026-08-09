@@ -6,6 +6,7 @@ socket.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest import mock
 
 from django.test import TestCase, override_settings
@@ -61,7 +62,7 @@ def _subscription(team: Team, provider: TrackingProvider, **kwargs) -> TrackingS
 
 
 def _event(**kwargs) -> NormalisedTrackingEvent:
-    defaults = {
+    defaults: dict[str, Any] = {
         "event_type": "EQUIPMENT",
         "event_classifier": "ACT",
         "event_code": "LOAD",

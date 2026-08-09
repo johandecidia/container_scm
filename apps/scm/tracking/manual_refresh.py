@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from django.utils.translation import gettext_lazy as _
 
@@ -53,6 +54,9 @@ from apps.scm.integrations.carriers.http import interactive_carrier_requests
 from .models import TrackingSubscription, TrackingSyncRun
 from .services import create_sync_run
 from .sync import apply_sync_outcome, store_verified_carrier_result, sync_tracking_subscription
+
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,8 @@ class RefreshResult:
     """What one manual refresh achieved, ready to show to the person who asked."""
 
     level: str
-    message: str
+    # Usually lazily translated, so the locale active when it is rendered wins.
+    message: StrOrPromise
     state: str = UPDATED
     carrier_code: str = ""
     carrier_name: str = ""
@@ -315,7 +320,7 @@ def _probe_and_activate(*, team, container, carrier_code: str, carrier_name: str
     from apps.scm.integrations.carriers.probe import ProbeOutcome, probe_container_number
 
     reference = container.container_id
-    common = {"carrier_code": carrier_code, "carrier_name": carrier_name}
+    common: dict[str, Any] = {"carrier_code": carrier_code, "carrier_name": carrier_name}
 
     with interactive_carrier_requests():
         probe = probe_container_number(team=team, container_number=reference, carrier_code=carrier_code)
@@ -394,7 +399,7 @@ def _describe(
     can carry a carrier response body — it belongs in the log, not on the page.
     """
     statuses = TrackingSyncRun.Status
-    common = {
+    common: dict[str, Any] = {
         "carrier_code": carrier_code,
         "carrier_name": carrier_name,
         "events_created": sync_run.events_created,
@@ -465,7 +470,7 @@ def _failure_state(error_type: str) -> str:
     return UNAVAILABLE
 
 
-def _failure_message(error_type: str, carrier_name: str):
+def _failure_message(error_type: str, carrier_name: str) -> StrOrPromise:
     errors = TrackingSyncRun.ErrorType
     if _failure_state(error_type) == NOT_CONFIGURED:
         return _("Tracking is not configured for this container.")

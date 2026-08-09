@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from django.db import transaction
 from django.db.models import Q, QuerySet
@@ -230,7 +231,7 @@ def run_discovery_for_team(team: Team, providers: list | None = None) -> dict:
     Returns a summary dict: checked, detected, not_found, skipped, expired, errors.
     """
     injected = {client.provider_code: client for client in (providers or []) if getattr(client, "provider_code", "")}
-    summary = {"checked": 0, "detected": 0, "not_found": 0, "skipped": 0, "expired": 0, "errors": []}
+    summary: dict[str, Any] = {"checked": 0, "detected": 0, "not_found": 0, "skipped": 0, "expired": 0, "errors": []}
 
     for planned in get_planned_containers_for_discovery(team=team):
         if is_exhausted(planned):
