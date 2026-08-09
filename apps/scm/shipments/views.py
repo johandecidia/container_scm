@@ -8,6 +8,7 @@ from django.utils.translation import gettext_lazy as _
 from apps.scm.analytics.models import SavedFilter
 from apps.scm.analytics.selectors import get_saved_filters
 from apps.scm.decorators import scm_login_required
+from apps.scm.visibility.context import get_shipment_map_context
 
 from .forms import ShipmentContainerForm, ShipmentForm, ShipmentStatusForm
 from .models import Shipment, ShipmentContainer
@@ -17,7 +18,6 @@ from .selectors import (
     get_shipment_containers,
     get_shipment_detail_context,
     get_shipment_events,
-    get_shipment_workspace,
 )
 from .services import (
     add_container_to_shipment,
@@ -63,9 +63,11 @@ def shipment_detail(request, pk):
     detail = get_shipment_detail_context(team=team, shipment_id=pk)
     context = {
         **detail,
-        # Keep workspace for partials that use it; also keep events alias for timeline partial
-        "workspace": get_shipment_workspace(team=team, shipment=shipment),
+        # The timeline partial reads `events`.
         "events": detail["timeline_events"],
+        # Map, position quality, ETA history, freshness, delay and exceptions —
+        # composed by the visibility layer from the same tracking data.
+        **get_shipment_map_context(team=team, shipment=shipment),
         "team_slug": team.slug,
     }
     return render(request, "scm/shipments/pages/shipment_detail.html", context)

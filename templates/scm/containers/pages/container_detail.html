@@ -1,5 +1,6 @@
 {% extends "scm/base.html" %}
 {% load i18n %}
+{% load django_vite %}
 
 {% block app %}
   {# Workspace header #}
@@ -145,6 +146,12 @@
     </section>
   </div>
 
+  {# Journey map. Works whether or not this container is on a shipment: the map is #}
+  {# drawn from the container's own carrier events. #}
+  <div class="mt-6">
+    {% include "scm/visibility/components/map_card.html" with map_title=_("Journey") map_height="h-[24rem]" map_note=_("Where the carrier reported this container. Click a timeline entry to fly to it.") %}
+  </div>
+
   {# Carrier tracking (its own HTMX component) and linked purchase orders #}
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6 items-start">
     {% include "scm/containers/partials/container_tracking_panel.html" %}
@@ -220,4 +227,9 @@
   {% endif %}
 
   <div id="modal-container"></div>
+{% endblock %}
+
+{% block page_js %}
+  {{ block.super }}
+  {% vite_asset 'assets/javascript/scm/visibility/map.js' %}
 {% endblock %}

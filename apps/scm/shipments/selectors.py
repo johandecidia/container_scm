@@ -1,6 +1,6 @@
 # Shipment selectors — all read/query operations.
 # Every function that returns team-owned data must accept `team` as first argument.
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 from django.db.models import Q, QuerySet
@@ -21,6 +21,13 @@ class ShipmentTimelineItem:
     event_type: str
     location: str = ""
     created_by: object = None  # user or None
+    # Set only for a tracking event that has coordinates. It is the whole contract
+    # between the timeline and the map: the row carries it as a data attribute, and
+    # the map matches on it. An entry without coordinates simply is not clickable.
+    map_event_id: int | None = None
+    time_type_label: str = ""
+    is_actual: bool = True
+    carrier_reference: str = ""
 
 
 _SORT_MAP = {
@@ -106,9 +113,15 @@ def get_merged_shipment_timeline(team: Team, shipment: Shipment) -> list[Shipmen
             )
         )
 
-    # TrackingEvent entries
+    # TrackingEvent entries. Events reach a shipment either directly or through one
+    # of its containers, and a carrier reporting at container level is still
+    # describing this shipment's journey.
+    container_ids = ShipmentContainer.objects.filter(shipment=shipment, shipment__team=team).values_list(
+        "container_id", flat=True
+    )
     tracking_qs = (
-        TrackingEvent.objects.filter(team=team, shipment=shipment)
+        TrackingEvent.objects.filter(team=team)
+        .filter(Q(shipment=shipment) | Q(container_id__in=container_ids))
         .select_related("provider")
         .order_by("-event_datetime", "-created_at")
     )
@@ -116,6 +129,7 @@ def get_merged_shipment_timeline(team: Team, shipment: Shipment) -> list[Shipmen
         location = event.location_name
         if event.location_unlocode:
             location = f"{location} ({event.location_unlocode})" if location else event.location_unlocode
+        has_coordinates = event.location_latitude is not None and event.location_longitude is not None
         items.append(
             ShipmentTimelineItem(
                 occurred_at=event.event_datetime,
@@ -124,21 +138,16 @@ def get_merged_shipment_timeline(team: Team, shipment: Shipment) -> list[Shipmen
                 source="tracking",
                 event_type=event.event_type,
                 location=location,
+                map_event_id=event.pk if has_coordinates else None,
+                time_type_label=str(event.get_event_time_type_display()),
+                is_actual=event.is_actual,
+                carrier_reference=event.carrier_reference if event.is_unclassified else "",
             )
         )
 
     # Sort: newest first; None datetimes go to the end
     items.sort(key=lambda i: (i.occurred_at is None, -(i.occurred_at.timestamp() if i.occurred_at else 0)))
     return items
-
-
-@dataclass
-class ShipmentWorkspace:
-    shipment: Shipment
-    containers: list = field(default_factory=list)
-    events: list = field(default_factory=list)
-    tracking_subscriptions: list = field(default_factory=list)
-    latest_tracking_event: object = None  # TrackingEvent | None
 
 
 def get_shipment_purchase_orders(team: Team, shipment: Shipment):
@@ -210,29 +219,3 @@ def get_shipment_detail_context(team: Team, shipment_id: int) -> dict:
         "supplier_deliveries": supplier_deliveries,
         "timeline_events": timeline_events,
     }
-
-
-def get_shipment_workspace(team: Team, shipment: Shipment) -> ShipmentWorkspace:
-    """Gather all workspace data for a shipment detail view."""
-    from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
-
-    containers = list(get_shipment_containers(team=team, shipment=shipment))
-    events = list(get_shipment_events(team=team, shipment=shipment))
-    tracking_subscriptions = list(
-        TrackingSubscription.objects.filter(team=team, shipment=shipment)
-        .select_related("provider")
-        .order_by("-created_at")
-    )
-    latest_event = (
-        TrackingEvent.objects.filter(team=team, shipment=shipment)
-        .select_related("provider")
-        .order_by("-event_datetime", "-created_at")
-        .first()
-    )
-    return ShipmentWorkspace(
-        shipment=shipment,
-        containers=containers,
-        events=events,
-        tracking_subscriptions=tracking_subscriptions,
-        latest_tracking_event=latest_event,
-    )

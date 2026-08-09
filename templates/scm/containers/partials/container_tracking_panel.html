@@ -59,28 +59,6 @@
           </p>
         {% endif %}
 
-        <p class="text-xs text-base-content/50 mt-0.5">
-          {% if workspace.last_refreshed_at %}
-            {% blocktranslate trimmed with when=workspace.last_refreshed_at|date:"d M H:i" %}
-              Last refreshed: {{ when }}
-            {% endblocktranslate %}
-          {% else %}
-            {% translate "Last refreshed: never" %}
-          {% endif %}
-        </p>
-
-        {% comment %}
-          Only shown for a live watch: a paused or completed subscription can still
-          carry an old next_sync_at that nothing will act on, and promising a check
-          that never comes is worse than saying nothing.
-        {% endcomment %}
-        {% if workspace.next_check_at %}
-          <p class="text-xs text-base-content/50">
-            {% blocktranslate trimmed with when=workspace.next_check_at|date:"d M H:i" %}
-              Next automatic check: {{ when }}
-            {% endblocktranslate %}
-          </p>
-        {% endif %}
       </div>
 
       {% comment %}
@@ -111,84 +89,43 @@
       </div>
     {% endif %}
 
+    {% comment %}
+      Status, position, ETA and freshness are rendered by the shared visibility
+      components, so this panel, the map cards and the visibility overview cannot
+      disagree about what the same carrier data means.
+    {% endcomment %}
     <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       <div>
         <dt class="text-xs text-base-content/60">{% translate "Current status" %}</dt>
         <dd class="font-medium text-sm">{{ workspace.current_status|default:"—" }}</dd>
       </div>
       <div>
-        <dt class="text-xs text-base-content/60">{% translate "Latest event" %}</dt>
-        {% with event=workspace.latest_tracking_event %}
-          {% if event %}
-            <dd class="text-sm">
-              <span class="font-medium">{{ event.display_title }}</span>
-              {% if event.location_name or event.location_unlocode %}
-                <span class="block text-xs text-base-content/60">
-                  {{ event.location_name }}{% if event.location_name and event.location_unlocode %} · {% endif %}{{ event.location_unlocode }}
-                </span>
-              {% endif %}
-              <span class="block text-xs text-base-content/50">{{ event.event_datetime|date:"d M Y H:i"|default:"—" }}</span>
-            </dd>
-          {% else %}
-            <dd class="font-medium text-sm">—</dd>
-          {% endif %}
-        {% endwith %}
+        <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
+        <dd class="font-medium text-sm">
+          {% if workspace.vessel_name %}
+            {{ workspace.vessel_name }}{% if workspace.voyage_number %} · {{ workspace.voyage_number }}{% endif %}
+          {% else %}—{% endif %}
+        </dd>
       </div>
       <div>
-        <dt class="text-xs text-base-content/60">{% translate "ETA" %}</dt>
-        <dd class="font-medium text-sm">
-          {{ workspace.current_eta|date:"d M Y"|default:"—" }}
-          {% if workspace.eta_delay_days > 0 %}
-            <span class="badge badge-xs badge-warning ml-1">
-              {% blocktranslate trimmed with days=workspace.eta_delay_days %}
-                {{ days }} days later
-              {% endblocktranslate %}
-            </span>
-          {% endif %}
-          {% comment %}
-            An ETA taken from the container's own carrier events is labelled, because
-            it is a forecast for this box rather than the shipment's planned date.
-          {% endcomment %}
-          {% if workspace.eta_source == "tracking" %}
-            <span class="block text-xs text-base-content/50">
-              {% blocktranslate trimmed with when=workspace.tracking_eta_at|date:"H:i" %}
-                Carrier estimate, {{ when }}
-              {% endblocktranslate %}
-            </span>
-          {% endif %}
-        </dd>
+        {% include "scm/visibility/components/position_summary.html" with position=workspace.position %}
       </div>
     </dl>
 
-    {% if workspace.vessel_name or workspace.position %}
-      <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-base-300">
-        {% if workspace.vessel_name %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
-            <dd class="font-medium text-sm">
-              {{ workspace.vessel_name }}{% if workspace.voyage_number %} · {{ workspace.voyage_number }}{% endif %}
-            </dd>
-          </div>
-        {% endif %}
-        {% if workspace.position %}
-          {% comment %}
-            The position type is always shown: a terminal coordinate is not a live
-            GPS fix and must not be read as one.
-          {% endcomment %}
-          <div class="sm:col-span-2">
-            <dt class="text-xs text-base-content/60">{% translate "Last known position" %}</dt>
-            <dd class="text-sm">
-              <span class="font-medium">{{ workspace.position.label|default:"—" }}</span>
-              <span class="badge badge-xs badge-ghost ml-1">{{ workspace.position.get_position_type_display }}</span>
-              {% if not workspace.position.is_realtime %}
-                <span class="block text-xs text-base-content/50">
-                  {% translate "This is where the container was last reported, not a live position." %}
-                </span>
-              {% endif %}
-            </dd>
-          </div>
-        {% endif %}
-      </dl>
+    <div class="mt-4 pt-4 border-t border-base-300">
+      {% include "scm/visibility/components/eta_summary.html" with object=visibility eta_history=eta_history %}
+    </div>
+
+    <div class="mt-4 pt-4 border-t border-base-300">
+      {% include "scm/visibility/components/tracking_freshness.html" with object=visibility %}
+    </div>
+
+    {% if visibility.shipment %}
+      <div class="mt-4 pt-4 border-t border-base-300">
+        <a href="{% url 'shipments:detail' visibility.shipment.pk %}" class="btn btn-ghost btn-sm">
+          {% translate "View shipment" %} <i class="fa fa-arrow-right text-xs"></i>
+        </a>
+      </div>
     {% endif %}
 
     {% if workspace.tracking_subscriptions %}
@@ -211,13 +148,21 @@
 
     An event we could not classify still shows the carrier's own wording and codes:
     a gap in our mapping tables must cost the reader detail, not the whole event.
+
+    An event that has coordinates carries data-map-event-id, which is the whole
+    contract between the timeline and the map: clicking the row flies the map to
+    that event, and selecting it on the map highlights the row. The timeline stays
+    the authoritative chronology — the map only points at it.
   {% endcomment %}
   <section class="app-card">
     <h2 class="text-lg font-semibold mb-4">{% translate "Tracking Timeline" %}</h2>
     {% if workspace.timeline %}
       <ol class="divide-y divide-base-200">
         {% for event in workspace.timeline %}
-          <li class="py-3 flex items-start gap-3">
+          <li
+            class="py-3 flex items-start gap-3 {% if event.location_latitude is not None %}cursor-pointer hover:bg-base-200/60 rounded-box px-2 -mx-2{% endif %}"
+            {% if event.location_latitude is not None %}data-map-event-id="{{ event.pk }}"{% endif %}
+          >
             <p class="text-xs text-base-content/50 shrink-0 w-28 pt-0.5">
               {{ event.event_datetime|date:"d M H:i"|default:"—" }}
             </p>

@@ -11,6 +11,7 @@ from apps.scm.analytics.models import SavedFilter
 from apps.scm.analytics.selectors import get_saved_filters
 from apps.scm.decorators import scm_login_required
 from apps.scm.tracking.manual_refresh import refresh_container_tracking
+from apps.scm.visibility.context import get_container_map_context
 
 from .discovery import (
     add_planned_container,
@@ -87,7 +88,14 @@ def container_detail(request, container_id):
     return render(
         request,
         "scm/containers/pages/container_detail.html",
-        {"container": container, "workspace": workspace, "team_slug": team.slug},
+        {
+            "container": container,
+            "workspace": workspace,
+            # The map and the journey summary read the same workspace, so the page
+            # loads this container's tracking once.
+            **get_container_map_context(team=team, container=container, workspace=workspace),
+            "team_slug": team.slug,
+        },
     )
 
 
@@ -165,12 +173,16 @@ def container_refresh_tracking(request, container_id):
     result = refresh_container_tracking(team=team, container=container)
 
     if request.htmx:
+        workspace = get_container_workspace(team=team, container=container)
         return render(
             request,
             TRACKING_PANEL_TEMPLATE,
             {
                 "container": container,
-                "workspace": get_container_workspace(team=team, container=container),
+                "workspace": workspace,
+                # The panel shows position, ETA and freshness through the shared
+                # visibility components, so a refresh has to rebuild them too.
+                **get_container_map_context(team=team, container=container, workspace=workspace),
                 "refresh": result,
                 "team_slug": team.slug,
             },

@@ -1,10 +1,24 @@
 {% load i18n %}
 
+{% comment %}
+  The timeline is the authoritative chronology; the map points at it.
+
+  A tracking entry with coordinates carries data-map-event-id, which makes the row
+  clickable: the map flies to that event, and selecting the event on the map
+  highlights this row. Entries with no coordinates stay in the list and are simply
+  not clickable — the chronology is complete whether or not the map can show it.
+{% endcomment %}
+
 <div id="shipment-timeline">
   {% if events %}
     <ul class="timeline timeline-vertical timeline-compact">
       {% for event in events %}
-        <li>
+        <li
+          {% if event.map_event_id %}
+            data-map-event-id="{{ event.map_event_id }}"
+            class="cursor-pointer"
+          {% endif %}
+        >
           {% if not forloop.first %}<hr>{% endif %}
           <div class="timeline-middle">
             <i class="fa fa-circle text-xs
@@ -28,9 +42,27 @@
             {% if event.location %}
               <div class="text-xs text-base-content/50">{{ event.location }}</div>
             {% endif %}
+            {% if event.carrier_reference %}
+              {% comment %}
+                An event we could not classify keeps the carrier's own codes, so a
+                gap in our mapping tables costs detail rather than the whole event.
+              {% endcomment %}
+              <div class="text-xs text-base-content/50 font-mono">
+                {% blocktranslate trimmed with reference=event.carrier_reference %}
+                  Carrier: {{ reference }}
+                {% endblocktranslate %}
+              </div>
+            {% endif %}
             <div class="flex items-center gap-2 mt-1">
               {% if event.source == 'tracking' %}
                 <span class="badge badge-xs badge-secondary badge-outline">{% translate "Tracking" %}</span>
+              {% endif %}
+              {% comment %}
+                A forecast is badged as one. Without this an estimated arrival reads
+                on the timeline exactly like an arrival that happened.
+              {% endcomment %}
+              {% if event.source == 'tracking' and not event.is_actual %}
+                <span class="badge badge-xs badge-ghost">{{ event.time_type_label }}</span>
               {% endif %}
               {% if event.created_by %}
                 <span class="text-xs text-base-content/50">{{ event.created_by }}</span>

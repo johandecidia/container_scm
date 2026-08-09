@@ -244,7 +244,8 @@ class RefreshResultStatesTest(TrackingPanelTestBase):
         response = self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]), integration=integration)
         self.assertContains(response, "Port of Felixstowe")
         self.assertContains(response, "MAERSK EINDHOVEN")
-        self.assertContains(response, "Last refreshed")
+        # Freshness now comes from the shared visibility component.
+        self.assertContains(response, "Last checked")
 
     def test_no_data_is_reported_without_alarm(self):
         integration = _maersk_integration(self.team)

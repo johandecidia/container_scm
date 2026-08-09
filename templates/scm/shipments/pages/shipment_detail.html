@@ -1,5 +1,6 @@
 {% extends "scm/base.html" %}
 {% load i18n %}
+{% load django_vite %}
 
 {% block app %}
   {# Workspace header #}
@@ -76,11 +77,18 @@
     </div>
     <div class="bg-base-200 rounded-box p-3">
       <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Containers" %}</p>
-      <p class="font-medium text-sm">{{ workspace.containers|length }}</p>
+      <p class="font-medium text-sm">{{ containers|length }}</p>
     </div>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  {# Journey map and what the carrier data actually supports saying about it. #}
+  <div class="mb-6">
+    {% include "scm/visibility/components/map_card.html" with map_title=_("Journey") map_height="h-[26rem]" map_note=_("Where the carrier reported this shipment. Click a timeline entry to fly to it.") %}
+  </div>
+
+  {% include "scm/shipments/partials/shipment_journey_summary.html" %}
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
     {# Left column: details + containers + POs + supplier deliveries #}
     <div class="lg:col-span-2 flex flex-col gap-6">
 
@@ -206,27 +214,19 @@
     {# Right column: timeline + tracking #}
     <div class="flex flex-col gap-6">
 
-      {# Tracking summary #}
-      {% if workspace.tracking_subscriptions or workspace.latest_tracking_event %}
+      {% comment %}
+        The carrier watches themselves. What the carrier last reported, how fresh
+        it is and what it means for the ETA are the journey summary's job now, so
+        this card is only the subscriptions and their state.
+      {% endcomment %}
+      {% if tracking_subscriptions %}
         <section class="app-card">
           <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold">{% translate "Tracking" %}</h2>
+            <h2 class="text-lg font-semibold">{% translate "Carrier watches" %}</h2>
             <a href="{% url 'tracking:list' %}" class="btn btn-ghost btn-xs">{% translate "Manage" %}</a>
           </div>
-          {% if workspace.latest_tracking_event %}
-            <div class="bg-base-200 rounded-box p-3 mb-3">
-              <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Latest Event" %}</p>
-              <p class="font-medium text-sm">{{ workspace.latest_tracking_event.get_event_type_display }}</p>
-              {% if workspace.latest_tracking_event.description %}
-                <p class="text-sm text-base-content/70">{{ workspace.latest_tracking_event.description }}</p>
-              {% endif %}
-              <p class="text-xs text-base-content/50 mt-1">
-                {{ workspace.latest_tracking_event.event_datetime|date:"Y-m-d H:i"|default:"—" }}
-              </p>
-            </div>
-          {% endif %}
           <ul class="divide-y divide-base-200">
-            {% for sub in workspace.tracking_subscriptions %}
+            {% for sub in tracking_subscriptions %}
               <li class="py-2 flex items-center justify-between gap-2">
                 <a href="{% url 'tracking:detail' sub.pk %}" class="text-sm font-mono link link-hover">
                   {{ sub.tracking_reference }}
@@ -257,4 +257,9 @@
   </div>
 
   <div id="modal-container"></div>
+{% endblock %}
+
+{% block page_js %}
+  {{ block.super }}
+  {% vite_asset 'assets/javascript/scm/visibility/map.js' %}
 {% endblock %}
