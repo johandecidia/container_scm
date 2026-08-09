@@ -1,0 +1,46 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/visibility/components/position_summary.html" with position=object.position %}
+
+  The quality of a position is never separated from the position itself. A
+  terminal's coordinates say the box passed through that terminal; a vessel's say
+  where the ship is. Only a GPS fix of the container is a live position, and only
+  then does this component say so.
+{% endcomment %}
+
+{% if position %}
+  <dt class="text-xs text-base-content/60">
+    {% if position.is_realtime %}
+      {% translate "Live container position" %}
+    {% else %}
+      {% translate "Last confirmed location" %}
+    {% endif %}
+  </dt>
+  <dd class="text-sm">
+    <span class="font-medium">{{ position.label|default:"—" }}</span>
+    <span class="badge badge-xs badge-ghost ml-1">{{ position.get_position_type_display }}</span>
+    {% if position.event %}
+      <span class="block text-xs text-base-content/70 mt-0.5">
+        {{ position.event.display_title }}
+        {% if not position.event.is_actual %}
+          <span class="badge badge-xs badge-ghost">{{ position.event.get_event_time_type_display }}</span>
+        {% endif %}
+      </span>
+    {% endif %}
+    {% if position.observed_at %}
+      <span class="block text-xs text-base-content/50">{{ position.observed_at|date:"d M Y H:i" }}</span>
+    {% endif %}
+    {% if not position.is_realtime %}
+      <span class="block text-xs text-base-content/50 mt-0.5">
+        {% translate "This is where the container was last reported, not a live position." %}
+      </span>
+    {% endif %}
+    {% if not position.has_coordinates %}
+      <span class="block text-xs text-base-content/50">{% translate "No coordinates available for this location." %}</span>
+    {% endif %}
+  </dd>
+{% else %}
+  <dt class="text-xs text-base-content/60">{% translate "Last confirmed location" %}</dt>
+  <dd class="text-sm text-base-content/50">{% translate "No position reported yet." %}</dd>
+{% endif %}

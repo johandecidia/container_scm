@@ -1,0 +1,28 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+{% load django_vite %}
+
+{% comment %}
+  Supply Chain Visibility.
+
+  The map sits outside #visibility-board on purpose: filters swap the board and
+  leave the map instance alone, so panning and zoom survive a filter change and
+  the browser does not rebuild a WebGL context on every keystroke.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/components/page_header.html" with title=_("Supply Chain Visibility") subtitle=_("Where every tracked shipment and container is, and how fresh that information is.") %}
+
+  {% include "scm/visibility/components/map_card.html" with map_title=_("Supply Chain Map") map_height="h-[30rem]" map_panel_target="#visibility-object-panel" map_note=_("One point per place a carrier last confirmed. Click a point for details.") %}
+
+  <div id="visibility-object-panel" class="mt-6 empty:mt-0"></div>
+
+  <div class="mt-6">
+    {% include "scm/visibility/partials/visibility_board.html" %}
+  </div>
+{% endblock %}
+
+{% block page_js %}
+  {{ block.super }}
+  {% vite_asset 'assets/javascript/scm/visibility/map.js' %}
+{% endblock %}

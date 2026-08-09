@@ -31,6 +31,12 @@
   </a>
 </li>
 <li>
+  <a href="{% url 'visibility:overview' %}" {% if '/scm/visibility/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-earth-americas h-4 w-4"></i>
+    {% translate "Visibility" %}
+  </a>
+</li>
+<li>
   <a href="{% url 'shipments:list' %}" {% if '/scm/shipments/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-ship h-4 w-4"></i>
     {% translate "Shipments" %}

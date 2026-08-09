@@ -1,0 +1,23 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/visibility/components/health_badge.html" with object=obj %}
+
+  Only the four states the domain can honestly derive. There is no "at risk":
+  nothing distinguishes "likely to slip" from "on time", and a badge that implied
+  otherwise would be a guess wearing a status's clothes.
+{% endcomment %}
+
+{% if object.health == "exception" %}
+  <span class="badge badge-sm badge-error badge-soft">
+    {% translate "Exception" %}{% if object.exception_count > 1 %} ({{ object.exception_count }}){% endif %}
+  </span>
+{% elif object.health == "delayed" %}
+  <span class="badge badge-sm badge-warning badge-soft">
+    {% translate "Delayed" %}{% if object.delay_days > 0 %} +{{ object.delay_days }}d{% endif %}
+  </span>
+{% elif object.health == "on_time" %}
+  <span class="badge badge-sm badge-success badge-soft">{% translate "On time" %}</span>
+{% else %}
+  <span class="badge badge-sm badge-ghost">{% translate "No ETA" %}</span>
+{% endif %}

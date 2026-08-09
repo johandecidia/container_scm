@@ -1,0 +1,103 @@
+{% load i18n %}
+
+{% comment %}
+  The card shown when a map object is selected. Rendered by Django rather than
+  built in JavaScript, so it uses the same components as the rest of SCM and every
+  carrier-supplied string is escaped by the template engine.
+
+  Only actions that exist are offered: a container tracked without a shipment gets
+  a "View container" button and no dead "View shipment" beside it.
+{% endcomment %}
+
+<section class="app-card">
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <h2 class="text-lg font-semibold {% if object.kind == 'container' %}font-mono{% endif %}">{{ object.label }}</h2>
+      <div class="flex items-center gap-2 mt-1 flex-wrap">
+        {% include "scm/visibility/components/health_badge.html" with object=object %}
+        <span class="badge badge-sm badge-ghost">{{ object.journey_state_label }}</span>
+        {% if object.kind == "shipment" %}
+          <span class="text-xs text-base-content/60">
+            {% blocktranslate trimmed count count=object.container_count %}
+              {{ count }} container
+            {% plural %}
+              {{ count }} containers
+            {% endblocktranslate %}
+          </span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="flex gap-2 shrink-0">
+      {% if container_url %}
+        <a href="{{ container_url }}" class="btn btn-outline btn-sm">{% translate "View container" %}</a>
+      {% endif %}
+      {% if shipment_url %}
+        <a href="{{ shipment_url }}" class="btn btn-outline btn-sm">{% translate "View shipment" %}</a>
+      {% endif %}
+      <button
+        type="button"
+        class="btn btn-ghost btn-sm"
+        onclick="this.closest('#visibility-object-panel').innerHTML = ''"
+        aria-label="{% translate 'Close' %}"
+      >
+        <i class="fa fa-times"></i>
+      </button>
+    </div>
+  </div>
+
+  <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Current status" %}</dt>
+      <dd class="text-sm font-medium">{{ object.current_status|default:"—" }}</dd>
+    </div>
+    <div class="sm:col-span-2">
+      {% include "scm/visibility/components/position_summary.html" with position=object.position %}
+    </div>
+  </dl>
+
+  <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-base-300">
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Carrier" %}</dt>
+      <dd class="text-sm font-medium">{{ object.carrier_name|default:"—" }}</dd>
+    </div>
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
+      <dd class="text-sm font-medium">
+        {{ object.vessel_name|default:"—" }}
+        {% if object.vessel_imo %}
+          <span class="block text-xs text-base-content/50 font-normal">IMO {{ object.vessel_imo }}</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Voyage" %}</dt>
+      <dd class="text-sm font-medium">{{ object.voyage_number|default:"—" }}</dd>
+    </div>
+  </dl>
+
+  <div class="mt-4 pt-4 border-t border-base-300">
+    {% include "scm/visibility/components/eta_summary.html" with object=object %}
+  </div>
+
+  {% if object.exception_details %}
+    <div class="mt-4 pt-4 border-t border-base-300">
+      <p class="text-xs text-base-content/60 mb-1">{% translate "Exceptions" %}</p>
+      <ul class="text-sm list-disc list-inside text-base-content/80">
+        {% for detail in object.exception_details %}
+          <li>{{ detail }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if object.is_delayed and object.delay_reason %}
+    <div class="mt-4 pt-4 border-t border-base-300">
+      <p class="text-xs text-base-content/60 mb-1">{% translate "Delay" %}</p>
+      <p class="text-sm">{{ object.delay_reason }}</p>
+    </div>
+  {% endif %}
+
+  <div class="mt-4 pt-4 border-t border-base-300">
+    {% include "scm/visibility/components/tracking_freshness.html" with object=object %}
+  </div>
+</section>

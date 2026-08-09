@@ -1,0 +1,62 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/visibility/components/tracking_freshness.html" with object=object %}
+
+  How current the carrier information is, and — separately — what the carrier is
+  telling us. NO_DATA (the carrier does not know this reference yet),
+  NOT_CONFIGURED (we never got to ask) and ERROR (we asked and it failed) mean
+  three different things and are never collapsed into one "no tracking".
+{% endcomment %}
+
+<dl class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+  <div>
+    <dt class="text-xs text-base-content/60">{% translate "Last checked" %}</dt>
+    <dd class="text-sm font-medium">
+      {% if object.last_synced_at %}
+        {% blocktranslate trimmed with ago=object.last_synced_at|timesince %}{{ ago }} ago{% endblocktranslate %}
+        <span class="block text-xs text-base-content/50 font-normal">{{ object.last_synced_at|date:"d M H:i" }}</span>
+      {% else %}
+        <span class="text-base-content/50">{% translate "Never" %}</span>
+      {% endif %}
+    </dd>
+  </div>
+  <div>
+    <dt class="text-xs text-base-content/60">{% translate "Last carrier event" %}</dt>
+    <dd class="text-sm font-medium">
+      {% if object.last_event_at %}
+        {% blocktranslate trimmed with ago=object.last_event_at|timesince %}{{ ago }} ago{% endblocktranslate %}
+        <span class="block text-xs text-base-content/50 font-normal">{{ object.last_event_at|date:"d M H:i" }}</span>
+      {% else %}
+        <span class="text-base-content/50">{% translate "None yet" %}</span>
+      {% endif %}
+    </dd>
+  </div>
+  <div>
+    <dt class="text-xs text-base-content/60">{% translate "Next check" %}</dt>
+    <dd class="text-sm font-medium">
+      {% if object.next_check_at %}
+        {% blocktranslate trimmed with when=object.next_check_at|timeuntil %}in {{ when }}{% endblocktranslate %}
+        <span class="block text-xs text-base-content/50 font-normal">{{ object.next_check_at|date:"d M H:i" }}</span>
+      {% else %}
+        <span class="text-base-content/50">{% translate "Not scheduled" %}</span>
+      {% endif %}
+    </dd>
+  </div>
+</dl>
+
+<p class="text-xs mt-3">
+  {% if not object.is_tracked %}
+    <span class="text-base-content/50">○ {% translate "No carrier tracking for this yet" %}</span>
+  {% elif object.tracking_state == "error" or object.has_tracking_error %}
+    <span class="text-error">! {% translate "Tracking error" %} — {{ object.tracking_state_label }}</span>
+  {% elif object.tracking_state == "not_configured" %}
+    <span class="text-warning">! {% translate "Carrier not configured for live tracking" %}</span>
+  {% elif object.tracking_state == "no_data" %}
+    <span class="text-base-content/60">○ {% translate "Carrier has no data for this reference yet" %}</span>
+  {% elif object.tracking_state == "pending" %}
+    <span class="text-base-content/60">○ {% translate "Waiting for the first sync" %}</span>
+  {% else %}
+    <span class="text-success">● {{ object.tracking_state_label|default:_("Tracking") }}</span>
+  {% endif %}
+</p>
