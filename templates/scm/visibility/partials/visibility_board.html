@@ -1,0 +1,130 @@
+{% load i18n %}
+
+{% comment %}
+  Statistics, filters and lists. Swapped whole by HTMX whenever a filter changes.
+
+  The map is deliberately outside this element. `data-scm-map-source` carries the
+  GeoJSON URL for the current selection, and the map module points its existing
+  source at it — so filtering replaces the data without rebuilding the map, and
+  the view the user had panned to survives.
+{% endcomment %}
+
+<div id="visibility-board" data-scm-map-source="{{ map_data_url }}">
+
+  <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+    {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" %}
+    {% include "scm/components/metric_card.html" with label=_("Containers tracking") value=overview.tracked_containers icon="fa-box" %}
+    {% include "scm/components/metric_card.html" with label=_("Arriving <7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" %}
+    {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed|length icon="fa-clock" color="warning" %}
+    {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exceptions|length icon="fa-triangle-exclamation" color="error" %}
+  </div>
+
+  <form
+    class="app-card mb-6 flex flex-wrap items-end gap-3"
+    hx-get="{% url 'visibility:overview' %}"
+    hx-target="#visibility-board"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+    hx-trigger="change, keyup changed delay:400ms from:input[name='search']"
+  >
+    <label class="form-control">
+      <span class="label-text text-xs">{% translate "Status" %}</span>
+      <select name="status" class="select select-sm select-bordered">
+        <option value="">{% translate "All" %}</option>
+        {% for value, label in overview.status_choices %}
+          <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="form-control">
+      <span class="label-text text-xs">{% translate "Carrier" %}</span>
+      <select name="carrier" class="select select-sm select-bordered">
+        <option value="">{% translate "All" %}</option>
+        {% for carrier in overview.carrier_choices %}
+          <option value="{{ carrier }}" {% if filters.carrier == carrier %}selected{% endif %}>{{ carrier }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="form-control">
+      <span class="label-text text-xs">{% translate "ETA" %}</span>
+      <select name="eta" class="select select-sm select-bordered">
+        <option value="">{% translate "All" %}</option>
+        <option value="7" {% if filters.eta_window == "7" %}selected{% endif %}>{% translate "Next 7 days" %}</option>
+        <option value="14" {% if filters.eta_window == "14" %}selected{% endif %}>{% translate "Next 14 days" %}</option>
+        <option value="30" {% if filters.eta_window == "30" %}selected{% endif %}>{% translate "Next 30 days" %}</option>
+        <option value="overdue" {% if filters.eta_window == "overdue" %}selected{% endif %}>{% translate "Overdue" %}</option>
+      </select>
+    </label>
+
+    <label class="form-control grow min-w-48">
+      <span class="label-text text-xs">{% translate "Search" %}</span>
+      <input
+        type="search"
+        name="search"
+        value="{{ filters.search }}"
+        placeholder="{% translate 'Container, shipment, vessel…' %}"
+        class="input input-sm input-bordered w-full"
+      >
+    </label>
+
+    <label class="label cursor-pointer gap-2">
+      <input type="checkbox" name="delayed" value="1" class="checkbox checkbox-sm" {% if filters.delayed_only %}checked{% endif %}>
+      <span class="label-text text-xs">{% translate "Delayed only" %}</span>
+    </label>
+
+    <label class="label cursor-pointer gap-2">
+      <input type="checkbox" name="exceptions" value="1" class="checkbox checkbox-sm" {% if filters.exceptions_only %}checked{% endif %}>
+      <span class="label-text text-xs">{% translate "Exceptions only" %}</span>
+    </label>
+
+    {% if filters.is_active %}
+      <a href="{% url 'visibility:overview' %}" class="btn btn-ghost btn-sm">{% translate "Clear" %}</a>
+    {% endif %}
+  </form>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <section class="app-card">
+      <h2 class="text-lg font-semibold mb-2">{% translate "Upcoming arrivals" %}</h2>
+      {% if overview.arriving_soon %}
+        <ul class="divide-y divide-base-200">
+          {% for object in overview.arriving_soon %}
+            {% include "scm/visibility/partials/visibility_object_row.html" with object=object %}
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-base-content/50 py-4">{% translate "Nothing arriving in the next 7 days." %}</p>
+      {% endif %}
+    </section>
+
+    <section class="app-card">
+      <h2 class="text-lg font-semibold mb-2">{% translate "Exceptions" %}</h2>
+      {% if overview.exceptions %}
+        <ul class="divide-y divide-base-200">
+          {% for object in overview.exceptions %}
+            {% include "scm/visibility/partials/visibility_object_row.html" with object=object %}
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-base-content/50 py-4">{% translate "No exceptions detected." %}</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="app-card mt-6">
+    <h2 class="text-lg font-semibold mb-2">{% translate "Active shipments and containers" %}</h2>
+    {% if overview.objects %}
+      <ul class="divide-y divide-base-200">
+        {% for object in overview.objects %}
+          {% include "scm/visibility/partials/visibility_object_row.html" with object=object %}
+        {% endfor %}
+      </ul>
+    {% elif filters.is_active %}
+      {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("Nothing matches these filters") message=_("Clear a filter to widen the search.") %}
+    {% else %}
+      {% url 'containers:list' as containers_url %}
+      {% include "scm/components/empty_state.html" with icon="fa-ship" title=_("Nothing is being tracked yet") message=_("Book a shipment or start tracking a container and it will appear here.") action_url=containers_url action_label=_("Go to containers") %}
+    {% endif %}
+  </section>
+</div>

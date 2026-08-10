@@ -1,0 +1,60 @@
+{% load i18n %}
+
+<div class="mb-3 flex flex-wrap gap-2">
+  <span class="badge badge-success badge-outline">{% translate "Valid" %}: {{ preview.new_count }}</span>
+  <span class="badge badge-ghost">{% translate "Already exists" %}: {{ preview.existing_count }}</span>
+  <span class="badge badge-error badge-outline">{% translate "Invalid" %}: {{ preview.invalid_count }}</span>
+</div>
+
+<div class="max-h-72 overflow-y-auto border border-base-300 rounded-box mb-4">
+  <table class="table table-sm table-pin-rows">
+    <tbody>
+      {% for row in preview.rows %}
+        <tr>
+          <td class="w-6">
+            {% if row.state == "new" %}
+              <span class="text-success">✓</span>
+            {% elif row.state == "exists" %}
+              <span class="text-base-content/40">–</span>
+            {% else %}
+              <span class="text-error">✕</span>
+            {% endif %}
+          </td>
+          <td class="font-mono">{{ row.number }}</td>
+          <td class="text-sm text-base-content/60">
+            {% if row.state == "new" %}
+              {% translate "New" %}
+            {% elif row.state == "exists" %}
+              {% translate "Already exists" %}
+            {% else %}
+              {% translate "Invalid" %} — {{ row.error }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<form
+  hx-post="{% url 'containers:import_confirm' %}"
+  hx-target="#intake-body"
+  hx-swap="innerHTML"
+>
+  {% csrf_token %}
+  <input type="hidden" name="entries" value="{{ payload }}">
+  <input type="hidden" name="tab" value="{{ tab }}">
+
+  <div class="modal-action">
+    <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">
+      {% translate "Cancel" %}
+    </button>
+    <button type="submit" class="btn btn-primary" {% if not preview.new_count %}disabled{% endif %}>
+      {% blocktranslate trimmed count counter=preview.new_count %}
+        Import {{ counter }} container
+      {% plural %}
+        Import {{ counter }} containers
+      {% endblocktranslate %}
+    </button>
+  </div>
+</form>

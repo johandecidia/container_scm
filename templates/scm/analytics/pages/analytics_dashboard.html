@@ -3,17 +3,66 @@
 
 {% block app %}
   {# Page header #}
-  <div class="mb-6">
-    <h1 class="text-2xl font-bold">{% translate "Overview" %}</h1>
-    <p class="text-sm text-base-content/60 mt-1">{% translate "Live supply chain status for your team." %}</p>
+  <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-bold">{% translate "Overview" %}</h1>
+      <p class="text-sm text-base-content/60 mt-1">{% translate "Live supply chain status for your team." %}</p>
+    </div>
+
+    {# Date filter #}
+    <form method="get" class="flex flex-wrap items-center gap-2">
+      <input
+        type="date"
+        name="date_from"
+        value="{{ date_from }}"
+        class="input input-sm input-bordered w-36"
+        placeholder="{% translate 'From' %}"
+      />
+      <input
+        type="date"
+        name="date_to"
+        value="{{ date_to }}"
+        class="input input-sm input-bordered w-36"
+        placeholder="{% translate 'To' %}"
+      />
+      <button type="submit" class="btn btn-sm btn-primary">{% translate "Filter" %}</button>
+      {% if date_from or date_to %}
+        <a href="{% url 'analytics:dashboard' %}" class="btn btn-sm btn-ghost">{% translate "Clear" %}</a>
+      {% endif %}
+    </form>
   </div>
 
+  {# Alerts #}
+  {% if alerts %}
+    <div class="space-y-2 mb-6">
+      {% for alert in alerts %}
+        <div class="alert
+          {% if alert.severity == 'error' %}alert-error
+          {% elif alert.severity == 'warning' %}alert-warning
+          {% else %}alert-info{% endif %}
+          alert-soft flex items-start gap-3 py-3">
+          <i class="fa
+            {% if alert.severity == 'error' %}fa-circle-xmark
+            {% elif alert.severity == 'warning' %}fa-triangle-exclamation
+            {% else %}fa-circle-info{% endif %}
+            mt-0.5 shrink-0"></i>
+          <div class="flex-1 min-w-0">
+            {% if alert.url %}
+              <a href="{{ alert.url }}" class="font-semibold link link-hover text-sm">{{ alert.title }}</a>
+            {% else %}
+              <p class="font-semibold text-sm">{{ alert.title }}</p>
+            {% endif %}
+            <p class="text-xs opacity-80">{{ alert.message }}</p>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {# Live KPI cards #}
-  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 mb-8">
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 mb-8">
     <a href="{% url 'shipments:list' %}?status=BOOKED&status=IN_TRANSIT" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
-      <div class="stat-figure text-primary/40">
-        <i class="fa fa-ship text-2xl"></i>
-      </div>
+      <div class="stat-figure text-primary/40"><i class="fa fa-ship text-2xl"></i></div>
       <div class="stat-title text-xs uppercase tracking-wide">{% translate "Active Shipments" %}</div>
       <div class="stat-value text-primary">{{ live_stats.active_shipments }}</div>
     </a>
@@ -28,19 +77,15 @@
     </a>
 
     <a href="{% url 'containers:list' %}?status=IN_TRANSIT" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
-      <div class="stat-figure text-warning/40">
-        <i class="fa fa-box text-2xl"></i>
-      </div>
-      <div class="stat-title text-xs uppercase tracking-wide">{% translate "In Transit" %}</div>
+      <div class="stat-figure text-warning/40"><i class="fa fa-box text-2xl"></i></div>
+      <div class="stat-title text-xs uppercase tracking-wide">{% translate "Containers In Transit" %}</div>
       <div class="stat-value text-warning">{{ live_stats.containers_in_transit }}</div>
     </a>
 
-    <a href="{% url 'containers:list' %}?status=AVAILABLE" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
-      <div class="stat-figure text-success/40">
-        <i class="fa fa-circle-check text-2xl"></i>
-      </div>
-      <div class="stat-title text-xs uppercase tracking-wide">{% translate "Available" %}</div>
-      <div class="stat-value text-success">{{ live_stats.containers_available }}</div>
+    <a href="{% url 'procurement:purchase_order_list' %}" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
+      <div class="stat-figure text-info/40"><i class="fa fa-file-invoice text-2xl"></i></div>
+      <div class="stat-title text-xs uppercase tracking-wide">{% translate "Open POs" %}</div>
+      <div class="stat-value text-info">{{ live_stats.open_purchase_orders }}</div>
     </a>
 
     <a href="{% url 'tracking:list' %}" class="stat rounded-box p-4 transition-colors
@@ -53,6 +98,161 @@
     </a>
   </div>
 
+  {# Main grid #}
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+    {# Transit time analytics #}
+    <section class="app-card">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Transit Times" %}
+        {% if date_from or date_to %}
+          <span class="text-xs font-normal text-base-content/50 ml-2">{% translate "filtered" %}</span>
+        {% endif %}
+      </h2>
+      {% if transit_stats.count > 0 %}
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Avg Days" %}</p>
+            <p class="text-2xl font-bold">{{ transit_stats.avg_days }}</p>
+          </div>
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Shipments" %}</p>
+            <p class="text-2xl font-bold">{{ transit_stats.count }}</p>
+          </div>
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Min Days" %}</p>
+            <p class="text-2xl font-bold">{{ transit_stats.min_days }}</p>
+          </div>
+          <div class="bg-base-200 rounded-box p-3">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Max Days" %}</p>
+            <p class="text-2xl font-bold">{{ transit_stats.max_days }}</p>
+          </div>
+        </div>
+        <div class="flex gap-4 text-sm">
+          <span class="text-success"><i class="fa fa-check-circle mr-1"></i>{% translate "On time:" %} {{ transit_stats.on_time_count }}</span>
+          <span class="text-error"><i class="fa fa-clock mr-1"></i>{% translate "Delayed:" %} {{ transit_stats.delayed_count }}</span>
+        </div>
+      {% else %}
+        {% include "scm/components/empty_state.html" with icon="fa-chart-line" title=_("No transit data yet") message=_("Delivered shipments with actual dates will appear here.") %}
+      {% endif %}
+    </section>
+
+    {# Container status #}
+    <section class="app-card">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Container Status" %}</h2>
+      {% if container_stats.total > 0 %}
+        <div class="grid grid-cols-2 gap-3">
+          <a href="{% url 'containers:list' %}?status=AVAILABLE" class="bg-success/10 rounded-box p-3 hover:bg-success/20 transition-colors">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Available" %}</p>
+            <p class="text-2xl font-bold text-success">{{ container_stats.available }}</p>
+          </a>
+          <a href="{% url 'containers:list' %}?status=IN_TRANSIT" class="bg-warning/10 rounded-box p-3 hover:bg-warning/20 transition-colors">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "In Transit" %}</p>
+            <p class="text-2xl font-bold text-warning">{{ container_stats.in_transit }}</p>
+          </a>
+          <a href="{% url 'containers:list' %}?status=BOOKED" class="bg-info/10 rounded-box p-3 hover:bg-info/20 transition-colors">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Booked" %}</p>
+            <p class="text-2xl font-bold text-info">{{ container_stats.booked }}</p>
+          </a>
+          <a href="{% url 'containers:discovery_dashboard' %}" class="bg-base-200 rounded-box p-3 hover:bg-base-300 transition-colors">
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Planned" %}</p>
+            <p class="text-2xl font-bold">{{ container_stats.planned_count }}</p>
+          </a>
+        </div>
+        {% if container_stats.in_transit_no_tracking > 0 %}
+          <div class="mt-3 text-sm text-warning flex items-center gap-2">
+            <i class="fa fa-satellite-dish"></i>
+            {% blocktranslate trimmed with n=container_stats.in_transit_no_tracking %}
+              {{ n }} in-transit container(s) have no tracking event in the last 7 days.
+            {% endblocktranslate %}
+          </div>
+        {% endif %}
+      {% else %}
+        {% include "scm/components/empty_state.html" with icon="fa-box" title=_("No containers yet") message=_("Add containers to track their status.") action_url="/scm/containers/create/" action_label=_("Add Container") %}
+      {% endif %}
+    </section>
+
+  </div>
+
+  {# Carrier performance #}
+  {% if carrier_data %}
+    <section class="app-card mb-6">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Carrier Performance" %}
+        {% if date_from or date_to %}
+          <span class="text-xs font-normal text-base-content/50 ml-2">{% translate "filtered" %}</span>
+        {% endif %}
+      </h2>
+      <div class="overflow-x-auto">
+        <table class="table table-sm w-full">
+          <thead>
+            <tr>
+              <th>{% translate "Carrier" %}</th>
+              <th class="text-right">{% translate "Shipments" %}</th>
+              <th class="text-right">{% translate "Delayed" %}</th>
+              <th class="text-right">{% translate "Exceptions" %}</th>
+              <th class="text-right">{% translate "On-Time %" %}</th>
+              <th class="text-right">{% translate "ETA Changes" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in carrier_data %}
+              <tr class="hover">
+                <td class="font-medium">{{ row.carrier }}</td>
+                <td class="text-right">{{ row.shipment_count }}</td>
+                <td class="text-right {% if row.delayed_count > 0 %}text-error{% endif %}">{{ row.delayed_count }}</td>
+                <td class="text-right {% if row.exception_count > 0 %}text-error{% endif %}">{{ row.exception_count }}</td>
+                <td class="text-right">
+                  {% if row.on_time_pct is not None %}
+                    <span class="{% if row.on_time_pct >= 90 %}text-success{% elif row.on_time_pct >= 70 %}text-warning{% else %}text-error{% endif %}">
+                      {{ row.on_time_pct }}%
+                    </span>
+                  {% else %}—{% endif %}
+                </td>
+                <td class="text-right">{{ row.eta_change_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  {# Supplier performance #}
+  {% if supplier_data %}
+    <section class="app-card mb-6">
+      <h2 class="text-lg font-semibold mb-4">{% translate "Supplier Performance" %}
+        {% if date_from or date_to %}
+          <span class="text-xs font-normal text-base-content/50 ml-2">{% translate "filtered" %}</span>
+        {% endif %}
+      </h2>
+      <div class="overflow-x-auto">
+        <table class="table table-sm w-full">
+          <thead>
+            <tr>
+              <th>{% translate "Supplier" %}</th>
+              <th class="text-right">{% translate "POs" %}</th>
+              <th class="text-right">{% translate "Completed" %}</th>
+              <th class="text-right">{% translate "In Progress" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in supplier_data %}
+              <tr class="hover">
+                <td>
+                  <p class="font-medium">{{ row.supplier_name }}</p>
+                  <p class="text-xs text-base-content/50">{{ row.supplier_no }}</p>
+                </td>
+                <td class="text-right">{{ row.po_count }}</td>
+                <td class="text-right text-success">{{ row.completed_delivery_count }}</td>
+                <td class="text-right text-warning">{{ row.partial_delivery_count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  {# Bottom row: Snapshot KPIs + Latest Imports #}
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     {# Snapshot KPIs — historical #}
     <section class="app-card">
@@ -60,9 +260,7 @@
         <h2 class="text-lg font-semibold">{% translate "Snapshot KPIs" %}</h2>
         {% if snapshot %}
           <span class="text-xs text-base-content/50">
-            {% blocktranslate trimmed with date=snapshot.date %}
-              Last updated: {{ date }}
-            {% endblocktranslate %}
+            {% blocktranslate trimmed with date=snapshot.date %}Last updated: {{ date }}{% endblocktranslate %}
           </span>
         {% endif %}
       </div>
@@ -77,7 +275,7 @@
             <p class="text-2xl font-bold">{{ snapshot.completed_shipments }}</p>
           </div>
           <div class="bg-base-200 rounded-box p-3">
-            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Delivered" %}</p>
+            <p class="text-xs text-base-content/60 uppercase tracking-wide">{% translate "Containers Delivered" %}</p>
             <p class="text-2xl font-bold">{{ snapshot.containers_delivered }}</p>
           </div>
           <div class="bg-base-200 rounded-box p-3">
@@ -102,13 +300,13 @@
         <ul class="divide-y divide-base-200">
           {% for job in live_stats.recent_imports %}
             <li class="py-2 flex items-center justify-between gap-2">
-              <div>
-                <a href="{% url 'imports:detail' job.pk %}" class="text-sm font-medium link link-hover">
+              <div class="min-w-0">
+                <a href="{% url 'imports:detail' job.pk %}" class="text-sm font-medium link link-hover truncate block">
                   {{ job.original_filename|default:job.pk }}
                 </a>
                 <p class="text-xs text-base-content/50">{{ job.created_at|date:"Y-m-d H:i" }}</p>
               </div>
-              <span class="badge badge-sm
+              <span class="badge badge-sm shrink-0
                 {% if job.status == 'COMPLETED' %}badge-success
                 {% elif job.status == 'FAILED' %}badge-error
                 {% elif job.status == 'IN_PROGRESS' %}badge-warning

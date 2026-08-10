@@ -17,6 +17,37 @@ All contributors must follow these rules consistently across every SCM sub-app.
 | `imports`      | File-based data import jobs                  |
 | `integrations` | External system integrations (carriers, etc) |
 | `analytics`    | Aggregations and reporting                   |
+| `tracking`     | Carrier subscriptions, events, ETA, position |
+| `visibility`   | Read-only composition layer + map GeoJSON    |
+
+---
+
+## Composition layers
+
+`visibility` is not a domain app. It owns no models, no data and no writes: it
+reads containers, shipments, tracking subscriptions, tracking events and ETA
+history, composes one answer to "where is everything, and how well do we know
+it", and renders that as a page and as GeoJSON for Mapbox.
+
+It therefore does **not** carry the standard file set below. It has no
+`models.py`, `forms.py`, `services.py` or `admin.py`, and adding empty ones would
+suggest this is somewhere data can originate — which is exactly what it must not
+become. Its files are:
+
+```
+apps/scm/visibility/
+    apps.py         # AppConfig only; no models
+    selectors.py    # Read composition over the other apps' read models
+    read_models.py  # VisibilityObject and its presentation groupings
+    geojson.py      # The GeoJSON contract for Mapbox
+    context.py      # Map context for the shipment and container detail pages
+    mapbox.py       # Browser-side Mapbox configuration
+    views.py        # HTTP and rendering
+    urls.py
+```
+
+A new composition layer is the exception, not the pattern. Anything that stores
+data is a domain app and follows the rules below.
 
 ---
 

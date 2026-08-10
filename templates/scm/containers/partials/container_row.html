@@ -12,8 +12,20 @@
   </td>
   <td class="text-sm">{{ container.equipment_type.description|default:"—" }}</td>
   <td>{% include "scm/components/status_badge.html" with status=container.status %}</td>
+  <td class="text-sm text-base-content/60">{{ container.tracking_carrier_name|default:"—" }}</td>
+  <td class="text-sm whitespace-nowrap">
+    {% if container.tracking_watch_status == "failed" or container.tracking_carrier_status == "error" %}
+      <span class="text-error">! {% translate "Error" %}</span>
+    {% elif container.tracking_watch_status == "active" %}
+      <span class="text-success">● {% translate "Active" %}</span>
+    {% elif container.tracking_watch_status %}
+      <span class="text-base-content/50">○ {% translate "Paused" %}</span>
+    {% else %}
+      <span class="text-base-content/40">○ {% translate "Not tracked" %}</span>
+    {% endif %}
+  </td>
   <td class="text-sm">{{ container.get_condition_display }}</td>
-  <td class="text-sm text-base-content/60">{{ container.current_location|default:"—" }}</td>
+  <td class="text-sm text-base-content/60">{{ container.current_location.name|default:"—" }}</td>
   <td class="text-sm text-base-content/60">{{ container.manufacturer|default:"—" }}</td>
   <td class="text-right">
     <div class="flex justify-end gap-1">

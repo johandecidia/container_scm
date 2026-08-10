@@ -18,6 +18,20 @@ class MaerskCapabilitiesTest(unittest.TestCase):
         defn = get_carrier_definition("maersk")
         self.assertTrue(defn.capabilities.supports_pull)
 
+    def test_maersk_does_not_require_an_account_number(self):
+        """The public Track & Trace endpoint answers on the consumer key alone."""
+        defn = get_carrier_definition("maersk")
+        self.assertFalse(defn.capabilities.requires_account_number)
+
+    def test_registry_and_client_agree_on_the_account_number(self):
+        from apps.scm.integrations.carriers.maersk.client import MaerskClient
+
+        defn = get_carrier_definition("maersk")
+        self.assertEqual(
+            defn.capabilities.requires_account_number,
+            MaerskClient.capabilities.requires_account_number,
+        )
+
 
 class HapagLloydCapabilitiesTest(unittest.TestCase):
     def test_hapag_lloyd_supports_webhooks(self):

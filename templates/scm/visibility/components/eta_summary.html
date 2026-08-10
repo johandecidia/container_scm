@@ -1,0 +1,100 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/visibility/components/eta_summary.html" with object=object eta_history=eta_history %}
+
+  The ETA and where it came from, always together: a date taken from the carrier's
+  own forecast for this box is a different claim from the date the business planned
+  around, and the two are shown as such.
+{% endcomment %}
+
+<dl class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+  <div>
+    <dt class="text-xs text-base-content/60">{% translate "Current ETA" %}</dt>
+    <dd class="text-sm font-medium">
+      {{ object.current_eta|date:"d M Y"|default:"—" }}
+      {% if object.current_eta_at %}
+        <span class="block text-xs text-base-content/50 font-normal">
+          {% blocktranslate trimmed with when=object.current_eta_at|date:"H:i" %}Carrier estimate, {{ when }}{% endblocktranslate %}
+        </span>
+      {% endif %}
+    </dd>
+  </div>
+  <div>
+    <dt class="text-xs text-base-content/60">{% translate "ETA source" %}</dt>
+    <dd class="text-sm font-medium">
+      {% if object.eta_source == "tracking" %}
+        {% translate "Carrier tracking" %}
+      {% elif object.eta_source == "shipment" %}
+        {% translate "Shipment" %}
+      {% else %}
+        <span class="text-base-content/50">{% translate "No ETA yet" %}</span>
+      {% endif %}
+    </dd>
+  </div>
+  <div>
+    <dt class="text-xs text-base-content/60">{% translate "Original ETA" %}</dt>
+    <dd class="text-sm font-medium">{{ object.original_eta|date:"d M Y"|default:"—" }}</dd>
+  </div>
+  <div>
+    <dt class="text-xs text-base-content/60">{% translate "Change" %}</dt>
+    <dd class="text-sm font-medium">
+      {% if object.eta_change_days is None %}
+        —
+      {% elif object.eta_change_days > 0 %}
+        <span class="text-warning">
+          {% blocktranslate trimmed count days=object.eta_change_days %}
+            {{ days }} day later
+          {% plural %}
+            {{ days }} days later
+          {% endblocktranslate %}
+        </span>
+      {% elif object.eta_change_days < 0 %}
+        <span class="text-success">
+          {% blocktranslate trimmed with days=object.eta_change_days|cut:"-" %}{{ days }} days earlier{% endblocktranslate %}
+        </span>
+      {% else %}
+        {% translate "Unchanged" %}
+      {% endif %}
+    </dd>
+  </div>
+</dl>
+
+{% if eta_history %}
+  {% comment %}
+    Carriers forecast to the hour and ETAHistory keeps that precision, so it is
+    shown: a slip from 06:00 to 22:00 is a working day lost and would vanish if
+    rounded to a date.
+  {% endcomment %}
+  <details class="mt-4">
+    <summary class="text-xs text-base-content/60 cursor-pointer">
+      {% blocktranslate trimmed count changes=eta_history|length %}
+        {{ changes }} ETA change
+      {% plural %}
+        {{ changes }} ETA changes
+      {% endblocktranslate %}
+    </summary>
+    <ol class="mt-2 divide-y divide-base-200">
+      {% for change in eta_history %}
+        <li class="py-2 flex items-baseline justify-between gap-3 text-xs">
+          <span class="text-base-content/50 shrink-0">{{ change.changed_at|date:"d M H:i" }}</span>
+          <span class="grow">
+            {{ change.previous_eta_at|date:"d M H:i"|default:change.previous_eta|date:"d M"|default:"—" }}
+            →
+            <span class="font-medium">
+              {{ change.new_eta_at|date:"d M H:i"|default:change.new_eta|date:"d M"|default:"—" }}
+            </span>
+            {% if change.location_name %}
+              <span class="text-base-content/50">· {{ change.location_name }}</span>
+            {% endif %}
+          </span>
+          {% if change.delta_minutes %}
+            <span class="shrink-0 {% if change.is_delay %}text-warning{% else %}text-success{% endif %}">
+              {% if change.is_delay %}+{% endif %}{{ change.delta_minutes }} min
+            </span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+  </details>
+{% endif %}

@@ -1,4 +1,10 @@
-"""Tests for shipment workspace selector — team isolation and data assembly."""
+"""Tests for the shipment detail read context — data assembly and team isolation.
+
+These used to cover ``get_shipment_workspace``, which assembled the same
+containers, subscriptions and latest tracking event that
+``get_shipment_detail_context`` already assembled. The detail page built both and
+paid for both. The workspace is gone; the assertions it earned are here.
+"""
 
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
@@ -6,7 +12,7 @@ from django.urls import reverse
 from apps.scm.containers.models import Container, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.scm.shipments.models import Shipment, ShipmentContainer, ShipmentEvent
-from apps.scm.shipments.selectors import ShipmentWorkspace, get_shipment_workspace
+from apps.scm.shipments.selectors import get_shipment_detail_context, get_shipment_events
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
 from apps.users.models import CustomUser
@@ -40,7 +46,10 @@ def _shipment(team: Team, number: str = "SWS-001", **kwargs) -> Shipment:
     return Shipment.objects.create(team=team, shipment_number=number, **kwargs)
 
 
-class ShipmentWorkspaceSelectorTest(TestCase):
+class ShipmentDetailContextTest(TestCase):
+    team: Team
+    shipment: Shipment
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="SWS Team", slug="sws-team")
@@ -54,39 +63,34 @@ class ShipmentWorkspaceSelectorTest(TestCase):
             description="Shipment created.",
         )
 
-    def test_returns_shipment_workspace_dataclass(self):
-        ws = get_shipment_workspace(self.team, self.shipment)
-        self.assertIsInstance(ws, ShipmentWorkspace)
+    def _context(self, shipment=None) -> dict:
+        return get_shipment_detail_context(self.team, (shipment or self.shipment).pk)
 
-    def test_workspace_includes_shipment(self):
-        ws = get_shipment_workspace(self.team, self.shipment)
-        self.assertEqual(ws.shipment, self.shipment)
+    def test_context_includes_the_shipment(self):
+        self.assertEqual(self._context()["shipment"], self.shipment)
 
-    def test_workspace_includes_containers(self):
-        ws = get_shipment_workspace(self.team, self.shipment)
-        self.assertIn(self.sc, ws.containers)
+    def test_context_includes_containers(self):
+        self.assertIn(self.sc, self._context()["containers"])
 
-    def test_workspace_includes_events(self):
-        ws = get_shipment_workspace(self.team, self.shipment)
-        self.assertIn(self.event, ws.events)
+    def test_context_includes_the_shipments_own_events_on_the_timeline(self):
+        titles = {item.title for item in self._context()["timeline_events"]}
+        self.assertIn(self.event.get_event_type_display(), titles)
 
-    def test_workspace_no_tracking_event_when_none(self):
-        ws = get_shipment_workspace(self.team, self.shipment)
-        self.assertIsNone(ws.latest_tracking_event)
+    def test_no_tracking_event_when_the_carrier_has_reported_nothing(self):
+        self.assertIsNone(self._context()["latest_tracking_event"])
 
-    def test_workspace_other_team_shipment_returns_empty_containers(self):
-        other_shipment = _shipment(self.other_team, "SWS-OTHER")
-        ws = get_shipment_workspace(self.team, other_shipment)
-        self.assertEqual(ws.containers, [])
+    def test_another_teams_shipment_is_not_reachable_by_id(self):
+        other = _shipment(self.other_team, "SWS-OTHER")
+        with self.assertRaises(Shipment.DoesNotExist):
+            get_shipment_detail_context(self.team, other.pk)
 
-    def test_workspace_other_team_shipment_returns_empty_events(self):
-        other_shipment = _shipment(self.other_team, "SWS-OTHER-EV")
-        ws = get_shipment_workspace(self.team, other_shipment)
-        self.assertEqual(ws.events, [])
+    def test_another_teams_shipment_yields_no_events(self):
+        other = _shipment(self.other_team, "SWS-OTHER-EV")
+        self.assertEqual(list(get_shipment_events(self.team, other)), [])
 
 
 @override_settings(STORAGES=_TEST_STORAGES)
-class ShipmentDetailViewWorkspaceTest(TestCase):
+class ShipmentDetailViewTest(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="SWS View Team", slug="sws-view-team")
@@ -101,7 +105,8 @@ class ShipmentDetailViewWorkspaceTest(TestCase):
         client.force_login(self.user)
         response = client.get(reverse("shipments:detail", kwargs={"pk": self.shipment.pk}))
         self.assertEqual(response.status_code, 200)
-        self.assertIn("workspace", response.context)
+        self.assertIn("containers", response.context)
+        self.assertIn("visibility", response.context)
 
     def test_detail_view_404_for_other_team_shipment(self):
         client = Client()

@@ -46,11 +46,18 @@ RUN SECRET_KEY=dummy \
     DJANGO_VITE_DEV_MODE=False \
     python manage.py collectstatic --noinput
 
+# The Beat schedule lives in the database (DatabaseScheduler), so it is deployed
+# state like the schema is. Bootstrapping it alongside migrate keeps the two in step:
+# a release that adds a scheduled task starts running it without a manual step. The
+# worker/beat service runs this same image with its own start command, so this must
+# happen here, in the release path every deploy takes.
 RUN printf '#!/bin/sh\n\
 set -e\n\
 PORT_RUN=${PORT:-8000}\n\
 echo "Running migrations..."\n\
 python manage.py migrate --no-input\n\
+echo "Bootstrapping scheduled tasks..."\n\
+python manage.py bootstrap_celery_tasks\n\
 echo "Starting Gunicorn on port $PORT_RUN..."\n\
 gunicorn container_scm.wsgi:application --bind 0.0.0.0:$PORT_RUN --workers 2\n' > /start.sh \
     && chmod +x /start.sh

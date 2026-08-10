@@ -22,8 +22,79 @@ DEFAULT_CONTAINER_MAPPING: dict[str, str] = {
     "Manufacturer": "manufacturer",
 }
 
+DEFAULT_CONTAINER_MOVEMENT_MAPPING: dict[str, str] = {
+    "Container No": "container_number",
+    "Container Number": "container_number",
+    "Container ID": "container_number",
+    "Container": "container_number",
+    "Location": "location_name",
+    "Location Name": "location_name",
+    "Depot": "location_name",
+    "Location Type": "location_type",
+    "Type": "location_type",
+    "Country": "country",
+    "City": "city",
+    "Address": "address",
+    "Occurred At": "occurred_at",
+    "Date": "occurred_at",
+    "Event Date": "occurred_at",
+    "Source": "source",
+    "Notes": "notes",
+}
+
+DEFAULT_PO_MAPPING: dict[str, str] = {
+    # PO header
+    "PO Number": "po_number",
+    "PO No": "po_number",
+    "Purchase Order": "po_number",
+    "Order Number": "po_number",
+    "Supplier No": "supplier_no",
+    "Supplier Number": "supplier_no",
+    "Vendor No": "supplier_no",
+    "Vendor Number": "supplier_no",
+    "Supplier Name": "supplier_name",
+    "Vendor Name": "supplier_name",
+    "Order Date": "order_date",
+    "Expected Receipt Date": "expected_receipt_date",
+    "Expected Delivery Date": "expected_receipt_date",
+    "Delivery Date": "expected_receipt_date",
+    "Currency": "currency",
+    # PO line
+    "Line No": "line_no",
+    "Line Number": "line_no",
+    "Item No": "item_no",
+    "Item Number": "item_no",
+    "SKU": "item_no",
+    "Article": "item_no",
+    "Article No": "item_no",
+    "Description": "description",
+    "Ordered Qty": "ordered_qty",
+    "Quantity": "ordered_qty",
+    "Qty": "ordered_qty",
+    "Order Qty": "ordered_qty",
+    "Unit Price": "unit_price",
+    "Price": "unit_price",
+    "Unit Cost": "unit_price",
+    "Direct Unit Cost": "unit_price",
+    # Identity mappings for pre-normalised rows (e.g. XML imports where field
+    # names already match the target schema field names).
+    "po_number": "po_number",
+    "supplier_no": "supplier_no",
+    "supplier_name": "supplier_name",
+    "order_date": "order_date",
+    "expected_receipt_date": "expected_receipt_date",
+    "currency": "currency",
+    "line_no": "line_no",
+    "item_no": "item_no",
+    "description": "description",
+    "ordered_qty": "ordered_qty",
+    "unit_price": "unit_price",
+}
+
 _DEFAULT_MAPPINGS: dict[str, dict[str, str]] = {
     ImportJob.ImportType.CONTAINERS: DEFAULT_CONTAINER_MAPPING,
+    ImportJob.ImportType.CONTAINER_MOVEMENTS: DEFAULT_CONTAINER_MOVEMENT_MAPPING,
+    ImportJob.ImportType.PURCHASE_ORDERS: DEFAULT_PO_MAPPING,
 }
 
 

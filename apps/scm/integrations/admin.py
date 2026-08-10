@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import Integration, IntegrationCredential, IntegrationRequestLog, IntegrationWebhookEvent
+from .models import (
+    Integration,
+    IntegrationCredential,
+    IntegrationRequestLog,
+    IntegrationSyncRun,
+    IntegrationWebhookEvent,
+)
 
 
 @admin.register(Integration)
@@ -60,6 +66,53 @@ class IntegrationRequestLogAdmin(admin.ModelAdmin):
         "request_id",
         "success",
         "error_message",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(IntegrationSyncRun)
+class IntegrationSyncRunAdmin(admin.ModelAdmin):
+    list_display = [
+        "integration",
+        "resource_type",
+        "status",
+        "trigger_type",
+        "records_fetched",
+        "records_created",
+        "records_updated",
+        "records_unchanged",
+        "records_failed",
+        "started_at",
+        "finished_at",
+        "team",
+    ]
+    list_filter = ["status", "resource_type", "trigger_type", "team"]
+    search_fields = ["integration__name", "integration__provider_code", "correlation_id"]
+    readonly_fields = [
+        "team",
+        "integration",
+        "resource_type",
+        "status",
+        "trigger_type",
+        "started_at",
+        "finished_at",
+        "correlation_id",
+        "watermark_from",
+        "watermark_to",
+        "records_fetched",
+        "records_created",
+        "records_updated",
+        "records_unchanged",
+        "records_failed",
+        "error_summary",
+        "metadata",
         "created_at",
         "updated_at",
     ]

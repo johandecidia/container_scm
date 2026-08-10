@@ -1,0 +1,82 @@
+{% load i18n %}
+
+{% comment %}
+  The one map component. Included by the visibility overview, the shipment detail
+  page and the container detail page; the only differences are the mode, the
+  GeoJSON URL and the height.
+
+  Usage:
+    {% include "scm/visibility/components/map_card.html" with
+       map_title=_("Supply Chain Map") map_height="h-[28rem]" %}
+
+  Reads from context: mapbox, map_mode, map_data_url.
+  Optional: map_title, map_height, map_panel_target, map_note.
+
+  Without a Mapbox token the card renders a configuration notice and the rest of
+  the page — timeline, ETA, tracking state — carries on working. The map is an
+  enhancement, and a missing token must never take a page down with it.
+{% endcomment %}
+
+<section class="app-card">
+  <div class="flex items-start justify-between gap-4 mb-3">
+    <div>
+      <h2 class="text-lg font-semibold">{{ map_title|default:_("Map") }}</h2>
+      {% if map_note %}
+        <p class="text-xs text-base-content/60 mt-0.5">{{ map_note }}</p>
+      {% endif %}
+    </div>
+
+    {% comment %}
+      The legend is the honest part of the map: it says that a solid line joins
+      places the carrier confirmed rather than tracing a vessel, and that a dashed
+      one is still a forecast.
+    {% endcomment %}
+    <div class="flex flex-wrap items-center gap-3 text-xs text-base-content/60 shrink-0">
+      {% if map_mode == "overview" %}
+        <span class="inline-flex items-center gap-1">
+          <span class="inline-block w-2.5 h-2.5 rounded-full bg-success"></span>{% translate "On time" %}
+        </span>
+        <span class="inline-flex items-center gap-1">
+          <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>{% translate "Delayed" %}
+        </span>
+        <span class="inline-flex items-center gap-1">
+          <span class="inline-block w-2.5 h-2.5 rounded-full bg-error"></span>{% translate "Exception" %}
+        </span>
+      {% else %}
+        <span class="inline-flex items-center gap-1">
+          <span class="inline-block w-5 border-t-2 border-teal-700"></span>{% translate "Confirmed events" %}
+        </span>
+        <span class="inline-flex items-center gap-1">
+          <span class="inline-block w-5 border-t-2 border-dashed border-indigo-500"></span>{% translate "Forecast" %}
+        </span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if mapbox.is_configured %}
+    <div
+      data-scm-map
+      data-mapbox-token="{{ mapbox.token }}"
+      data-mapbox-style="{{ mapbox.style_url }}"
+      data-map-mode="{{ map_mode }}"
+      data-map-data-url="{{ map_data_url }}"
+      {% if map_panel_target %}data-map-panel-target="{{ map_panel_target }}"{% endif %}
+      class="w-full rounded-box overflow-hidden bg-base-200 {{ map_height|default:'h-96' }}"
+    ></div>
+    {% if map_mode != "overview" %}
+      <p class="text-xs text-base-content/50 mt-2">
+        {% translate "Lines connect the places the carrier reported, in order. They are not a vessel track." %}
+      </p>
+    {% endif %}
+  {% else %}
+    <div class="rounded-box bg-base-200 border border-dashed border-base-300 p-8 text-center {{ map_height|default:'h-96' }} flex flex-col items-center justify-center">
+      <i class="fa fa-map text-4xl text-base-content/20 mb-3"></i>
+      <p class="text-sm font-medium text-base-content/70">{% translate "Map not configured" %}</p>
+      <p class="text-xs text-base-content/50 mt-1 max-w-sm">
+        {% blocktranslate trimmed %}
+          Set MAPBOX_PUBLIC_TOKEN to show the map. Everything else on this page works without it.
+        {% endblocktranslate %}
+      </p>
+    </div>
+  {% endif %}
+</section>

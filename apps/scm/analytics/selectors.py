@@ -6,8 +6,9 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from apps.teams.models import Team
+from apps.users.models import CustomUser
 
-from .models import AnalyticsSnapshot
+from .models import AnalyticsSnapshot, SavedFilter
 
 
 def get_snapshots_for_team(team: Team) -> QuerySet[AnalyticsSnapshot]:
@@ -33,7 +34,9 @@ def get_live_dashboard_stats(team: Team) -> dict:
     """
     from apps.scm.containers.models import Container
     from apps.scm.imports.models import ImportJob
+    from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderStatus
     from apps.scm.shipments.models import Shipment
+    from apps.scm.supplier_deliveries.models import SupplierDelivery, SupplierDeliveryStatus
     from apps.scm.tracking.models import TrackingSubscription
 
     today = timezone.now().date()
@@ -46,4 +49,31 @@ def get_live_dashboard_stats(team: Team) -> dict:
         "containers_available": Container.objects.filter(team=team, status="AVAILABLE").count(),
         "tracking_issues": TrackingSubscription.objects.filter(team=team, status="FAILED").count(),
         "recent_imports": ImportJob.objects.filter(team=team).order_by("-created_at")[:5],
+        "open_purchase_orders": PurchaseOrder.objects.filter(
+            team=team,
+            status__in=[PurchaseOrderStatus.OPEN, PurchaseOrderStatus.RELEASED],
+        ).count(),
+        "partial_deliveries": SupplierDelivery.objects.filter(
+            team=team,
+            status__in=[
+                SupplierDeliveryStatus.SHIPPED,
+                SupplierDeliveryStatus.IN_TRANSIT,
+                SupplierDeliveryStatus.ARRIVED,
+            ],
+        ).count(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Saved filter selectors
+# ---------------------------------------------------------------------------
+
+
+def get_saved_filters(team: Team, user: CustomUser, view_key: str) -> QuerySet[SavedFilter]:
+    """Return saved filters for *user* on *team* for the given *view_key*."""
+    return SavedFilter.objects.filter(team=team, user=user, view_key=view_key)
+
+
+def get_saved_filter(team: Team, user: CustomUser, pk: int) -> SavedFilter | None:
+    """Return a single saved filter by pk, scoped to team and user."""
+    return SavedFilter.objects.filter(team=team, user=user, pk=pk).first()

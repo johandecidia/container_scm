@@ -7,21 +7,44 @@
       <h1 class="text-2xl font-bold">{% translate "Containers" %}</h1>
       <p class="text-sm text-base-content/60 mt-1">{% translate "Manage your container fleet." %}</p>
     </div>
-    <button
-      class="btn btn-primary btn-sm"
-      hx-get="{% url 'containers:create' %}"
-      hx-target="#modal-container"
-      hx-swap="innerHTML"
-    >
-      <i class="fa fa-plus w-4 h-4"></i>
-      {% translate "Add Container" %}
-    </button>
+    <div class="flex items-center gap-2">
+      <button
+        class="btn btn-primary btn-sm"
+        hx-get="{% url 'containers:create' %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-plus w-4 h-4"></i>
+        {% translate "Add Container" %}
+      </button>
+
+      <div class="dropdown dropdown-end">
+        <div tabindex="0" role="button" class="btn btn-outline btn-sm">
+          <i class="fa fa-file-import w-4 h-4"></i>
+          {% translate "Import" %}
+          <i class="fa fa-chevron-down w-3 h-3"></i>
+        </div>
+        <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-10 w-64 p-2 shadow">
+          <li>
+            <a hx-get="{% url 'containers:import_paste' %}" hx-target="#modal-container" hx-swap="innerHTML">
+              {% translate "Paste container numbers" %}
+            </a>
+          </li>
+          <li>
+            <a hx-get="{% url 'containers:import_csv' %}" hx-target="#modal-container" hx-swap="innerHTML">
+              {% translate "Upload CSV" %}
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
   </div>
 
   <section class="app-card">
     {% include "scm/containers/partials/container_filters.html" %}
+    {% include "scm/analytics/partials/saved_filters_panel.html" with saved_filters=saved_filters view_key=view_key %}
 
-    <div id="container-table">
+    <div id="container-table" class="mt-4">
       {% include "scm/containers/partials/container_table.html" %}
     </div>
   </section>

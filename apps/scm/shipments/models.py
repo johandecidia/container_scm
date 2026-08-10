@@ -15,8 +15,10 @@ class Shipment(BaseTeamModel):
         BOOKED = "BOOKED", _("Booked")
         IN_TRANSIT = "IN_TRANSIT", _("In Transit")
         ARRIVED = "ARRIVED", _("Arrived")
+        PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED", _("Partially Received")
         DELIVERED = "DELIVERED", _("Delivered")
         CANCELLED = "CANCELLED", _("Cancelled")
+        EXCEPTION = "EXCEPTION", _("Exception")
 
     shipment_number = models.CharField(_("shipment number"), max_length=100, blank=True)
     reference = models.CharField(_("reference"), max_length=100, blank=True)
@@ -35,6 +37,10 @@ class Shipment(BaseTeamModel):
     # Dates
     etd = models.DateField(_("estimated departure"), null=True, blank=True)
     eta = models.DateField(_("estimated arrival"), null=True, blank=True)
+    original_eta = models.DateField(_("original ETA"), null=True, blank=True)
+    eta_source = models.CharField(_("ETA source"), max_length=50, blank=True)
+    eta_last_updated = models.DateTimeField(_("ETA last updated"), null=True, blank=True)
+    eta_confidence = models.CharField(_("ETA confidence"), max_length=20, blank=True)
     actual_departure_at = models.DateTimeField(_("actual departure"), null=True, blank=True)
     actual_arrival_at = models.DateTimeField(_("actual arrival"), null=True, blank=True)
 
@@ -132,6 +138,8 @@ class ShipmentEvent(BaseModel):
         CANCELLED = "CANCELLED", _("Cancelled")
         # TODO: TRACKING_UPDATED events will be created by apps/scm/tracking/ Celery tasks
         TRACKING_UPDATED = "TRACKING_UPDATED", _("Tracking Updated")
+        SUPPLIER_DELIVERY_LINKED = "SUPPLIER_DELIVERY_LINKED", _("Supplier Delivery Linked")
+        EXCEPTION = "EXCEPTION", _("Exception")
         NOTE_ADDED = "NOTE_ADDED", _("Note Added")
 
     shipment = models.ForeignKey(

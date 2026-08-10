@@ -13,6 +13,48 @@ from apps.teams.models import Team
 from .models import ImportError, ImportJob, ImportRow
 
 
+def _validate_purchase_order_row(row: ImportRow, validated_data: dict, team: Team) -> list[dict]:
+    """Run DB/business-rule checks on a single PO import row.
+
+    Derives and stores ``po_external_id`` and ``line_external_id`` on
+    ``validated_data`` so the importer can use them without re-computing.
+    Issues a WARNING (not ERROR) when a PO line already exists — duplicates
+    are skipped at import time unless ``update_existing=True`` is requested.
+
+    Returns a list of error dicts:
+        {"field": str, "message": str, "code": str, "severity": str}
+    """
+    from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine
+
+    errors: list[dict] = []
+    po_number = validated_data.get("po_number", "")
+    line_no = validated_data.get("line_no", "")
+
+    # Derive stable external IDs for upserts (CSV has no BC GUID).
+    validated_data["po_external_id"] = po_number
+    validated_data["line_external_id"] = f"{po_number}-{line_no}"
+
+    # Duplicate PO line against existing DB data → warning, not error.
+    try:
+        po = PurchaseOrder.objects.get(team=team, external_id=po_number)
+        if PurchaseOrderLine.objects.filter(purchase_order=po, external_id=validated_data["line_external_id"]).exists():
+            errors.append(
+                {
+                    "field": "line_no",
+                    "message": (
+                        f"PO line {po_number}/{line_no} already exists. "
+                        "Row will be skipped unless update_existing is enabled."
+                    ),
+                    "code": "duplicate_po_line",
+                    "severity": ImportError.Severity.WARNING,
+                }
+            )
+    except PurchaseOrder.DoesNotExist:
+        pass
+
+    return errors
+
+
 def _validate_container_row(row: ImportRow, validated_data: dict, team: Team) -> list[dict]:
     """Run DB/business-rule checks on a single container row.
 
@@ -88,6 +130,7 @@ def _validate_container_row(row: ImportRow, validated_data: dict, team: Team) ->
 
 _VALIDATORS: dict = {
     ImportJob.ImportType.CONTAINERS: _validate_container_row,
+    ImportJob.ImportType.PURCHASE_ORDERS: _validate_purchase_order_row,
 }
 
 

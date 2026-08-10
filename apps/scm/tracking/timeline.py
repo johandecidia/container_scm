@@ -34,8 +34,8 @@ def get_tracking_timeline_items_for_shipment(team: Team, shipment) -> list[Track
         items.append(
             TrackingTimelineItem(
                 type="tracking",
-                title=event.get_event_type_display(),
-                description=event.description or event.status,
+                title=event.display_title,
+                description=event.description or event.status or event.carrier_reference,
                 datetime=event.event_datetime,
                 location=location,
                 source=event.provider.name if event.provider_id else "",

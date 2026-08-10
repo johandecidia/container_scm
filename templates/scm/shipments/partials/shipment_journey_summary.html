@@ -1,0 +1,84 @@
+{% load i18n %}
+
+{% comment %}
+  The summary beside the shipment map: route, carriage, current position with its
+  quality, ETA with its history, freshness, delay and exceptions.
+
+  Every value is composed by the visibility layer from tracking data that already
+  exists, so nothing here is stored twice, and fields the carrier has not given us
+  are absent rather than shown as fabricated blanks.
+{% endcomment %}
+
+<section class="app-card">
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <h2 class="text-lg font-semibold">{% translate "Journey" %}</h2>
+    <div class="flex items-center gap-2 shrink-0">
+      {% include "scm/visibility/components/health_badge.html" with object=visibility %}
+      <span class="badge badge-sm badge-ghost">{{ visibility.journey_state_label }}</span>
+    </div>
+  </div>
+
+  <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Route" %}</dt>
+      <dd class="text-sm font-medium">
+        {% if shipment.origin_port or shipment.destination_port %}
+          {{ shipment.origin_port|default:"—" }} → {{ shipment.destination_port|default:"—" }}
+        {% else %}
+          <span class="text-base-content/50">{% translate "No route recorded" %}</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Current status" %}</dt>
+      <dd class="text-sm font-medium">{{ visibility.current_status|default:"—" }}</dd>
+    </div>
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Carrier" %}</dt>
+      <dd class="text-sm font-medium">
+        {{ visibility.carrier_name|default:"—" }}
+        {% if visibility.vessel_name %}
+          <span class="block text-xs text-base-content/60 font-normal">
+            {{ visibility.vessel_name }}{% if visibility.voyage_number %} · {{ visibility.voyage_number }}{% endif %}
+            {% if visibility.vessel_imo %}· IMO {{ visibility.vessel_imo }}{% endif %}
+          </span>
+        {% endif %}
+      </dd>
+    </div>
+  </dl>
+
+  <dl class="mt-4 pt-4 border-t border-base-300">
+    {% include "scm/visibility/components/position_summary.html" with position=visibility.position %}
+  </dl>
+
+  <div class="mt-4 pt-4 border-t border-base-300">
+    {% include "scm/visibility/components/eta_summary.html" with object=visibility eta_history=eta_history %}
+  </div>
+
+  {% if visibility.is_delayed or visibility.exception_details %}
+    <div class="mt-4 pt-4 border-t border-base-300 grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {% if visibility.is_delayed %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Delay" %}</dt>
+          <dd class="text-sm">{{ visibility.delay_reason }}</dd>
+        </div>
+      {% endif %}
+      {% if visibility.exception_details %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Exceptions" %}</dt>
+          <dd class="text-sm">
+            <ul class="list-disc list-inside">
+              {% for detail in visibility.exception_details %}
+                <li>{{ detail }}</li>
+              {% endfor %}
+            </ul>
+          </dd>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="mt-4 pt-4 border-t border-base-300">
+    {% include "scm/visibility/components/tracking_freshness.html" with object=visibility %}
+  </div>
+</section>

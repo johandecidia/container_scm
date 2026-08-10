@@ -34,7 +34,10 @@ def import_upload(request):
             messages.success(request, _("File uploaded. Click 'Parse' to continue."))
             return redirect("imports:detail", pk=job.pk)
     else:
-        form = ImportUploadForm()
+        valid_types = {choice[0] for choice in ImportJob.ImportType.choices}
+        import_type_param = request.GET.get("import_type", "")
+        initial = {"import_type": import_type_param} if import_type_param in valid_types else {}
+        form = ImportUploadForm(initial=initial)
     return render(request, "scm/imports/pages/import_upload.html", {"form": form})
 
 

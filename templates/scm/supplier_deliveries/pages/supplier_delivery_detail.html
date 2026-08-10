@@ -1,0 +1,127 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'supplier_deliveries:list' %}">
+      &larr; {% translate "Supplier Deliveries" %}
+    </a>
+    <div class="flex items-center justify-between mt-2">
+      <div>
+        <h1 class="text-2xl font-bold">{{ delivery.delivery_reference }}</h1>
+        <p class="text-sm text-base-content/60 mt-1">{{ delivery.purchase_order.po_number }} — {{ delivery.supplier|default:delivery.purchase_order.supplier_name }}</p>
+      </div>
+      <a class="btn btn-outline btn-sm" href="{% url 'supplier_deliveries:update' delivery.pk %}">
+        {% translate "Edit" %}
+      </a>
+    </div>
+  </div>
+
+  {# Header info + PO summary #}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <section class="app-card">
+      <h2 class="font-semibold mb-3">{% translate "Delivery Details" %}</h2>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dt class="text-base-content/60">{% translate "Status" %}</dt>
+        <dd><span class="badge badge-outline badge-sm">{{ delivery.get_status_display }}</span></dd>
+
+        <dt class="text-base-content/60">{% translate "Planned Ship Date" %}</dt>
+        <dd>{{ delivery.planned_ship_date|default:"—" }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Planned Arrival Date" %}</dt>
+        <dd>{{ delivery.planned_arrival_date|default:"—" }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Actual Ship Date" %}</dt>
+        <dd>{{ delivery.actual_ship_date|default:"—" }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Actual Arrival Date" %}</dt>
+        <dd>{{ delivery.actual_arrival_date|default:"—" }}</dd>
+
+        {% if delivery.notes %}
+          <dt class="text-base-content/60">{% translate "Notes" %}</dt>
+          <dd>{{ delivery.notes }}</dd>
+        {% endif %}
+      </dl>
+    </section>
+
+    <section class="app-card">
+      <h2 class="font-semibold mb-3">{% translate "PO Quantity Summary" %}</h2>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dt class="text-base-content/60">{% translate "Ordered Qty" %}</dt>
+        <dd class="tabular-nums font-medium">{{ summary.ordered_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Planned Qty" %}</dt>
+        <dd class="tabular-nums">{{ summary.planned_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Shipped Qty" %}</dt>
+        <dd class="tabular-nums">{{ summary.shipped_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Received Qty" %}</dt>
+        <dd class="tabular-nums">{{ summary.received_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Remaining Qty" %}</dt>
+        <dd class="tabular-nums font-medium text-warning">{{ summary.remaining_qty }}</dd>
+      </dl>
+    </section>
+  </div>
+
+  {# Linked Shipments #}
+  {% if linked_shipments %}
+    <section class="app-card mb-6">
+      <h2 class="font-semibold mb-3">{% translate "Linked Shipments" %}</h2>
+      <ul class="divide-y divide-base-200">
+        {% for shipment in linked_shipments %}
+          <li class="py-3 flex items-center justify-between gap-2">
+            <div>
+              <a class="link link-primary font-medium text-sm" href="{% url 'shipments:detail' shipment.pk %}">
+                {{ shipment }}
+              </a>
+              {% if shipment.origin_port or shipment.destination_port %}
+                <p class="text-xs text-base-content/60">{{ shipment.origin_port|default:"?" }} → {{ shipment.destination_port|default:"?" }}</p>
+              {% endif %}
+            </div>
+            <span class="badge badge-outline badge-sm">{{ shipment.get_status_display }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {# Delivery Lines #}
+  <section class="app-card">
+    <h2 class="font-semibold mb-3">
+      {% translate "Delivery Lines" %}
+      {% if delivery_qty %}
+        <span class="text-sm font-normal text-base-content/60 ml-2">{% translate "Total" %}: {{ delivery_qty }}</span>
+      {% endif %}
+    </h2>
+    {% if lines %}
+      <div class="overflow-x-auto">
+        <table class="table table-zebra w-full text-sm">
+          <thead>
+            <tr>
+              <th>{% translate "Article" %}</th>
+              <th>{% translate "PO Line" %}</th>
+              <th class="text-right">{% translate "Delivery Qty" %}</th>
+              <th>{% translate "Unit" %}</th>
+              <th>{% translate "Container" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in lines %}
+              <tr>
+                <td>{{ line.article|default:line.purchase_order_line.item_no }}</td>
+                <td>{{ line.purchase_order_line.line_no }}</td>
+                <td class="text-right tabular-nums">{{ line.delivery_qty }}</td>
+                <td>{{ line.unit|default:"—" }}</td>
+                <td>{{ line.container|default:"—" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-base-content/60 text-sm">{% translate "No delivery lines." %}</p>
+    {% endif %}
+  </section>
+{% endblock %}

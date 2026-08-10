@@ -50,7 +50,10 @@ dbshell: ## Get a Database shell
 test: ## Run Django tests
 	@uv run manage.py test ${ARGS}
 
-init: setup-env start-bg migrations migrate npm-install-all bootstrap_content  ## Quickly get up and running (start containers and bootstrap DB)
+bootstrap-celery-tasks: ## Write settings.SCHEDULED_TASKS into the Celery Beat database schedule
+	@uv run manage.py bootstrap_celery_tasks
+
+init: setup-env start-bg migrations migrate npm-install-all bootstrap_content bootstrap-celery-tasks  ## Quickly get up and running (start containers and bootstrap DB)
 
 uv: ## Run a uv command
 	@uv $(filter-out $@,$(MAKECMDGOALS))

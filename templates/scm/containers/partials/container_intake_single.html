@@ -1,0 +1,59 @@
+{% load i18n %}
+
+<form
+  hx-post="{% url 'containers:create' %}"
+  hx-target="#intake-body"
+  hx-swap="innerHTML"
+>
+  {% csrf_token %}
+
+  {% if intake_error %}
+    <div class="alert alert-error mb-3"><span>{{ intake_error }}</span></div>
+  {% endif %}
+
+  <div class="form-control mb-1">
+    <label class="label" for="{{ form.container_number.id_for_label }}">
+      <span class="label-text">{{ form.container_number.label }}</span>
+      <span class="label-text-alt text-base-content/50">{% translate "Required" %}</span>
+    </label>
+    {{ form.container_number }}
+    <span class="label-text-alt text-base-content/50 mt-1">{{ form.container_number.help_text }}</span>
+    {% for error in form.container_number.errors %}
+      <p class="text-error text-sm mt-1">{{ error }}</p>
+    {% endfor %}
+  </div>
+
+  {# Live check: same parser and check-digit rule as the submit itself. #}
+  <div
+    id="container-number-feedback"
+    class="min-h-6 mb-3 text-sm"
+    hx-post="{% url 'containers:number_check' %}"
+    hx-trigger="keyup changed delay:400ms from:#{{ form.container_number.id_for_label }}, change from:#{{ form.container_number.id_for_label }}"
+    hx-include="#{{ form.container_number.id_for_label }}"
+    hx-target="this"
+    hx-swap="innerHTML"
+  ></div>
+
+  <div class="form-control mb-4">
+    <label class="label" for="{{ form.carrier.id_for_label }}">
+      <span class="label-text">{{ form.carrier.label }}</span>
+      <span class="label-text-alt text-base-content/50">{% translate "Optional" %}</span>
+    </label>
+    {{ form.carrier }}
+    <span class="label-text-alt text-base-content/50 mt-1">{{ form.carrier.help_text }}</span>
+    {% for error in form.carrier.errors %}
+      <p class="text-error text-sm mt-1">{{ error }}</p>
+    {% endfor %}
+  </div>
+
+  {% for error in form.non_field_errors %}
+    <p class="text-error text-sm mb-2">{{ error }}</p>
+  {% endfor %}
+
+  <div class="modal-action">
+    <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">
+      {% translate "Cancel" %}
+    </button>
+    <button type="submit" class="btn btn-primary">{% translate "Add container" %}</button>
+  </div>
+</form>

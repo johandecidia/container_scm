@@ -1,0 +1,141 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'procurement:purchase_order_list' %}">
+      &larr; {% translate "Purchase Orders" %}
+    </a>
+    <h1 class="text-2xl font-bold mt-2">{{ purchase_order.po_number }}</h1>
+    <p class="text-sm text-base-content/60 mt-1">{{ purchase_order.supplier_name }}</p>
+    {% if purchase_order.is_business_central %}
+      <span class="badge badge-info badge-sm mt-2" title="{% translate 'This purchase order is read-only in SCM.' %}">
+        {% translate "Managed by Business Central" %}
+      </span>
+    {% endif %}
+  </div>
+
+  {# Header info + fulfillment summary #}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <section class="app-card">
+      <h2 class="font-semibold mb-3">{% translate "Details" %}</h2>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dt class="text-base-content/60">{% translate "Status" %}</dt>
+        <dd><span class="badge badge-outline badge-sm">{{ purchase_order.get_status_display }}</span></dd>
+
+        <dt class="text-base-content/60">{% translate "Supplier No" %}</dt>
+        <dd>{{ purchase_order.supplier_no }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Order Date" %}</dt>
+        <dd>{{ purchase_order.order_date|default:"—" }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Expected Receipt" %}</dt>
+        <dd>{{ purchase_order.expected_receipt_date|default:"—" }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Currency" %}</dt>
+        <dd>{{ purchase_order.currency }}</dd>
+      </dl>
+    </section>
+
+    <section class="app-card">
+      <h2 class="font-semibold mb-3">{% translate "Fulfillment" %}</h2>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dt class="text-base-content/60">{% translate "Ordered Qty" %}</dt>
+        <dd class="tabular-nums font-medium">{{ fulfillment.ordered_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Shipped Qty" %}</dt>
+        <dd class="tabular-nums">{{ fulfillment.shipped_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "In Transit Qty" %}</dt>
+        <dd class="tabular-nums">{{ fulfillment.in_transit_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Arrived Qty" %}</dt>
+        <dd class="tabular-nums">{{ fulfillment.arrived_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Received Qty" %}</dt>
+        <dd class="tabular-nums">{{ fulfillment.received_qty }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Remaining Qty" %}</dt>
+        <dd class="tabular-nums font-medium text-warning">{{ fulfillment.remaining_qty }}</dd>
+      </dl>
+    </section>
+  </div>
+
+  {# PO Lines #}
+  <section class="app-card mb-6">
+    <h2 class="font-semibold mb-3">{% translate "Order Lines" %}</h2>
+    {% if lines %}
+      <div class="overflow-x-auto">
+        <table class="table table-zebra w-full text-sm">
+          <thead>
+            <tr>
+              <th>{% translate "Line" %}</th>
+              <th>{% translate "Item No" %}</th>
+              <th>{% translate "Description" %}</th>
+              <th class="text-right">{% translate "Ordered" %}</th>
+              <th class="text-right">{% translate "Shipped" %}</th>
+              <th class="text-right">{% translate "Received" %}</th>
+              <th class="text-right">{% translate "Unit Price" %}</th>
+              <th class="text-right">{% translate "Amount" %}</th>
+              <th>{% translate "Expected Receipt" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in lines %}
+              <tr>
+                <td>{{ line.line_no }}</td>
+                <td>{{ line.item_no }}</td>
+                <td>{{ line.description }}</td>
+                <td class="text-right tabular-nums">{{ line.ordered_qty }}</td>
+                <td class="text-right tabular-nums">{{ line.shipped_qty }}</td>
+                <td class="text-right tabular-nums">{{ line.received_qty }}</td>
+                <td class="text-right tabular-nums">{{ line.unit_price|default:"—" }}</td>
+                <td class="text-right tabular-nums">{{ line.line_amount|default:"—" }}</td>
+                <td>{{ line.expected_receipt_date|default:"—" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          {% if total_order_amount is not None %}
+            <tfoot>
+              <tr class="font-semibold">
+                <td colspan="7" class="text-right text-base-content/60 text-xs uppercase tracking-wide">{% translate "Total" %}</td>
+                <td class="text-right tabular-nums">{{ total_order_amount }}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          {% endif %}
+        </table>
+      </div>
+    {% else %}
+      <p class="text-base-content/60 text-sm">{% translate "No lines on this purchase order." %}</p>
+    {% endif %}
+  </section>
+
+  {# Timeline #}
+  <section class="app-card">
+    <h2 class="font-semibold mb-3">{% translate "Timeline" %}</h2>
+    {% if events %}
+      <ul class="timeline timeline-vertical">
+        {% for event in events %}
+          <li>
+            <div class="timeline-middle">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5 text-primary">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div class="timeline-end mb-4">
+              <p class="font-semibold text-sm">{{ event.get_event_type_display }}</p>
+              <p class="text-xs text-base-content/60">{{ event.timestamp }}</p>
+              {% if event.description %}
+                <p class="text-sm mt-1">{{ event.description }}</p>
+              {% endif %}
+            </div>
+            <hr />
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-base-content/60 text-sm">{% translate "No timeline events yet." %}</p>
+    {% endif %}
+  </section>
+{% endblock %}

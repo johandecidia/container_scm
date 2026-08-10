@@ -3,8 +3,100 @@ from typing import cast
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
-from .models import Container, EquipmentType
+from .intake import carrier_choices, parse_and_validate_container_number
+from .models import Container, ContainerLocation, EquipmentType
 from .utils import parse_container_id, validate_container_id
+
+MAX_PASTED_CONTAINERS = 500
+
+
+class QuickContainerForm(forms.Form):
+    """The primary "Add Container" form: a container number, and nothing else required.
+
+    Everything technical — the four ID components, equipment type, status and
+    condition — is derived or defaulted, and can be changed afterwards through the
+    normal edit form.
+    """
+
+    container_number = forms.CharField(
+        label=_("Container number"),
+        max_length=20,
+        help_text=_("Full ISO 6346 number, e.g. MSCU1234567"),
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full font-mono uppercase",
+                "placeholder": "MSCU1234567",
+                "autocomplete": "off",
+                "autofocus": "autofocus",
+            }
+        ),
+    )
+    carrier = forms.ChoiceField(
+        label=_("Carrier"),
+        choices=carrier_choices,
+        required=False,
+        help_text=_("Optional. Never guessed from the container number."),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    def clean_container_number(self) -> str:
+        """Normalise and validate through the shared intake rules."""
+        parts = parse_and_validate_container_number(self.cleaned_data["container_number"])
+        self.parts = parts
+        return f"{parts['owner_code']}{parts['category_id']}{parts['serial_number']}{parts['check_digit']}"
+
+
+class ContainerPasteForm(forms.Form):
+    """Bulk intake by pasting a list of container numbers."""
+
+    numbers = forms.CharField(
+        label=_("Container numbers"),
+        help_text=_("One per line, or separated by comma, semicolon or tab — paste straight from Excel."),
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full font-mono",
+                "rows": 8,
+                "placeholder": "TRDU9258963\nMSCU1234567\nCMAU7654321",
+            }
+        ),
+    )
+    carrier = forms.ChoiceField(
+        label=_("Carrier"),
+        choices=carrier_choices,
+        required=False,
+        help_text=_("Optional. Applied to every container in this list."),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    def clean_numbers(self) -> str:
+        from .intake import split_container_numbers
+
+        numbers = split_container_numbers(self.cleaned_data["numbers"])
+        if not numbers:
+            raise forms.ValidationError(_("Enter at least one container number."))
+        if len(numbers) > MAX_PASTED_CONTAINERS:
+            raise forms.ValidationError(
+                _("Too many container numbers at once — the maximum is %(max)s.") % {"max": MAX_PASTED_CONTAINERS}
+            )
+        return self.cleaned_data["numbers"]
+
+
+class ContainerCsvImportForm(forms.Form):
+    """Bulk intake from a small CSV: a ``container_number`` column, optional ``carrier``."""
+
+    file = forms.FileField(
+        label=_("CSV file"),
+        help_text=_("A container_number column is required; a carrier column is optional."),
+        widget=forms.FileInput(attrs={"accept": ".csv,text/csv", "class": "file-input file-input-bordered w-full"}),
+    )
+
+    def clean_file(self):
+        uploaded = self.cleaned_data["file"]
+        if not uploaded.name.lower().endswith(".csv"):
+            raise forms.ValidationError(_("Upload a .csv file."))
+        if uploaded.size > 2 * 1024 * 1024:
+            raise forms.ValidationError(_("File too large. Maximum size is 2 MB."))
+        return uploaded
 
 
 class ContainerForm(forms.Form):
@@ -64,11 +156,12 @@ class ContainerForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
     )
-    current_location = forms.CharField(
+    current_location = forms.ModelChoiceField(
         label=_("Current location"),
-        max_length=200,
+        queryset=ContainerLocation.objects.none(),
         required=False,
-        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+        empty_label=_("— No location —"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
     notes = forms.CharField(
         label=_("Notes"),
@@ -76,9 +169,16 @@ class ContainerForm(forms.Form):
         widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 3}),
     )
 
-    def __init__(self, *args, instance: Container | None = None, **kwargs):
+    def __init__(self, *args, instance: Container | None = None, team=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._instance = instance
+        location_field = cast(forms.ModelChoiceField, self.fields["current_location"])
+        if team is not None:
+            location_field.queryset = ContainerLocation.objects.filter(team=team, is_active=True).order_by("name")
+        elif instance is not None and instance.team_id:
+            location_field.queryset = ContainerLocation.objects.filter(
+                team_id=instance.team_id, is_active=True
+            ).order_by("name")
         if instance is not None:
             self.fields["container_id_input"].initial = instance.container_id
             self.fields["equipment_type"].initial = instance.equipment_type_id
@@ -89,7 +189,7 @@ class ContainerForm(forms.Form):
             self.fields["manufacture_date"].initial = instance.manufacture_date
             self.fields["manufacturer"].initial = instance.manufacturer
             self.fields["manufacturer_id"].initial = instance.manufacturer_id
-            self.fields["current_location"].initial = instance.current_location
+            self.fields["current_location"].initial = instance.current_location_id
             self.fields["notes"].initial = instance.notes
 
     def clean_container_id_input(self) -> dict:
@@ -122,6 +222,59 @@ class ContainerForm(forms.Form):
             "manufacture_date": self.cleaned_data.get("manufacture_date"),
             "manufacturer": self.cleaned_data.get("manufacturer", ""),
             "manufacturer_id": self.cleaned_data.get("manufacturer_id", ""),
-            "current_location": self.cleaned_data.get("current_location", ""),
+            "current_location": self.cleaned_data.get("current_location"),
             "notes": self.cleaned_data.get("notes", ""),
+        }
+
+
+class PlannedContainerForm(forms.Form):
+    """Simple form for adding a container number to the planned pool."""
+
+    container_number = forms.CharField(
+        label=_("Container Number"),
+        max_length=11,
+        help_text=_("Full container number, e.g. MCUU1000001"),
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full font-mono", "placeholder": "MCUU1000001"}),
+    )
+    carrier = forms.CharField(
+        label=_("Carrier"),
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+    notes = forms.CharField(
+        label=_("Notes"),
+        required=False,
+        widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
+    )
+
+    def clean_container_number(self) -> str:
+        return self.cleaned_data["container_number"].upper().strip()
+
+
+class ContainerLocationForm(forms.ModelForm):
+    """Form for creating or editing a ContainerLocation."""
+
+    class Meta:
+        model = ContainerLocation
+        fields = [
+            "name",
+            "location_type",
+            "country",
+            "city",
+            "address",
+            "external_reference",
+            "owner_name",
+            "notes",
+            "is_active",
+        ]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "location_type": forms.Select(attrs={"class": "select select-bordered w-full"}),
+            "country": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "city": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "address": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
+            "external_reference": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "owner_name": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "notes": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
         }

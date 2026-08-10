@@ -1,0 +1,39 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Sync från Business Central (dummy){% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Hem</a>
+  &rsaquo; <a href="{% url 'admin:scm_procurement_purchaseorder_changelist' %}">Purchase Orders</a>
+  &rsaquo; Sync från Business Central (dummy)
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>Sync Purchase Orders från Business Central (dummy)</h1>
+<p>Välj ett team och klicka på Sync för att ladda in inköpsorder från Business Centrals dummydata.</p>
+
+{% if not teams %}
+  <p class="errornote">Inga team hittades i databasen.</p>
+{% else %}
+  <form method="post">
+    {% csrf_token %}
+    <fieldset class="module aligned">
+      <div class="form-row">
+        <label for="team_id">Team:</label>
+        <select id="team_id" name="team_id" required>
+          {% for team in teams %}
+            <option value="{{ team.pk }}">{{ team.slug }} — {{ team.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="Sync" class="default">
+      <a href="{% url 'admin:scm_procurement_purchaseorder_changelist' %}">Avbryt</a>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,62 @@
+{% load i18n %}
+
+{% if locations %}
+  <div class="overflow-x-auto" id="location-table">
+    <table class="table table-zebra w-full">
+      <thead>
+        <tr>
+          <th>{% translate "Name" %}</th>
+          <th>{% translate "Type" %}</th>
+          <th>{% translate "Country" %}</th>
+          <th>{% translate "City" %}</th>
+          <th>{% translate "Containers" %}</th>
+          <th>{% translate "Status" %}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for location in locations %}
+          <tr id="location-row-{{ location.pk }}">
+            <td class="font-medium">{{ location.name }}</td>
+            <td class="text-sm">{{ location.get_location_type_display }}</td>
+            <td class="text-sm text-base-content/60">{{ location.country|default:"—" }}</td>
+            <td class="text-sm text-base-content/60">{{ location.city|default:"—" }}</td>
+            <td class="text-sm">{{ location.container_count }}</td>
+            <td>
+              {% if location.is_active %}
+                <span class="badge badge-success badge-sm">{% translate "Active" %}</span>
+              {% else %}
+                <span class="badge badge-ghost badge-sm">{% translate "Inactive" %}</span>
+              {% endif %}
+            </td>
+            <td class="text-right">
+              <div class="flex justify-end gap-1">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  hx-get="{% url 'containers:location_update' location.pk %}"
+                  hx-target="#modal-container"
+                  hx-swap="innerHTML"
+                >
+                  <i class="fa fa-edit"></i>
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs {% if not location.is_active %}text-success{% else %}text-warning{% endif %}"
+                  hx-post="{% url 'containers:location_deactivate' location.pk %}"
+                  hx-target="#location-table"
+                  hx-swap="outerHTML"
+                  title="{% if location.is_active %}{% translate 'Deactivate' %}{% else %}{% translate 'Activate' %}{% endif %}"
+                >
+                  <i class="fa {% if location.is_active %}fa-toggle-on{% else %}fa-toggle-off{% endif %}"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div id="location-table">
+    {% include "scm/components/empty_state.html" with icon="fa-map-marker-alt" title=_("No locations yet") message=_("Add your first container location to start tracking positions.") action_htmx_get=containers_location_create_url action_label=_("Add Location") action_icon="fa-plus" %}
+  </div>
+{% endif %}

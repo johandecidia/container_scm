@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 
 from .models import ImportJob
 
-ALLOWED_EXTENSIONS = (".csv", ".xlsx")
+ALLOWED_EXTENSIONS = (".csv", ".xlsx", ".xml", ".pdf")
 MAX_UPLOAD_MB = 10
 
 
@@ -12,8 +12,11 @@ class ImportUploadForm(forms.Form):
 
     file = forms.FileField(
         label=_("File"),
-        help_text=_("Upload a CSV or XLSX file (max %(size)s MB).") % {"size": MAX_UPLOAD_MB},
-        widget=forms.FileInput(attrs={"accept": ".csv,.xlsx", "class": "file-input file-input-bordered w-full"}),
+        help_text=_("Upload a CSV, XLSX, or XML file. PDF is supported for Purchase Orders only (max %(size)s MB).")
+        % {"size": MAX_UPLOAD_MB},
+        widget=forms.FileInput(
+            attrs={"accept": ".csv,.xlsx,.xml,.pdf", "class": "file-input file-input-bordered w-full"}
+        ),
     )
     import_type = forms.ChoiceField(
         label=_("Import type"),
@@ -25,7 +28,17 @@ class ImportUploadForm(forms.Form):
         f = self.cleaned_data["file"]
         name = f.name.lower()
         if not any(name.endswith(ext) for ext in ALLOWED_EXTENSIONS):
-            raise forms.ValidationError(_("Unsupported file type. Please upload a CSV or XLSX file."))
+            raise forms.ValidationError(_("Unsupported file type. Please upload a CSV, XLSX, XML, or PDF file."))
         if f.size > MAX_UPLOAD_MB * 1024 * 1024:
             raise forms.ValidationError(_("File too large. Maximum size is %(size)s MB.") % {"size": MAX_UPLOAD_MB})
         return f
+
+    def clean(self):
+        cleaned_data = super().clean()
+        file = cleaned_data.get("file")
+        import_type = cleaned_data.get("import_type")
+        if file and file.name.lower().endswith(".xml") and import_type != ImportJob.ImportType.PURCHASE_ORDERS:
+            raise forms.ValidationError(_("XML files are only supported for Purchase Orders imports."))
+        if file and file.name.lower().endswith(".pdf") and import_type != ImportJob.ImportType.PURCHASE_ORDERS:
+            raise forms.ValidationError(_("PDF files are only supported for Purchase Orders imports."))
+        return cleaned_data

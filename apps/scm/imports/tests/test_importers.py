@@ -79,13 +79,13 @@ class RunImportTest(TestCase):
             serial_number=SERIAL,
             check_digit=CHECK,
             equipment_type=self.et,
-            current_location="Old Location",
+            location_text="Old Location",
         )
         job = make_parsed_job(self.team, self.user)
-        # Add current_location to validated data
+        # Add current_location (text) to validated data
         row = job.rows.first()
         data = dict(row.validated_data)
-        data["current_location"] = "New Location"
+        data["current_location"] = "New Location"  # maps to location_text in importer
         row.validated_data = data
         row.save()
         run_import(job, update_existing=True)

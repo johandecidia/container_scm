@@ -1,11 +1,18 @@
-from apps.scm.integrations.carriers.base import BaseCarrierParser
+"""Hapag-Lloyd payload parser.
+
+Hapag-Lloyd publishes DCSA-conformant Track & Trace events, so the shared
+:class:`DcsaCarrierParser` handles them. This subclass exists to name the provider
+and to hold any genuine Hapag-Lloyd deviation, of which there is none yet.
+"""
+
+from __future__ import annotations
+
+from apps.scm.integrations.carriers.dcsa.carrier_parser import DcsaCarrierParser
+
+PROVIDER_CODE = "hapag_lloyd"
 
 
-class HapagLloydParser(BaseCarrierParser):
-    """Hapag-Lloyd payload parser (placeholder — full implementation pending API access)."""
+class HapagLloydParser(DcsaCarrierParser):
+    """Parses Hapag-Lloyd DCSA Track & Trace responses into normalised events."""
 
-    provider_code = "hapag_lloyd"
-
-    def parse_tracking_events(self, raw_payload: dict) -> list[dict]:
-        # TODO: parse Hapag-Lloyd API response into normalised event dicts
-        raise NotImplementedError("Hapag-Lloyd parser not yet implemented")
+    provider_code = PROVIDER_CODE

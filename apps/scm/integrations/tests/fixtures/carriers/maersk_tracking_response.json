@@ -1,0 +1,42 @@
+{
+  "events": [
+    {
+      "eventID": "MAERSK-EVT-001",
+      "eventType": "EQUIPMENT",
+      "eventClassifierCode": "ACT",
+      "equipmentEventTypeCode": "LOAD",
+      "eventDateTime": "2024-03-10T08:00:00Z",
+      "equipmentReference": "MRKU1234567",
+      "carrierBookingReference": "MAEU123456789",
+      "transportDocumentReference": "MAEU-BL-123456789",
+      "location": {
+        "locationName": "Port of Felixstowe",
+        "UNLocationCode": "GBFXT"
+      },
+      "vessel": {
+        "vesselName": "MAERSK EINDHOVEN",
+        "vesselIMONumber": "9778791"
+      },
+      "exportVoyageNumber": "213E",
+      "modeOfTransport": "VESSEL"
+    },
+    {
+      "eventID": "MAERSK-EVT-002",
+      "eventType": "TRANSPORT",
+      "eventClassifierCode": "EST",
+      "transportEventTypeCode": "ARRI",
+      "eventDateTime": "2024-03-25T14:00:00Z",
+      "equipmentReference": "MRKU1234567",
+      "location": {
+        "locationName": "Port of Rotterdam",
+        "UNLocationCode": "NLRTM"
+      },
+      "vessel": {
+        "vesselName": "MAERSK EINDHOVEN",
+        "vesselIMONumber": "9778791"
+      },
+      "importVoyageNumber": "213W",
+      "modeOfTransport": "VESSEL"
+    }
+  ]
+}

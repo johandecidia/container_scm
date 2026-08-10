@@ -10,6 +10,8 @@ urlpatterns = [
     path("<int:pk>/", views.integration_detail, name="detail"),
     path("<int:pk>/edit/", views.integration_update, name="update"),
     path("<int:pk>/delete/", views.integration_delete, name="delete"),
+    path("<int:pk>/sync-now/", views.integration_sync_now, name="sync_now"),
+    path("<int:pk>/test-connection/", views.integration_test_connection, name="test_connection"),
 ]
 
 # Webhook URLs are added to team_urlpatterns (require team_slug) via the SCM app router.
