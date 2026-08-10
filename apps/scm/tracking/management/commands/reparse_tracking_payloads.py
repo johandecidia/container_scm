@@ -141,7 +141,7 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
 
     def _report_dry_run(self, payload: TrackingRawPayload, events: list) -> None:
-        reference = payload.subscription.tracking_reference if payload.subscription_id else "—"
+        reference = payload.subscription.tracking_reference if payload.subscription else "—"
         self.stdout.write(f"  payload {payload.pk} ({reference}): {len(events)} event(s)")
         for event in events:
             place = event.location_unlocode or event.location_name or "—"

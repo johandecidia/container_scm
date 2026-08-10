@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import cast
 
 from django.db.models import Q
 from django.utils import timezone
@@ -321,7 +322,8 @@ def _exception_reports(team: Team, container_ids) -> dict[int, ExceptionReport]:
         .order_by("container_id", "-event_datetime", "-created_at")
     )
     for event in events:
-        by_container.setdefault(event.container_id, []).append(event)
+        # Non-NULL: the queryset only asked for events on these containers.
+        by_container.setdefault(cast(int, event.container_id), []).append(event)
     return {cid: evaluate_container_exceptions(rows) for cid, rows in by_container.items()}
 
 

@@ -237,6 +237,9 @@ class TrackingEventSelectorIsolationTest(TestCase):
 
 
 class ListViewIsolationTest(TestCase):
+    team_a: Team
+    user_a: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         _equipment_type()
@@ -312,6 +315,9 @@ class ListViewIsolationTest(TestCase):
 
 
 class DetailPageIsolationTest(TestCase):
+    team_a: Team
+    user_a: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         _equipment_type()
@@ -358,6 +364,9 @@ class DetailPageIsolationTest(TestCase):
 
 
 class HtmxEndpointIsolationTest(TestCase):
+    team_a: Team
+    user_a: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         _equipment_type()
@@ -434,6 +443,9 @@ class HtmxEndpointIsolationTest(TestCase):
 
 
 class DestructiveActionIsolationTest(TestCase):
+    team_a: Team
+    user_a: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         _equipment_type()
@@ -531,6 +543,9 @@ class SuperuserBehaviorTest(TestCase):
     a member of team_a will see team_a data; they cannot freely access
     team_b objects via URL because views use get_object_or_404(team=team).
     """
+
+    team_a: Team
+    superuser: CustomUser
 
     @classmethod
     def setUpTestData(cls):

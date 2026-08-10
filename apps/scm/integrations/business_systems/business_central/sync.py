@@ -184,8 +184,8 @@ def _line_identifier(raw_po: dict, client: BusinessCentralClient) -> str:
     Live BC requires the GUID (``id``); dummy fixtures are keyed by PO number.
     """
     if getattr(client, "use_dummy", False):
-        return raw_po.get("number") or raw_po.get("id")
-    return raw_po.get("id") or raw_po.get("number")
+        return raw_po.get("number") or raw_po.get("id") or ""
+    return raw_po.get("id") or raw_po.get("number") or ""
 
 
 def _finish(run, integration, result, *, fetched: int, watermark_to) -> None:

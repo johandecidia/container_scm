@@ -2,6 +2,10 @@
 # All TextChoices classes mirror the inner classes on the model but are exported
 # here so services, tasks, and tests can import from one place.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from django.utils.translation import gettext_lazy as _
 
 from .models import (
@@ -11,6 +15,9 @@ from .models import (
     TrackingSubscription,
     TrackingSyncRun,
 )
+
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
 
 # Re-export choices for convenience.
 TrackingProviderType = TrackingProvider.ProviderType
@@ -168,7 +175,7 @@ def normalize_dcsa_event_type(carrier_event_type: str, event_code: str, descript
 # ETA or the polling lifecycle — they exist so an unclassified event can say what the
 # carrier reported instead of only "Unknown". A code that is not listed here still
 # shows its raw carrier type and code, so nothing the carrier sent is ever hidden.
-_CARRIER_EVENT_LABELS: dict[tuple[str, str], str] = {
+_CARRIER_EVENT_LABELS: dict[tuple[str, str], StrOrPromise] = {
     ("SHIPMENT", "DRFT"): _("Transport document drafted"),
     ("SHIPMENT", "ISSU"): _("Transport document issued"),
     ("SHIPMENT", "PENA"): _("Pending approval"),

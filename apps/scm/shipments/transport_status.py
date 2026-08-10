@@ -78,7 +78,7 @@ def get_transport_snapshot(shipment: Shipment) -> TransportSnapshot:
 
     actual = [event for event in events if event.is_actual]
 
-    def _first_time(event_types) -> object | None:
+    def _first_time(event_types) -> datetime | None:
         for event in actual:
             if event.event_type in event_types:
                 return event.event_datetime

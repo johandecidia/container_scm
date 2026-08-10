@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from celery import shared_task
 
@@ -247,7 +248,7 @@ def discover_containers_for_open_shipments_task(team_id: int) -> dict:
         .distinct()
     )
 
-    totals = {
+    totals: dict[str, Any] = {
         "shipments_processed": 0,
         "shipments_skipped": 0,
         "discovered_count": 0,

@@ -26,6 +26,8 @@ from apps.scm.imports.models import ImportJob, ImportRow
 from apps.scm.imports.parsers import _parse_xml, parse_file
 from apps.scm.imports.services import confirm_import_job, parse_import_job, validate_import_job
 from apps.scm.procurement.models import PurchaseOrder
+from apps.teams.models import Team
+from apps.users.models import CustomUser
 
 from .helpers import make_team, make_user
 
@@ -94,6 +96,9 @@ class XMLUploadFormTest(TestCase):
 
 class XMLParserFlatRowTest(TestCase):
     """Verify that _parse_xml flattens BC PO XML to the expected flat row format."""
+
+    team: Team
+    user: CustomUser
 
     @classmethod
     def setUpTestData(cls):
@@ -179,6 +184,9 @@ class XMLParserFlatRowTest(TestCase):
 class XMLPOImportPipelineTest(TestCase):
     """End-to-end pipeline test using the BC XML fixture."""
 
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = make_team(slug="xml-pipeline-team")
@@ -256,6 +264,9 @@ class XMLPOImportPipelineTest(TestCase):
 class XMLPOImportIdempotencyTest(TestCase):
     """Re-importing the same XML file must not create duplicate POs or lines."""
 
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = make_team(slug="xml-idem-team")
@@ -326,6 +337,9 @@ class XMLPOImportTenantIsolationTest(TestCase):
 
 class XMLPOImportErrorTest(TestCase):
     """Invalid XML and malformed content produce clear errors."""
+
+    team: Team
+    user: CustomUser
 
     @classmethod
     def setUpTestData(cls):
@@ -440,6 +454,9 @@ class XMLPOImportErrorTest(TestCase):
 
 
 class XMLUploadViewTest(TestCase):
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = make_team(slug="xml-view-team")

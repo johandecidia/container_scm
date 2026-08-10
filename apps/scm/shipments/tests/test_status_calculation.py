@@ -41,6 +41,9 @@ def _container(team: Team, serial: str = "305418") -> Container:
 
 
 class StatusCalculationTest(TestCase):
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="Status Calc Team", slug="status-calc-team")

@@ -1,3 +1,5 @@
+from typing import cast
+
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
@@ -49,7 +51,8 @@ class SupplierDeliveryForm(forms.Form):
     def __init__(self, *args, team=None, instance: SupplierDelivery | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         if team is not None:
-            self.fields["purchase_order"].queryset = PurchaseOrder.objects.filter(team=team)
+            po_field = cast(forms.ModelChoiceField, self.fields["purchase_order"])
+            po_field.queryset = PurchaseOrder.objects.filter(team=team)
         if instance is not None:
             self.fields["purchase_order"].initial = instance.purchase_order_id
             self.fields["delivery_reference"].initial = instance.delivery_reference

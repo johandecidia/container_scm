@@ -32,6 +32,7 @@ from apps.teams.models import Team
 from .models import Container
 
 if TYPE_CHECKING:
+    from apps.scm.tracking.models import TrackingEvent
     from apps.scm.tracking.positions import ContainerPosition
 
 # Enough history to be useful on one screen without loading a whole voyage.
@@ -61,11 +62,11 @@ class ContainerWorkspace:
     supplier_delivery_lines: list = field(default_factory=list)
 
     # Tracking
-    latest_tracking_event: object = None
-    latest_actual_event: object = None
-    latest_meaningful_actual_event: object = None
-    tracking_eta_event: object = None
-    carriage_event: object = None
+    latest_tracking_event: TrackingEvent | None = None
+    latest_actual_event: TrackingEvent | None = None
+    latest_meaningful_actual_event: TrackingEvent | None = None
+    tracking_eta_event: TrackingEvent | None = None
+    carriage_event: TrackingEvent | None = None
     position: ContainerPosition | None = None
     timeline: list = field(default_factory=list)
     recent_sync_runs: list = field(default_factory=list)
@@ -501,7 +502,7 @@ def _group_by_container(queryset) -> dict[int, list]:
     return grouped
 
 
-def _latest_per_container(queryset) -> dict[int, object]:
+def _latest_per_container(queryset) -> dict[int, TrackingEvent]:
     """Return the newest row per container, in one query.
 
     ``DISTINCT ON`` keeps this to a single round trip however many containers are

@@ -2,6 +2,7 @@
 
 import datetime
 from decimal import Decimal
+from typing import cast
 
 from django.db.models import Count
 from django.utils import timezone
@@ -106,11 +107,14 @@ def get_transit_time_analytics(
     on_time_count = 0
 
     for s in qs:
-        delta_days = (s.actual_arrival_at - s.actual_departure_at).total_seconds() / 86400
+        # Both timestamps are non-NULL by the queryset filter above.
+        arrived_at = cast(datetime.datetime, s.actual_arrival_at)
+        departed_at = cast(datetime.datetime, s.actual_departure_at)
+        delta_days = (arrived_at - departed_at).total_seconds() / 86400
         days_list.append(delta_days)
         ref_eta = s.original_eta or s.eta
         if ref_eta:
-            if s.actual_arrival_at.date() > ref_eta:
+            if arrived_at.date() > ref_eta:
                 delayed_count += 1
             else:
                 on_time_count += 1
@@ -181,7 +185,8 @@ def get_carrier_analytics(
         for s in delivered_qs:
             ref_eta = s.original_eta or s.eta
             if ref_eta:
-                if s.actual_arrival_at.date() <= ref_eta:
+                # Non-NULL by the queryset filter above.
+                if cast(datetime.datetime, s.actual_arrival_at).date() <= ref_eta:
                     on_time += 1
                 else:
                     late += 1

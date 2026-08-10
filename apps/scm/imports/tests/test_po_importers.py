@@ -10,6 +10,8 @@ from apps.scm.imports.importers import run_import
 from apps.scm.imports.models import ImportJob, ImportRow
 from apps.scm.imports.services import confirm_import_job, parse_import_job, validate_import_job
 from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine
+from apps.teams.models import Team
+from apps.users.models import CustomUser
 
 from .helpers import make_team, make_user
 
@@ -68,6 +70,9 @@ VALID_ROW_DATA = {
 
 class ValidPOImportTest(TestCase):
     """Valid PO rows are imported correctly."""
+
+    team: Team
+    user: CustomUser
 
     @classmethod
     def setUpTestData(cls):
@@ -229,6 +234,9 @@ class POImportDuplicateHandlingTest(TestCase):
     - Re-importing the same file is idempotent.
     """
 
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = make_team(slug="po-dup-imp-team")
@@ -379,6 +387,9 @@ class POImportInvalidRowsNotImportedTest(TestCase):
 
 class POImportFixtureTest(TestCase):
     """End-to-end pipeline tests using CSV fixture files."""
+
+    team: Team
+    user: CustomUser
 
     @classmethod
     def setUpTestData(cls):

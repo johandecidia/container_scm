@@ -30,6 +30,10 @@ def _team(slug: str) -> Team:
 
 
 class WorkspaceTestBase(TestCase):
+    """Base for the workspace tests; each subclass names the team it works in."""
+
+    team_slug: str
+
     def setUp(self):
         self.team = _team(self.team_slug)
         self.provider = TrackingProvider.objects.get_or_create(code="maersk", defaults={"name": "Maersk"})[0]

@@ -4,6 +4,7 @@ idempotency (including concurrent writers).
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 from unittest import mock
 
 from django.db import IntegrityError, transaction
@@ -32,7 +33,7 @@ def _provider(code: str = "maersk") -> TrackingProvider:
 
 
 def _normalised(**kwargs) -> NormalisedTrackingEvent:
-    defaults = {
+    defaults: dict[str, Any] = {
         "event_type": "EQUIPMENT",
         "event_classifier": "ACT",
         "event_code": "LOAD",
@@ -207,7 +208,7 @@ class EventFingerprintTest(TestCase):
     """The fingerprint is stable for the same event and distinct for different ones."""
 
     def _fp(self, **kwargs) -> str:
-        defaults = {
+        defaults: dict[str, Any] = {
             "team_id": 1,
             "provider_code": "maersk",
             "reference": "MRKU1234567",

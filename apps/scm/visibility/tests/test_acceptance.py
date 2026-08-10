@@ -18,6 +18,7 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.scm.containers.models import Container
 from apps.scm.containers.selectors import get_container_workspace
 from apps.scm.shipments.models import Shipment, ShipmentContainer
 from apps.scm.shipments.selectors import get_merged_shipment_timeline
@@ -28,6 +29,7 @@ from apps.scm.tracking.models import (
 )
 from apps.scm.visibility.mapbox import DEFAULT_STYLE_URL, get_mapbox_config
 from apps.scm.visibility.selectors import get_shipment_visibility
+from apps.teams.models import Team
 
 from .factories import (
     TEST_STORAGES,
@@ -201,6 +203,9 @@ class EmptyStateTest(TestCase):
 
 class TrackingStateTest(TestCase):
     """NO_DATA, NOT_CONFIGURED and ERROR are three different answers."""
+
+    team: Team
+    container: Container
 
     @classmethod
     def setUpTestData(cls):

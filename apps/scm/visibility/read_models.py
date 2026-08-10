@@ -14,6 +14,7 @@ answers are grouped and labelled.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from django.db.models import TextChoices
 from django.utils.translation import gettext_lazy as _
@@ -59,7 +60,7 @@ class Health(TextChoices):
     UNKNOWN = "unknown", _("Unknown")
 
 
-_STATE_BY_SHIPMENT_STATUS = {
+_STATE_BY_SHIPMENT_STATUS: dict[str, JourneyState] = {
     Shipment.Status.DRAFT: JourneyState.NOT_DEPARTED,
     Shipment.Status.BOOKED: JourneyState.NOT_DEPARTED,
     Shipment.Status.IN_TRANSIT: JourneyState.IN_TRANSIT,
@@ -120,9 +121,13 @@ class VisibilityObject:
         discharged at different times, the newest event is the one that describes
         where the shipment has got to.
         """
-        dated = [w for w in self.workspaces if w.latest_tracking_event and w.latest_tracking_event.event_datetime]
+        dated: list[tuple[datetime, ContainerWorkspace]] = []
+        for workspace in self.workspaces:
+            event = workspace.latest_tracking_event
+            if event is not None and event.event_datetime is not None:
+                dated.append((event.event_datetime, workspace))
         if dated:
-            return max(dated, key=lambda w: w.latest_tracking_event.event_datetime)
+            return max(dated, key=lambda pair: pair[0])[1]
         return self.workspaces[0] if self.workspaces else None
 
     # -- carrier and carriage ---------------------------------------------

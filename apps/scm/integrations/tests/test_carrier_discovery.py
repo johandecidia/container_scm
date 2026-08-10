@@ -1,5 +1,7 @@
 """Tests for shipment-based carrier discovery service and auto-link."""
 
+from typing import Any
+
 from django.test import TestCase
 
 from apps.scm.containers.models import Container, EquipmentType
@@ -33,7 +35,7 @@ def _shipment(team: Team, **kwargs) -> Shipment:
 
 
 def _result(container_number: str = "MSCU1234566", **kwargs) -> ContainerDiscoveryResult:
-    defaults = {
+    defaults: dict[str, Any] = {
         "container_number": container_number,
         "carrier_code": "maersk",
         "carrier_name": "Maersk",

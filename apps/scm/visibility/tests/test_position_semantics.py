@@ -14,11 +14,13 @@ from decimal import Decimal
 
 from django.test import TestCase
 
-from apps.scm.tracking.models import TrackingEvent
+from apps.scm.containers.models import Container
+from apps.scm.tracking.models import TrackingEvent, TrackingProvider, TrackingSubscription
 from apps.scm.tracking.positions import PositionType, classify_position, get_latest_container_position
 from apps.scm.visibility.geojson import overview_feature_collection
 from apps.scm.visibility.read_models import JourneyState
 from apps.scm.visibility.selectors import get_container_visibility, list_visibility_objects
+from apps.teams.models import Team
 
 from .factories import make_container, make_provider, make_user_and_team
 
@@ -29,6 +31,11 @@ SEGOT_LON = Decimal("11.858448")
 
 
 class PositionSemanticsTest(TestCase):
+    team: Team
+    container: Container
+    provider: TrackingProvider
+    subscription: TrackingSubscription
+
     @classmethod
     def setUpTestData(cls):
         _user, cls.team = make_user_and_team("pos@example.com", "pos-team")

@@ -10,7 +10,7 @@ Covers:
 """
 
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -24,11 +24,13 @@ from apps.scm.imports.importers import run_import
 from apps.scm.imports.models import ImportError, ImportJob, ImportRow
 from apps.scm.imports.services import confirm_import_job, parse_import_job, validate_import_job
 from apps.scm.procurement.models import PurchaseOrder
+from apps.teams.models import Team
+from apps.users.models import CustomUser
 
 from .helpers import make_team, make_user
 
 # Canonical API response dict matching the real FastAPI extraction service shape.
-CANONICAL_API_RESPONSE = {
+CANONICAL_API_RESPONSE: dict[str, Any] = {
     "confidence": 0.95,
     "status": "completed",
     "requires_review": False,
@@ -279,6 +281,9 @@ class PDFFullPipelineTest(TestCase):
 class PODuplicateSkipBugFixTest(TestCase):
     """Duplicate-skip (update_existing=False) must NOT modify the PO header."""
 
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = make_team(slug="po-dupfix-team")
@@ -446,6 +451,9 @@ class PDFEmptyExtractionTest(TestCase):
 class PDFExtractionMetadataTest(TestCase):
     """Extraction-quality fields are persisted and surfaced as warnings."""
 
+    team: Team
+    user: CustomUser
+
     @classmethod
     def setUpTestData(cls):
         cls.team = make_team(slug="pdf-meta-team")
@@ -554,6 +562,9 @@ class PDFReparseClearsStaleErrorsTest(TestCase):
 
 class ImportDetailAlertRenderingTest(TestCase):
     """The detail page must show why an import produced nothing."""
+
+    team: Team
+    user: CustomUser
 
     @classmethod
     def setUpTestData(cls):

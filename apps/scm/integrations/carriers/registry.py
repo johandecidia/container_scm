@@ -1,11 +1,7 @@
 # Carrier registry — single source of truth for supported carriers and their capabilities.
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from .base import CarrierCapability
-
-if TYPE_CHECKING:
-    pass
+from .base import BaseCarrierClient, BaseCarrierParser, CarrierCapability
 
 
 class UnknownCarrierError(Exception):
@@ -18,8 +14,8 @@ class CarrierDefinition:
 
     provider_code: str
     name: str
-    client_class: type
-    parser_class: type
+    client_class: type[BaseCarrierClient]
+    parser_class: type[BaseCarrierParser]
     capabilities: CarrierCapability
     # Publicly registered ISO 6346 / BIC owner prefixes for this carrier's own
     # containers. Only ever a *suggestion* of which carrier to ask: a container may

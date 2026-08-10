@@ -95,11 +95,10 @@ def get_eta_drift_days(team: Team, shipment) -> int:
     Zero if no history.
     """
     entries = ETAHistory.objects.filter(team=team, shipment=shipment).order_by("changed_at")
-    if not entries.exists():
-        return 0
-
     first = entries.first()
     last = entries.last()
+    if first is None or last is None:
+        return 0
 
     if first.previous_eta is None or last.new_eta is None:
         return 0

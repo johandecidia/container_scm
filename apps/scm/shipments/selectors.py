@@ -125,23 +125,25 @@ def get_merged_shipment_timeline(team: Team, shipment: Shipment) -> list[Shipmen
         .select_related("provider")
         .order_by("-event_datetime", "-created_at")
     )
-    for event in tracking_qs:
-        location = event.location_name
-        if event.location_unlocode:
-            location = f"{location} ({event.location_unlocode})" if location else event.location_unlocode
-        has_coordinates = event.location_latitude is not None and event.location_longitude is not None
+    for tracking_event in tracking_qs:
+        location = tracking_event.location_name
+        if tracking_event.location_unlocode:
+            location = (
+                f"{location} ({tracking_event.location_unlocode})" if location else tracking_event.location_unlocode
+            )
+        has_coordinates = tracking_event.location_latitude is not None and tracking_event.location_longitude is not None
         items.append(
             ShipmentTimelineItem(
-                occurred_at=event.event_datetime,
-                title=event.display_title,
-                description=event.description or event.status or event.carrier_reference,
+                occurred_at=tracking_event.event_datetime,
+                title=tracking_event.display_title,
+                description=tracking_event.description or tracking_event.status or tracking_event.carrier_reference,
                 source="tracking",
-                event_type=event.event_type,
+                event_type=tracking_event.event_type,
                 location=location,
-                map_event_id=event.pk if has_coordinates else None,
-                time_type_label=str(event.get_event_time_type_display()),
-                is_actual=event.is_actual,
-                carrier_reference=event.carrier_reference if event.is_unclassified else "",
+                map_event_id=tracking_event.pk if has_coordinates else None,
+                time_type_label=str(tracking_event.get_event_time_type_display()),
+                is_actual=tracking_event.is_actual,
+                carrier_reference=tracking_event.carrier_reference if tracking_event.is_unclassified else "",
             )
         )
 

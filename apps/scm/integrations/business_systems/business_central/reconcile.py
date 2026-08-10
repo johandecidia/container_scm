@@ -66,10 +66,13 @@ def _reconcile(integration: Integration, client: BusinessCentralClient | None) -
     present_line_ids: dict[str, set[str]] = {}
     for raw_po in raw_pos:
         po_ext = raw_po.get("id") or raw_po.get("number")
+        if not po_ext:
+            # Nothing to match a stored purchase order against.
+            continue
         present_po_ids.add(po_ext)
         identifier = _line_identifier(raw_po, client)
         lines = client.fetch_purchase_order_lines(identifier)
-        present_line_ids[po_ext] = {line.get("id") for line in lines}
+        present_line_ids[po_ext] = {line_id for line in lines if (line_id := line.get("id"))}
 
     now = timezone.now()
     result = ReconcileResult()

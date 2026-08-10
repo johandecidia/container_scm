@@ -25,6 +25,7 @@ from apps.scm.visibility.selectors import (
     list_visibility_objects,
     parse_visibility_filters,
 )
+from apps.teams.models import Team
 
 from .factories import equipment_type, ingest_maersk_events, make_container, make_user_and_team
 
@@ -105,6 +106,8 @@ class OverviewGroupingTest(TestCase):
 
 
 class OverviewFilterTest(TestCase):
+    team: Team
+
     @classmethod
     def setUpTestData(cls):
         _user, cls.team = make_user_and_team("flt@example.com", "flt-team")

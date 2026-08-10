@@ -10,6 +10,8 @@ from django.utils.datastructures import MultiValueDict
 from apps.scm.imports.forms import ImportUploadForm
 from apps.scm.imports.models import ImportJob
 from apps.scm.imports.services import create_import_job
+from apps.teams.models import Team
+from apps.users.models import CustomUser
 
 from .helpers import make_csv_file, make_team, make_user
 
@@ -182,6 +184,9 @@ class UploadFormErrorRenderingTest(TestCase):
     The template previously rendered only per-field errors, so a PDF uploaded
     under the wrong import type was rejected with no message at all.
     """
+
+    team: Team
+    user: CustomUser
 
     @classmethod
     def setUpTestData(cls):

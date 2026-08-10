@@ -172,12 +172,11 @@ class ContainerForm(forms.Form):
     def __init__(self, *args, instance: Container | None = None, team=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._instance = instance
+        location_field = cast(forms.ModelChoiceField, self.fields["current_location"])
         if team is not None:
-            self.fields["current_location"].queryset = ContainerLocation.objects.filter(
-                team=team, is_active=True
-            ).order_by("name")
+            location_field.queryset = ContainerLocation.objects.filter(team=team, is_active=True).order_by("name")
         elif instance is not None and instance.team_id:
-            self.fields["current_location"].queryset = ContainerLocation.objects.filter(
+            location_field.queryset = ContainerLocation.objects.filter(
                 team_id=instance.team_id, is_active=True
             ).order_by("name")
         if instance is not None:

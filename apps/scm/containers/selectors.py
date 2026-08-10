@@ -105,7 +105,8 @@ def filter_containers(
     if location_type:
         qs = qs.filter(current_location__location_type=location_type)
     if location_id:
-        qs = qs.filter(current_location_id=location_id)
+        # The filter arrives as a query-string value; the FK is an integer.
+        qs = qs.filter(current_location_id=int(location_id))
     if missing_location:
         qs = qs.filter(current_location__isnull=True)
     if search:

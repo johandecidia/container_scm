@@ -195,6 +195,10 @@ class CarrierTimeoutHandlingTest(TestCase):
 class CarrierAuthErrorHandlingTest(TestCase):
     """Auth failures (401/403) are stored as error payloads; no tracking event is created."""
 
+    team: Team
+    provider: TrackingProvider
+    sub: TrackingSubscription
+
     @classmethod
     def setUpTestData(cls):
         cls.team = _team("err-auth-team")
@@ -291,6 +295,10 @@ class CarrierRateLimitHandlingTest(TestCase):
 
 class CarrierEmptyResponseHandlingTest(TestCase):
     """Empty carrier responses are handled without errors and produce no tracking events."""
+
+    team: Team
+    provider: TrackingProvider
+    sub: TrackingSubscription
 
     @classmethod
     def setUpTestData(cls):

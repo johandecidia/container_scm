@@ -1,5 +1,7 @@
 # Tracking selectors — all read/query operations.
 # Every function that returns team-owned data must accept `team` as first argument.
+from datetime import timedelta
+
 from django.db import models
 from django.utils import timezone
 
@@ -157,7 +159,7 @@ def get_due_tracking_subscriptions(team: Team | None = None):
     Concurrency is prevented by the sync lock, not by the SYNCING status.
     """
     now = timezone.now()
-    stale_cutoff = now - timezone.timedelta(minutes=STALE_SYNCING_MINUTES)
+    stale_cutoff = now - timedelta(minutes=STALE_SYNCING_MINUTES)
     runnable = models.Q(status__in=[TrackingSubscription.Status.ACTIVE, TrackingSubscription.Status.FAILED]) | models.Q(
         status=TrackingSubscription.Status.SYNCING, updated_at__lte=stale_cutoff
     )

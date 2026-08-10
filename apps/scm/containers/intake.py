@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -32,6 +33,9 @@ from .models import Container
 from .selectors import get_default_equipment_type
 from .services import create_container
 from .utils import parse_container_id, validate_container_id
+
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
 
 # Separators accepted in a pasted list: newlines, commas, semicolons, tabs and
 # plain spaces, so a column copied straight out of Excel needs no cleaning up.
@@ -315,7 +319,7 @@ def link_container_carrier(*, team: Team, container: Container, carrier: str) ->
         planned.save(update_fields=["container", "updated_at"])
 
 
-def carrier_choices() -> list[tuple[str, str]]:
+def carrier_choices() -> list[tuple[str, StrOrPromise]]:
     """Return the optional carrier choices for intake forms, from the carrier registry."""
     from apps.scm.integrations.carriers.registry import list_carriers
 

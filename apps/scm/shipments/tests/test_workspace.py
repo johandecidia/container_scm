@@ -47,6 +47,9 @@ def _shipment(team: Team, number: str = "SWS-001", **kwargs) -> Shipment:
 
 
 class ShipmentDetailContextTest(TestCase):
+    team: Team
+    shipment: Shipment
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="SWS Team", slug="sws-team")

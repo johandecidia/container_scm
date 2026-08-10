@@ -17,6 +17,7 @@ forecast continuation is marked as forecast, so the map cannot be read as a trac
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import cast
 
 from django.urls import reverse
 from django.utils import timezone
@@ -67,7 +68,11 @@ def journey_feature_collection(events: list[TrackingEvent], *, container_number:
     located = [
         event for event in events if event.location_latitude is not None and event.location_longitude is not None
     ]
-    features = [_event_point(event, container_number=container_number) for event in located]
+    features: list[dict] = []
+    for event in located:
+        point = _event_point(event, container_number=container_number)
+        if point is not None:
+            features.append(point)
 
     actual = [event for event in located if event.is_actual]
     forecast = [event for event in located if event.is_estimated]
@@ -98,11 +103,14 @@ def _position_groups(obj: VisibilityObject) -> list[dict]:
         position = workspace.position
         if position is None or not position.has_coordinates:
             continue
+        # Both coordinates are set: that is what has_coordinates asserts.
+        latitude = cast(Decimal, position.latitude)
+        longitude = cast(Decimal, position.longitude)
         key = (
             position.location_unlocode
             or (
-                round(float(position.latitude), _COORDINATE_PRECISION),
-                round(float(position.longitude), _COORDINATE_PRECISION),
+                round(float(latitude), _COORDINATE_PRECISION),
+                round(float(longitude), _COORDINATE_PRECISION),
             ),
             position.position_type,
         )
@@ -150,12 +158,15 @@ def _object_point(obj: VisibilityObject, group: dict) -> dict | None:
     return _point(position.longitude, position.latitude, properties)
 
 
-def _event_point(event: TrackingEvent, *, container_number: str = "") -> dict:
-    """One carrier event as a map point, with its own quality, never upgraded."""
+def _event_point(event: TrackingEvent, *, container_number: str = "") -> dict | None:
+    """One carrier event as a map point, with its own quality, never upgraded.
+
+    None when the event has no coordinates; callers pass located events only.
+    """
     properties = {
         "object_type": "event",
         "event_id": event.pk,
-        "container_number": container_number or (event.container.container_id if event.container_id else ""),
+        "container_number": container_number or (event.container.container_id if event.container else ""),
         "position_type": classify_position(event),
         "position_type_label": str(PositionType(classify_position(event)).label),
         "position_label": event.location_name or event.location_unlocode,
@@ -188,7 +199,7 @@ def _line(events: list[TrackingEvent], line_type: str) -> dict | None:
     kinds differently, because a straight line between two ports is a drawing of
     what we know rather than of where the ship went.
     """
-    coordinates = []
+    coordinates: list[list[float]] = []
     for event in events:
         point = [_number(event.location_longitude), _number(event.location_latitude)]
         if not coordinates or coordinates[-1] != point:
