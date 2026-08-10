@@ -1,13 +1,19 @@
 {% load i18n %}
 
+{% comment %}
+  Pass table_oob=True to have this swap itself into the page out of band, which is
+  how the intake modal refreshes the list while staying open.
+{% endcomment %}
 {% if containers %}
-  <div class="overflow-x-auto" id="container-table">
+  <div class="overflow-x-auto" id="container-table" {% if table_oob %}hx-swap-oob="true"{% endif %}>
     <table class="table table-zebra w-full">
       <thead>
         <tr>
           <th>{% translate "Container ID" %}</th>
           <th>{% translate "Type" %}</th>
           <th>{% translate "Status" %}</th>
+          <th>{% translate "Carrier" %}</th>
+          <th>{% translate "Tracking" %}</th>
           <th>{% translate "Condition" %}</th>
           <th>{% translate "Location" %}</th>
           <th>{% translate "Manufacturer" %}</th>
@@ -50,10 +56,11 @@
     {% endif %}
   </div>
 {% else %}
-  <div id="container-table">
+  <div id="container-table" {% if table_oob %}hx-swap-oob="true"{% endif %}>
     {% if request.GET.search or request.GET.status or request.GET.condition or request.GET.equipment_type %}
       {% include "scm/components/empty_state.html" with icon="fa-magnifying-glass" title=_("No containers match your filters") message=_("Try adjusting or clearing your search criteria.") %}
     {% else %}
+      {% url 'containers:create' as containers_create_url %}
       {% include "scm/components/empty_state.html" with icon="fa-box" title=_("No containers yet") message=_("Add your first container to start tracking your fleet.") action_htmx_get=containers_create_url action_label=_("Add Container") action_icon="fa-plus" %}
     {% endif %}
   </div>

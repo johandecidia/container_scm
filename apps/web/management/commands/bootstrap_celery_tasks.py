@@ -5,6 +5,13 @@ from django_celery_beat.schedulers import ModelEntry
 
 
 class Command(BaseCommand):
+    """Write settings.SCHEDULED_TASKS into the database Beat schedule.
+
+    Celery Beat runs the DatabaseScheduler, so a task defined only in settings is
+    never executed — this command is what makes the schedule real. It is idempotent
+    and safe to run on every deploy and every container start.
+    """
+
     help = "Bootstrap Celery periodic tasks for the environment."
 
     def add_arguments(self, parser):
@@ -16,7 +23,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         created_task_names = []
-        for task_name, task_config in settings.SCHEDULED_TASKS.items():
+        for task_name, entry in settings.SCHEDULED_TASKS.items():
+            # Copied, not mutated: SCHEDULED_TASKS is module-level state, and popping
+            # from it would leave the setting broken for anything that reads it later
+            # in the same process.
+            task_config = dict(entry)
             schedule_spec = task_config.pop("schedule")
             try:
                 schedule, field = ModelEntry.to_model_schedule(schedule_spec)

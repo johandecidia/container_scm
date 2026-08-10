@@ -1,0 +1,30 @@
+{% load i18n %}
+
+{% if created %}
+  <div class="alert alert-success mb-4">
+    <span>{% blocktranslate trimmed with number=container.container_id %}
+      Container {{ number }} created.
+    {% endblocktranslate %}</span>
+  </div>
+{% else %}
+  <div class="alert alert-info mb-4">
+    <span>{% blocktranslate trimmed with number=container.container_id %}
+      Container {{ number }} already exists — nothing was changed.
+    {% endblocktranslate %}</span>
+  </div>
+{% endif %}
+
+<div class="modal-action">
+  <a class="btn btn-ghost" hx-get="{% url 'containers:create' %}" hx-target="#modal-container" hx-swap="innerHTML">
+    {% translate "Add another" %}
+  </a>
+  <a class="btn btn-ghost" href="{% url 'containers:detail' container_id=container.pk %}">
+    {% translate "Open container" %}
+  </a>
+  <button type="button" class="btn btn-primary" onclick="document.getElementById('modal-container').innerHTML=''">
+    {% translate "Done" %}
+  </button>
+</div>
+
+{# Refresh the list behind the modal without closing it. #}
+{% include "scm/containers/partials/container_table.html" %}

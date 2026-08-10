@@ -151,6 +151,8 @@ class ShipmentEventModelTest(TestCase):
             "DELIVERED",
             "CANCELLED",
             "TRACKING_UPDATED",
+            "SUPPLIER_DELIVERY_LINKED",
+            "EXCEPTION",
             "NOTE_ADDED",
         }
         actual = {v for v, _ in ShipmentEvent.EventType.choices}
@@ -163,3 +165,50 @@ class ShipmentEventModelTest(TestCase):
             description="Created.",
         )
         self.assertIn("Created", str(event))
+
+    def test_deleting_shipment_cascades_events(self):
+        shipment = _shipment(self.team, shipment_number="SHP-EV-CASCADE")
+        ShipmentEvent.objects.create(
+            shipment=shipment,
+            event_type=ShipmentEvent.EventType.CREATED,
+            description="Created.",
+        )
+        pk = shipment.pk
+        shipment.delete()
+        self.assertEqual(ShipmentEvent.objects.filter(shipment_id=pk).count(), 0)
+
+    def test_event_reverse_relation_on_shipment(self):
+        event = ShipmentEvent.objects.create(
+            shipment=self.shipment,
+            event_type=ShipmentEvent.EventType.NOTE_ADDED,
+            description="Note.",
+        )
+        self.assertIn(event, self.shipment.events.all())
+
+
+class ShipmentContainerCascadeTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="SC Cascade Team", slug="sc-cascade-team")
+        cls.shipment = _shipment(cls.team, shipment_number="SHP-SC-CASCADE")
+        cls.container = _container(cls.team, owner="EVR", serial="111111")
+
+    def test_deleting_shipment_cascades_shipment_containers(self):
+        shipment = _shipment(self.team, shipment_number="SHP-SC-DEL")
+        container = _container(self.team, owner="MSK", serial="222222")
+        ShipmentContainer.objects.create(shipment=shipment, container=container)
+        pk = shipment.pk
+        shipment.delete()
+        self.assertEqual(ShipmentContainer.objects.filter(shipment_id=pk).count(), 0)
+
+    def test_deleting_container_cascades_shipment_containers(self):
+        container = _container(self.team, owner="ZIM", serial="333333")
+        ShipmentContainer.objects.create(shipment=self.shipment, container=container)
+        pk = container.pk
+        container.delete()
+        self.assertEqual(ShipmentContainer.objects.filter(container_id=pk).count(), 0)
+
+    def test_str_representation(self):
+        sc = ShipmentContainer.objects.create(shipment=self.shipment, container=self.container)
+        self.assertIn(str(self.shipment), str(sc))
+        self.assertIn(str(self.container), str(sc))

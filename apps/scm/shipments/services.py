@@ -11,6 +11,8 @@ from django.utils.translation import gettext_lazy as _
 if TYPE_CHECKING:
     from django_stubs_ext import StrOrPromise
 
+from apps.scm.audit_log.models import SCMAuditLog
+from apps.scm.audit_log.services import log_scm_action
 from apps.scm.containers.models import Container
 from apps.teams.models import Team
 from apps.users.models import CustomUser
@@ -26,6 +28,15 @@ def create_shipment(team: Team, user: CustomUser, data: dict) -> Shipment:
         event_type=ShipmentEvent.EventType.CREATED,
         description=_("Shipment created."),
         user=user,
+    )
+    log_scm_action(
+        team=team,
+        action=SCMAuditLog.Action.SHIPMENT_CREATED,
+        object_type="Shipment",
+        object_id=str(shipment.pk),
+        object_repr=str(shipment),
+        metadata={"status": shipment.status},
+        actor=user,
     )
     return shipment
 
@@ -77,6 +88,15 @@ def change_shipment_status(shipment: Shipment, user: CustomUser, new_status: str
         description=f"Status changed from {old_status} to {new_status}.",
         user=user,
         metadata={"old_status": old_status, "new_status": new_status},
+    )
+    log_scm_action(
+        team=shipment.team,
+        action=SCMAuditLog.Action.SHIPMENT_STATUS_CHANGED,
+        object_type="Shipment",
+        object_id=str(shipment.pk),
+        object_repr=str(shipment),
+        metadata={"old_status": old_status, "new_status": new_status},
+        actor=user,
     )
     return shipment
 
@@ -139,6 +159,157 @@ def remove_container_from_shipment(
         user=user,
         metadata={"container_id": container_pk, "container_str": container_str},
     )
+
+
+def update_shipment_eta(
+    shipment: Shipment,
+    eta_date,
+    source: str,
+    confidence: str = "medium",
+    user: CustomUser | None = None,
+    *,
+    eta_at=None,
+    previous_eta_at=None,
+    location_name: str = "",
+    location_unlocode: str = "",
+    tracking_event=None,
+    container=None,
+) -> Shipment:
+    """Update the shipment's ETA and append to its ETA history.
+
+    This is the only place the cached ETA on Shipment is written, so the history and
+    the cached value cannot drift apart. It sets original_eta on the first update,
+    which is what later drift and total-delay figures are measured against.
+
+    ``eta_at`` carries the carrier's hour-precision forecast when there is one;
+    ``delta_minutes`` is computed from it where possible and from the dates
+    otherwise, so a six-hour slip is not rounded away to nothing.
+
+    A history row is written whenever the forecast moves — by date or by time —
+    even if the date alone is unchanged.
+    """
+    if shipment.original_eta is None and eta_date is not None:
+        shipment.original_eta = eta_date
+
+    old_eta = shipment.eta
+    old_eta_at = previous_eta_at
+    shipment.eta = eta_date
+    shipment.eta_source = source
+    shipment.eta_confidence = confidence
+    shipment.eta_last_updated = timezone.now()
+    shipment.save(
+        update_fields=["eta", "original_eta", "eta_source", "eta_confidence", "eta_last_updated", "updated_at"]
+    )
+
+    date_changed = eta_date != old_eta
+    time_changed = bool(eta_at and old_eta_at and eta_at != old_eta_at)
+    if not (date_changed or time_changed):
+        return shipment
+
+    from apps.scm.tracking.models import ETAHistory
+
+    if date_changed:
+        create_shipment_event(
+            shipment=shipment,
+            event_type=ShipmentEvent.EventType.ETA_UPDATED,
+            description=f"ETA updated to {eta_date} (source: {source}, confidence: {confidence}).",
+            user=user,
+            metadata={"eta": str(eta_date) if eta_date else None, "source": source, "confidence": confidence},
+        )
+
+    ETAHistory.objects.create(
+        team=shipment.team,
+        shipment=shipment,
+        container=container,
+        tracking_event=tracking_event,
+        previous_eta=old_eta,
+        new_eta=eta_date,
+        previous_eta_at=old_eta_at,
+        new_eta_at=eta_at,
+        delta_minutes=calculate_eta_delta_minutes(
+            previous_eta=old_eta,
+            new_eta=eta_date,
+            previous_eta_at=old_eta_at,
+            new_eta_at=eta_at,
+        ),
+        changed_at=shipment.eta_last_updated,
+        received_at=timezone.now(),
+        location_name=location_name[:200],
+        location_unlocode=location_unlocode[:10],
+        source=source,
+    )
+    return shipment
+
+
+def calculate_eta_delta_minutes(*, previous_eta, new_eta, previous_eta_at=None, new_eta_at=None) -> int | None:
+    """Return how many minutes the ETA moved: positive is later, negative is earlier.
+
+    Prefers the hour-precision values; falls back to the dates. Returns None when
+    there is no previous forecast to compare against, because "first known ETA" is
+    not a delay of zero.
+    """
+    if previous_eta_at and new_eta_at:
+        return int((new_eta_at - previous_eta_at).total_seconds() // 60)
+    if previous_eta and new_eta:
+        # date - date is also a timedelta, so this covers the date-only case too.
+        return int((new_eta - previous_eta).total_seconds() // 60)
+    return None
+
+
+def calculate_shipment_status(shipment: Shipment) -> str:
+    """Derive a shipment status from its linked data.
+
+    Logic (first match wins):
+      EXCEPTION  — any EXCEPTION event
+      CANCELLED  — current status is CANCELLED
+      DELIVERED  — actual_arrival_at set and all supplier deliveries received
+      PARTIALLY_RECEIVED — some supplier deliveries received but not all
+      ARRIVED    — actual_arrival_at set
+      IN_TRANSIT — actual_departure_at set
+      BOOKED     — at least one container linked
+      DRAFT      — fallback
+    """
+    from apps.scm.supplier_deliveries.models import SupplierDelivery, SupplierDeliveryStatus
+
+    # CANCELLED is sticky
+    if shipment.status == Shipment.Status.CANCELLED:
+        return Shipment.Status.CANCELLED
+
+    # EXCEPTION event present
+    if shipment.events.filter(event_type=ShipmentEvent.EventType.EXCEPTION).exists():
+        return Shipment.Status.EXCEPTION
+
+    # Arrival / delivery logic
+    if shipment.actual_arrival_at is not None:
+        container_ids = shipment.shipment_containers.values_list("container_id", flat=True)
+        deliveries = SupplierDelivery.objects.filter(
+            team=shipment.team, lines__container_id__in=container_ids
+        ).distinct()
+        if deliveries.exists():
+            total = deliveries.count()
+            received = deliveries.filter(status=SupplierDeliveryStatus.RECEIVED).count()
+            if received >= total:
+                return Shipment.Status.DELIVERED
+            if received > 0:
+                return Shipment.Status.PARTIALLY_RECEIVED
+        return Shipment.Status.ARRIVED
+
+    if shipment.actual_departure_at is not None:
+        return Shipment.Status.IN_TRANSIT
+
+    if shipment.shipment_containers.exists():
+        return Shipment.Status.BOOKED
+
+    return Shipment.Status.DRAFT
+
+
+def recalculate_and_save_shipment_status(shipment: Shipment) -> Shipment:
+    """Recalculate status and save if it has changed."""
+    new_status = calculate_shipment_status(shipment)
+    if shipment.status != new_status:
+        shipment.status = new_status
+        shipment.save(update_fields=["status", "updated_at"])
+    return shipment
 
 
 def create_shipment_event(

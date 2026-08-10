@@ -1,0 +1,5 @@
+PO Number,Supplier No,Supplier Name,Order Date,Expected Receipt Date,Currency,Line No,Item No,Description,Ordered Qty
+PO-2026-005,SUPP-001,Acme Corp,2026-03-15,2026-06-01,USD,10000,ITM-006,Widget F,abc
+PO-2026-006,SUPP-001,Acme Corp,2026-03-15,2026-06-01,USD,10000,ITM-007,Widget G,-10
+PO-2026-007,SUPP-001,Acme Corp,2026-03-15,2026-06-01,USD,10000,ITM-008,Widget H,0
+PO-2026-008,SUPP-001,Acme Corp,2026-03-15,2026-06-01,USD,10000,ITM-009,Widget I,

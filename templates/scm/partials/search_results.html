@@ -16,6 +16,10 @@
                 <i class="fa fa-box w-4"></i>
               {% elif result.kind == "shipment" %}
                 <i class="fa fa-ship w-4"></i>
+              {% elif result.kind == "purchase_order" %}
+                <i class="fa fa-file-invoice w-4"></i>
+              {% elif result.kind == "supplier_delivery" %}
+                <i class="fa fa-truck w-4"></i>
               {% else %}
                 <i class="fa fa-satellite-dish w-4"></i>
               {% endif %}

@@ -1,0 +1,216 @@
+{% load i18n %}
+
+{% comment %}
+  Carrier tracking for one container — an HTMX component with a stable root id.
+  Refresh posts to containers:refresh_tracking and swaps this whole element, so the
+  summary, the result banner and the timeline can never disagree with each other.
+
+  Everything shown is derived from the container's shipment, its tracking
+  subscription and its tracking events. None of it is stored on Container.
+
+  The carrier we would ask and the carrier that actually tracks the box are two
+  different things and are shown as such: a subscription exists only where a carrier
+  has returned data, so "Maersk ● Active" is never shown for a carrier that was
+  merely tried. A shipment booked with Maersk that Maersk has no events for yet
+  reads as an untracked container with a shipment carrier — which is what it is.
+{% endcomment %}
+
+<div id="container-tracking-panel" class="flex flex-col gap-6">
+  <section class="app-card">
+    <div class="flex items-start justify-between gap-4 mb-4">
+      <div>
+        <h2 class="text-lg font-semibold">{% translate "Carrier Tracking" %}</h2>
+        <p class="text-sm mt-1">
+          {% if workspace.is_tracked %}
+            <span class="font-medium">{{ workspace.tracking_carrier_name }}</span>
+            {% if workspace.has_tracking_error %}
+              <span class="text-error ml-2">! {{ workspace.tracking_status|default:_("Error") }}</span>
+            {% elif workspace.is_tracking_active %}
+              <span class="text-success ml-2">● {{ workspace.tracking_status|default:_("Active") }}</span>
+            {% else %}
+              <span class="text-base-content/50 ml-2">○ {{ workspace.active_subscription.get_status_display }}</span>
+            {% endif %}
+          {% else %}
+            <span class="text-base-content/50">○ {% translate "Not tracked" %}</span>
+          {% endif %}
+        </p>
+
+        {% comment %}
+          The shipment's carrier is context, not a tracking state: it says who we
+          would ask. Shown whenever it is not already the verified tracking carrier,
+          so "Not tracked" reads as an answer about Maersk rather than a gap in the
+          setup. What the last refresh actually returned is the banner's job.
+        {% endcomment %}
+        {% if not workspace.is_tracked %}
+          <p class="text-xs text-base-content/60 mt-1">
+            {% if workspace.shipment_carrier %}
+              {% blocktranslate trimmed with carrier=workspace.shipment_carrier %}
+                Shipment carrier: {{ carrier }}. No tracking data available yet.
+              {% endblocktranslate %}
+            {% else %}
+              {% translate "No carrier has been assigned as a tracking source." %}
+            {% endif %}
+          </p>
+        {% elif workspace.shipment_carrier and workspace.shipment_carrier != workspace.tracking_carrier_name %}
+          <p class="text-xs text-base-content/60 mt-1">
+            {% blocktranslate trimmed with carrier=workspace.shipment_carrier %}
+              Shipment carrier: {{ carrier }}
+            {% endblocktranslate %}
+          </p>
+        {% endif %}
+
+      </div>
+
+      {% comment %}
+        One button, one request: hx-disabled-elt disables it for the duration, so a
+        double click cannot start a second refresh.
+      {% endcomment %}
+      <button
+        type="button"
+        class="btn btn-outline btn-sm shrink-0"
+        hx-post="{% url 'containers:refresh_tracking' container.pk %}"
+        hx-target="#container-tracking-panel"
+        hx-swap="outerHTML"
+        hx-disabled-elt="this"
+      >
+        <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+        <i class="fa fa-rotate htmx-request-hide"></i>
+        <span class="htmx-request-hide">{% translate "Refresh tracking" %}</span>
+        <span class="htmx-request-show">{% translate "Refreshing…" %}</span>
+      </button>
+    </div>
+
+    {% if refresh %}
+      {% include "scm/containers/partials/container_tracking_result.html" with refresh=refresh %}
+    {% elif workspace.sync_problem %}
+      <div role="alert" class="alert alert-warning alert-soft mb-4">
+        <i class="fa fa-triangle-exclamation"></i>
+        <span class="text-sm">{{ workspace.sync_problem }}</span>
+      </div>
+    {% endif %}
+
+    {% comment %}
+      Status, position, ETA and freshness are rendered by the shared visibility
+      components, so this panel, the map cards and the visibility overview cannot
+      disagree about what the same carrier data means.
+    {% endcomment %}
+    <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Current status" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.current_status|default:"—" }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
+        <dd class="font-medium text-sm">
+          {% if workspace.vessel_name %}
+            {{ workspace.vessel_name }}{% if workspace.voyage_number %} · {{ workspace.voyage_number }}{% endif %}
+          {% else %}—{% endif %}
+        </dd>
+      </div>
+      <div>
+        {% include "scm/visibility/components/position_summary.html" with position=workspace.position %}
+      </div>
+    </dl>
+
+    <div class="mt-4 pt-4 border-t border-base-300">
+      {% include "scm/visibility/components/eta_summary.html" with object=visibility eta_history=eta_history %}
+    </div>
+
+    <div class="mt-4 pt-4 border-t border-base-300">
+      {% include "scm/visibility/components/tracking_freshness.html" with object=visibility %}
+    </div>
+
+    {% if visibility.shipment %}
+      <div class="mt-4 pt-4 border-t border-base-300">
+        <a href="{% url 'shipments:detail' visibility.shipment.pk %}" class="btn btn-ghost btn-sm">
+          {% translate "View shipment" %} <i class="fa fa-arrow-right text-xs"></i>
+        </a>
+      </div>
+    {% endif %}
+
+    {% if workspace.tracking_subscriptions %}
+      <div class="mt-4 pt-4 border-t border-base-300 flex items-center justify-between gap-2">
+        <div class="text-xs text-base-content/60">
+          {% for sub in workspace.tracking_subscriptions %}
+            <a href="{% url 'tracking:detail' sub.pk %}" class="font-mono link link-hover">{{ sub.tracking_reference }}</a>
+            <span class="text-base-content/40">({{ sub.provider }})</span>{% if not forloop.last %} · {% endif %}
+          {% endfor %}
+        </div>
+        <a href="{% url 'tracking:list' %}" class="btn btn-ghost btn-xs shrink-0">{% translate "All tracking" %}</a>
+      </div>
+    {% endif %}
+  </section>
+
+  {% comment %}
+    Every row shows only what the carrier actually sent for that event, in a fixed
+    order — what happened, where, on what. Absent fields collapse rather than render
+    as blanks or dashes, so the shape of a row says how much is known about it.
+
+    An event we could not classify still shows the carrier's own wording and codes:
+    a gap in our mapping tables must cost the reader detail, not the whole event.
+
+    An event that has coordinates carries data-map-event-id, which is the whole
+    contract between the timeline and the map: clicking the row flies the map to
+    that event, and selecting it on the map highlights the row. The timeline stays
+    the authoritative chronology — the map only points at it.
+  {% endcomment %}
+  <section class="app-card">
+    <h2 class="text-lg font-semibold mb-4">{% translate "Tracking Timeline" %}</h2>
+    {% if workspace.timeline %}
+      <ol class="divide-y divide-base-200">
+        {% for event in workspace.timeline %}
+          <li
+            class="py-3 flex items-start gap-3 {% if event.location_latitude is not None %}cursor-pointer hover:bg-base-200/60 rounded-box px-2 -mx-2{% endif %}"
+            {% if event.location_latitude is not None %}data-map-event-id="{{ event.pk }}"{% endif %}
+          >
+            <p class="text-xs text-base-content/50 shrink-0 w-28 pt-0.5">
+              {{ event.event_datetime|date:"d M H:i"|default:"—" }}
+            </p>
+            <div class="min-w-0">
+              <p class="font-medium text-sm">
+                {{ event.display_title }}
+                {% if not event.is_actual %}
+                  <span class="badge badge-xs badge-ghost ml-1">{{ event.get_event_time_type_display }}</span>
+                {% endif %}
+              </p>
+
+              {% if event.location_name or event.location_unlocode %}
+                <p class="text-xs text-base-content/70 mt-0.5">
+                  {{ event.location_name }}
+                  {% if event.location_unlocode %}
+                    <span class="badge badge-xs badge-ghost font-mono ml-1">{{ event.location_unlocode }}</span>
+                  {% endif %}
+                </p>
+              {% endif %}
+
+              {% if event.vessel_name %}
+                <p class="text-xs text-base-content/60 mt-0.5">
+                  {{ event.vessel_name }}{% if event.voyage_number %} · {{ event.voyage_number }}{% endif %}
+                </p>
+              {% elif event.voyage_number %}
+                <p class="text-xs text-base-content/60 mt-0.5">
+                  {% blocktranslate trimmed with voyage=event.voyage_number %}Voyage {{ voyage }}{% endblocktranslate %}
+                </p>
+              {% endif %}
+
+              {% if event.description and event.description != event.get_event_type_display %}
+                <p class="text-xs text-base-content/60 mt-0.5">{{ event.description }}</p>
+              {% endif %}
+
+              {% if event.is_unclassified and event.carrier_reference %}
+                <p class="text-xs text-base-content/50 font-mono mt-0.5">
+                  {% blocktranslate trimmed with reference=event.carrier_reference %}
+                    Carrier: {{ reference }}
+                  {% endblocktranslate %}
+                </p>
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No tracking events yet." %}</p>
+      <p class="text-sm text-base-content/50">{% translate "Refresh tracking to check the carrier." %}</p>
+    {% endif %}
+  </section>
+</div>

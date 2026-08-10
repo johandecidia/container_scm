@@ -8,6 +8,25 @@ a[hx-get] {
   cursor: pointer;
 }
 
+/*
+  Busy state for an htmx trigger. htmx puts .htmx-request on the element making the
+  request, so a button can swap its idle label for a busy one without any JavaScript:
+  mark the idle parts .htmx-request-hide and the busy parts .htmx-request-show.
+*/
+.htmx-request-show {
+  display: none;
+}
+
+.htmx-request .htmx-request-show,
+.htmx-request.htmx-request-show {
+  display: inline-block;
+}
+
+.htmx-request .htmx-request-hide,
+.htmx-request.htmx-request-hide {
+  display: none;
+}
+
 .h-100 {
   height: 100%;
 }

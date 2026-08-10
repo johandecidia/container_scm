@@ -1,0 +1,26 @@
+{
+  "value": [
+    {
+      "id": "bc-line-id-002",
+      "sequence": 10000,
+      "itemNumber": "40RF-NEW",
+      "description": "40RF New Reefer Container",
+      "quantity": 10,
+      "unitOfMeasureCode": "PCS",
+      "directUnitCost": 7200.0,
+      "lineAmount": 72000.0,
+      "expectedReceiptDate": "2026-09-02"
+    },
+    {
+      "id": "bc-line-id-003",
+      "sequence": 20000,
+      "itemNumber": "40RF-PTI",
+      "description": "Factory PTI",
+      "quantity": 10,
+      "unitOfMeasureCode": "PCS",
+      "directUnitCost": 400.0,
+      "lineAmount": 4000.0,
+      "expectedReceiptDate": "2026-09-02"
+    }
+  ]
+}

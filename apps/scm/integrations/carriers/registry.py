@@ -1,11 +1,7 @@
 # Carrier registry — single source of truth for supported carriers and their capabilities.
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from .base import CarrierCapability
-
-if TYPE_CHECKING:
-    pass
+from .base import BaseCarrierClient, BaseCarrierParser, CarrierCapability
 
 
 class UnknownCarrierError(Exception):
@@ -18,9 +14,14 @@ class CarrierDefinition:
 
     provider_code: str
     name: str
-    client_class: type
-    parser_class: type
+    client_class: type[BaseCarrierClient]
+    parser_class: type[BaseCarrierParser]
     capabilities: CarrierCapability
+    # Publicly registered ISO 6346 / BIC owner prefixes for this carrier's own
+    # containers. Only ever a *suggestion* of which carrier to ask: a container may
+    # be leased or subchartered, so the prefix can be misleading and must never
+    # override an explicitly chosen carrier.
+    owner_prefixes: tuple[str, ...] = ()
 
 
 def _build_registry() -> dict[str, CarrierDefinition]:
@@ -64,8 +65,11 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 supports_schedules=True,
                 supports_booking=False,
                 requires_customer_approval=True,
-                requires_account_number=True,
+                # The public Track & Trace events endpoint works on the consumer key
+                # alone — see carriers/maersk/client.py.
+                requires_account_number=False,
             ),
+            owner_prefixes=("MAEU", "MRKU", "MSKU", "MRSU"),
         ),
         "msc": CarrierDefinition(
             provider_code="msc",
@@ -86,6 +90,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=False,
                 requires_account_number=False,
             ),
+            owner_prefixes=("MSCU", "MEDU"),
         ),
         "cma_cgm": CarrierDefinition(
             provider_code="cma_cgm",
@@ -106,6 +111,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=True,
                 requires_account_number=True,
             ),
+            owner_prefixes=("CMAU", "CGMU", "ECMU"),
         ),
         "cosco": CarrierDefinition(
             provider_code="cosco",
@@ -126,6 +132,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=False,
                 requires_account_number=False,
             ),
+            owner_prefixes=("COSU", "CBHU", "CCLU"),
         ),
         "hapag_lloyd": CarrierDefinition(
             provider_code="hapag_lloyd",
@@ -146,6 +153,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=True,
                 requires_account_number=True,
             ),
+            owner_prefixes=("HLXU", "HLCU", "HLBU"),
         ),
         "one": CarrierDefinition(
             provider_code="one",
@@ -166,6 +174,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=False,
                 requires_account_number=False,
             ),
+            owner_prefixes=("ONEU", "NYKU", "MOLU"),
         ),
         "evergreen": CarrierDefinition(
             provider_code="evergreen",
@@ -186,6 +195,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=False,
                 requires_account_number=False,
             ),
+            owner_prefixes=("EGLV", "EISU", "EGHU"),
         ),
         "hmm": CarrierDefinition(
             provider_code="hmm",
@@ -206,6 +216,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=False,
                 requires_account_number=False,
             ),
+            owner_prefixes=("HMMU", "HDMU"),
         ),
         "yang_ming": CarrierDefinition(
             provider_code="yang_ming",
@@ -226,6 +237,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=False,
                 requires_account_number=False,
             ),
+            owner_prefixes=("YMLU", "YMMU"),
         ),
         "zim": CarrierDefinition(
             provider_code="zim",
@@ -246,6 +258,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_customer_approval=False,
                 requires_account_number=False,
             ),
+            owner_prefixes=("ZIMU", "ZCSU"),
         ),
     }
 
@@ -290,6 +303,49 @@ def get_carrier_parser_class(provider_code: str) -> type:
 def list_carriers() -> list[CarrierDefinition]:
     """Return all registered carrier definitions, sorted by provider_code."""
     return sorted(_get_registry().values(), key=lambda d: d.provider_code)
+
+
+def resolve_carrier_code(value: str) -> str | None:
+    """Map a free-text carrier value to a registered provider code, or None.
+
+    Accepts a provider code ("maersk"), a registered name ("Hapag-Lloyd"), or a
+    close variant of either. Returns None rather than guessing when nothing
+    matches — an unrecognised carrier must not silently become the wrong one.
+    """
+    cleaned = (value or "").strip().lower()
+    if not cleaned:
+        return None
+
+    registry = _get_registry()
+    if cleaned in registry:
+        return cleaned
+
+    normalised = cleaned.replace("-", " ").replace("_", " ")
+    for definition in registry.values():
+        candidates = {
+            definition.provider_code.replace("_", " "),
+            definition.name.lower(),
+            definition.name.lower().split("(")[0].strip(),
+        }
+        if normalised in {candidate.replace("-", " ") for candidate in candidates}:
+            return definition.provider_code
+    return None
+
+
+def suggest_carrier_for_owner_code(owner_code: str) -> str | None:
+    """Suggest which carrier to ask for a container, based on its owner prefix.
+
+    This is a hint only. Containers are leased and interchanged, so the prefix is
+    not proof of which carrier is actually moving the box; an explicitly chosen
+    carrier always wins over this suggestion.
+    """
+    prefix = (owner_code or "").strip().upper()
+    if len(prefix) < 4:
+        return None
+    for definition in _get_registry().values():
+        if prefix[:4] in definition.owner_prefixes:
+            return definition.provider_code
+    return None
 
 
 def carrier_supports(provider_code: str, capability_name: str) -> bool:

@@ -5,11 +5,20 @@ from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
 
+from apps.scm.analytics.models import SavedFilter
+from apps.scm.analytics.selectors import get_saved_filters
 from apps.scm.decorators import scm_login_required
+from apps.scm.visibility.context import get_shipment_map_context
 
 from .forms import ShipmentContainerForm, ShipmentForm, ShipmentStatusForm
 from .models import Shipment, ShipmentContainer
-from .selectors import filter_shipments, get_shipment_containers, get_shipment_events, get_shipment_workspace
+from .selectors import (
+    filter_shipments,
+    get_merged_shipment_timeline,
+    get_shipment_containers,
+    get_shipment_detail_context,
+    get_shipment_events,
+)
 from .services import (
     add_container_to_shipment,
     cancel_shipment,
@@ -33,10 +42,13 @@ def shipment_list(request):
     )
     paginator = Paginator(shipments_qs, SHIPMENTS_PER_PAGE)
     page_obj = paginator.get_page(request.GET.get("page"))
+    saved_filters = get_saved_filters(team, request.user, SavedFilter.ViewKey.SHIPMENTS)
     context = {
         "shipments": page_obj,
         "page_obj": page_obj,
         "status_choices": Shipment.Status.choices,
+        "saved_filters": saved_filters,
+        "view_key": SavedFilter.ViewKey.SHIPMENTS,
         "team_slug": team.slug,
     }
     if request.htmx:
@@ -48,13 +60,14 @@ def shipment_list(request):
 def shipment_detail(request, pk):
     team = request.default_team
     shipment = get_object_or_404(Shipment, pk=pk, team=team)
-    workspace = get_shipment_workspace(team=team, shipment=shipment)
+    detail = get_shipment_detail_context(team=team, shipment_id=pk)
     context = {
-        "shipment": shipment,
-        "workspace": workspace,
-        # Keep containers/events for backward-compat with partials that use them directly
-        "containers": workspace.containers,
-        "events": workspace.events,
+        **detail,
+        # The timeline partial reads `events`.
+        "events": detail["timeline_events"],
+        # Map, position quality, ETA history, freshness, delay and exceptions —
+        # composed by the visibility layer from the same tracking data.
+        **get_shipment_map_context(team=team, shipment=shipment),
         "team_slug": team.slug,
     }
     return render(request, "scm/shipments/pages/shipment_detail.html", context)
@@ -266,7 +279,7 @@ def shipment_container_remove(request, pk, sc_pk):
 def shipment_timeline_partial(request, pk):
     team = request.default_team
     shipment = get_object_or_404(Shipment, pk=pk, team=team)
-    events = get_shipment_events(team=team, shipment=shipment)
+    events = get_merged_shipment_timeline(team=team, shipment=shipment)
     return render(
         request,
         "scm/shipments/partials/shipment_timeline.html",

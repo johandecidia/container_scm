@@ -1,0 +1,42 @@
+{% load i18n %}
+
+<form
+  hx-post="{% url 'containers:import_paste' %}"
+  hx-target="#intake-body"
+  hx-swap="innerHTML"
+>
+  {% csrf_token %}
+
+  {% if intake_error %}
+    <div class="alert alert-error mb-3"><span>{{ intake_error }}</span></div>
+  {% endif %}
+
+  <div class="form-control mb-3">
+    <label class="label" for="{{ form.numbers.id_for_label }}">
+      <span class="label-text">{{ form.numbers.label }}</span>
+    </label>
+    {{ form.numbers }}
+    <span class="label-text-alt text-base-content/50 mt-1">{{ form.numbers.help_text }}</span>
+    {% for error in form.numbers.errors %}
+      <p class="text-error text-sm mt-1">{{ error }}</p>
+    {% endfor %}
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label" for="{{ form.carrier.id_for_label }}">
+      <span class="label-text">{{ form.carrier.label }}</span>
+      <span class="label-text-alt text-base-content/50">{% translate "Optional" %}</span>
+    </label>
+    {{ form.carrier }}
+    {% for error in form.carrier.errors %}
+      <p class="text-error text-sm mt-1">{{ error }}</p>
+    {% endfor %}
+  </div>
+
+  <div class="modal-action">
+    <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">
+      {% translate "Cancel" %}
+    </button>
+    <button type="submit" class="btn btn-primary">{% translate "Preview" %}</button>
+  </div>
+</form>

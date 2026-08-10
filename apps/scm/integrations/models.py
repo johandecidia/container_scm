@@ -127,6 +127,80 @@ class IntegrationRequestLog(BaseTeamModel):
         return f"{self.method} {self.endpoint} → {self.status_code}"
 
 
+class IntegrationSyncRun(BaseTeamModel):
+    """Records a single end-to-end sync run for an integration resource.
+
+    A sync run represents one logical synchronisation (e.g. a purchase-order
+    poll), not a single HTTP call — the individual HTTP calls are captured in
+    IntegrationRequestLog. The successful run's ``watermark_to`` becomes the
+    starting point for the next incremental run.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", _("Pending")
+        RUNNING = "running", _("Running")
+        COMPLETED = "completed", _("Completed")
+        PARTIALLY_COMPLETED = "partially_completed", _("Partially completed")
+        FAILED = "failed", _("Failed")
+
+    class TriggerType(models.TextChoices):
+        MANUAL = "manual", _("Manual")
+        SCHEDULED = "scheduled", _("Scheduled")
+        RETRY = "retry", _("Retry")
+
+    class ResourceType(models.TextChoices):
+        PURCHASE_ORDERS = "purchase_orders", _("Purchase orders")
+
+    integration = models.ForeignKey(
+        Integration,
+        on_delete=models.CASCADE,
+        related_name="sync_runs",
+        verbose_name=_("integration"),
+    )
+    resource_type = models.CharField(
+        _("resource type"),
+        max_length=40,
+        choices=ResourceType.choices,
+        default=ResourceType.PURCHASE_ORDERS,
+    )
+    status = models.CharField(_("status"), max_length=20, choices=Status.choices, default=Status.PENDING)
+    trigger_type = models.CharField(
+        _("trigger type"),
+        max_length=20,
+        choices=TriggerType.choices,
+        default=TriggerType.SCHEDULED,
+    )
+
+    started_at = models.DateTimeField(_("started at"), null=True, blank=True)
+    finished_at = models.DateTimeField(_("finished at"), null=True, blank=True)
+    correlation_id = models.CharField(_("correlation ID"), max_length=64, blank=True)
+
+    # Incremental sync watermarks (source lastModifiedDateTime bounds).
+    watermark_from = models.DateTimeField(_("watermark from"), null=True, blank=True)
+    watermark_to = models.DateTimeField(_("watermark to"), null=True, blank=True)
+
+    records_fetched = models.PositiveIntegerField(_("records fetched"), default=0)
+    records_created = models.PositiveIntegerField(_("records created"), default=0)
+    records_updated = models.PositiveIntegerField(_("records updated"), default=0)
+    records_unchanged = models.PositiveIntegerField(_("records unchanged"), default=0)
+    records_failed = models.PositiveIntegerField(_("records failed"), default=0)
+
+    error_summary = models.TextField(_("error summary"), blank=True)
+    metadata = models.JSONField(_("metadata"), default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["team", "integration"]),
+            models.Index(fields=["integration", "resource_type"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["started_at"]),
+        ]
+
+    def __str__(self):
+        return f"SyncRun({self.integration_id}, {self.resource_type}, {self.status})"
+
+
 class IntegrationWebhookEvent(BaseTeamModel):
     """Stores raw inbound webhook payloads from carrier or business system integrations."""
 

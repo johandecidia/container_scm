@@ -1,0 +1,61 @@
+{
+  "events": [
+    {
+      "eventID": "HAPAG-EVT-001",
+      "eventType": "EQUIPMENT",
+      "eventClassifierCode": "ACT",
+      "equipmentEventTypeCode": "LOAD",
+      "eventDateTime": "2024-03-12T09:00:00Z",
+      "equipmentReference": "HLXU1234567",
+      "carrierBookingReference": "HAPAG-BKG-112233",
+      "transportDocumentReference": "HAPAG-BL-112233",
+      "location": {
+        "locationName": "Port of Hamburg",
+        "UNLocationCode": "DEHAM"
+      },
+      "vessel": {
+        "vesselName": "HAPAG LLOYD EXPRESS",
+        "vesselIMONumber": "9401811"
+      },
+      "exportVoyageNumber": "0012W",
+      "modeOfTransport": "VESSEL"
+    },
+    {
+      "eventID": "HAPAG-EVT-002",
+      "eventType": "TRANSPORT",
+      "eventClassifierCode": "ACT",
+      "transportEventTypeCode": "DEPA",
+      "eventDateTime": "2024-03-12T20:00:00Z",
+      "equipmentReference": "HLXU1234567",
+      "carrierBookingReference": "HAPAG-BKG-112233",
+      "location": {
+        "locationName": "Port of Hamburg",
+        "UNLocationCode": "DEHAM"
+      },
+      "vessel": {
+        "vesselName": "HAPAG LLOYD EXPRESS",
+        "vesselIMONumber": "9401811"
+      },
+      "exportVoyageNumber": "0012W",
+      "modeOfTransport": "VESSEL"
+    },
+    {
+      "eventID": "HAPAG-EVT-003",
+      "eventType": "TRANSPORT",
+      "eventClassifierCode": "EST",
+      "transportEventTypeCode": "ARRI",
+      "eventDateTime": "2024-04-02T12:00:00Z",
+      "equipmentReference": "HLXU1234567",
+      "location": {
+        "locationName": "Port of New York",
+        "UNLocationCode": "USNYC"
+      },
+      "vessel": {
+        "vesselName": "HAPAG LLOYD EXPRESS",
+        "vesselIMONumber": "9401811"
+      },
+      "importVoyageNumber": "0012E",
+      "modeOfTransport": "VESSEL"
+    }
+  ]
+}

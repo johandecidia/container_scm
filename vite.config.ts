@@ -32,6 +32,8 @@ export default defineConfig({
         'react-object-lifecycle': path.resolve(__dirname, './assets/javascript/pegasus/examples/react/react-object-lifecycle.jsx'),
         'vue-object-lifecycle': path.resolve(__dirname, './assets/javascript/pegasus/examples/vue/vue-object-lifecycle.js'),
         'chat-ws-initialize': path.resolve(__dirname, './assets/javascript/chat/ws_initialize.ts'),
+        // Loaded only by pages that show a map, never from the base template.
+        'scm-visibility-map': path.resolve(__dirname, './assets/javascript/scm/visibility/map.js'),
       },
       output: {
         // Output JS bundles to js/ directory with -bundle suffix

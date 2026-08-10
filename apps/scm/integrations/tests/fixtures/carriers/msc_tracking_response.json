@@ -1,0 +1,62 @@
+{
+  "containerNumber": "MSCU9876543",
+  "billOfLading": "MSCUATL1234567",
+  "movements": [
+    {
+      "moveId": "MSC-MV-001",
+      "status": "Gate In",
+      "statusCode": "GTIN",
+      "eventDate": "2024-03-08T06:30:00Z",
+      "location": {
+        "name": "Santos Port",
+        "unlocode": "BRSNS"
+      },
+      "vessel": {
+        "name": "MSC ALLEGRA",
+        "imo": "9456789",
+        "voyage": "FE240W"
+      }
+    },
+    {
+      "moveId": "MSC-MV-002",
+      "status": "Loaded on Board",
+      "statusCode": "LOAD",
+      "eventDate": "2024-03-09T11:00:00Z",
+      "location": {
+        "name": "Santos Port",
+        "unlocode": "BRSNS"
+      },
+      "vessel": {
+        "name": "MSC ALLEGRA",
+        "imo": "9456789",
+        "voyage": "FE240W"
+      }
+    },
+    {
+      "moveId": "MSC-MV-003",
+      "status": "Vessel Departed",
+      "statusCode": "DEPA",
+      "eventDate": "2024-03-09T14:00:00Z",
+      "location": {
+        "name": "Santos Port",
+        "unlocode": "BRSNS"
+      },
+      "vessel": {
+        "name": "MSC ALLEGRA",
+        "imo": "9456789",
+        "voyage": "FE240W"
+      }
+    },
+    {
+      "moveId": "MSC-MV-004",
+      "status": "Delivered",
+      "statusCode": "DLVR",
+      "eventDate": "2024-04-15T10:00:00Z",
+      "location": {
+        "name": "Antwerp Gateway Terminal",
+        "unlocode": "BEANR"
+      },
+      "vessel": null
+    }
+  ]
+}

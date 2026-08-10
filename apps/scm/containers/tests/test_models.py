@@ -1,11 +1,12 @@
-"""Tests for EquipmentType and Container models."""
+"""Tests for EquipmentType, Container, and PlannedContainer models."""
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
+from django.db.models import ProtectedError
 from django.test import TestCase
 
 from apps.scm.containers.choices import ContainerCondition, ContainerStatus
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.models import Container, EquipmentType, PlannedContainer, PlannedContainerStatus
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import BaseTeamModel, Team
 from apps.teams.roles import ROLE_MEMBER
@@ -162,3 +163,78 @@ class ContainerModelTest(TestCase):
 
     def test_ordering_newest_first(self):
         self.assertEqual(Container._meta.ordering, ["-created_at"])
+
+    def test_cannot_delete_equipment_type_with_containers(self):
+        isolated_et = EquipmentType.objects.get_or_create(
+            iso_code="45GP",
+            defaults={"category": "GP", "length_ft": 45, "high_cube": True, "description": "45' GP"},
+        )[0]
+        check = calculate_check_digit(OWNER, CAT, "111222")
+        Container.objects.create(
+            team=self.team,
+            owner_code=OWNER,
+            category_id=CAT,
+            serial_number="111222",
+            check_digit=check,
+            equipment_type=isolated_et,
+        )
+        with self.assertRaises(ProtectedError):
+            isolated_et.delete()
+
+    def test_relation_to_equipment_type(self):
+        c = self._create()
+        self.assertEqual(c.equipment_type, self.et)
+        self.assertIn(c, self.et.containers.all())
+
+
+class PlannedContainerModelTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="Planned Team", slug="planned-team")
+
+    def test_create_planned_container(self):
+        pc = PlannedContainer.objects.create(team=self.team, container_number="MCUU1234568")
+        self.assertIsNotNone(pc.pk)
+        self.assertEqual(pc.container_number, "MCUU1234568")
+        self.assertEqual(pc.team, self.team)
+
+    def test_default_status_planned(self):
+        pc = PlannedContainer.objects.create(team=self.team, container_number="MCUU1234569")
+        self.assertEqual(pc.status, PlannedContainerStatus.PLANNED)
+
+    def test_str_contains_container_number(self):
+        pc = PlannedContainer.objects.create(team=self.team, container_number="MCUU1234560")
+        self.assertIn("MCUU1234560", str(pc))
+
+    def test_unique_per_team(self):
+        PlannedContainer.objects.create(team=self.team, container_number="MCUU7777771")
+        with self.assertRaises(IntegrityError):
+            PlannedContainer.objects.create(team=self.team, container_number="MCUU7777771")
+
+    def test_same_number_different_teams_allowed(self):
+        other_team = Team.objects.create(name="Other Planned", slug="other-planned")
+        PlannedContainer.objects.create(team=self.team, container_number="MCUU0000001")
+        pc2 = PlannedContainer.objects.create(team=other_team, container_number="MCUU0000001")
+        self.assertIsNotNone(pc2.pk)
+
+    def test_link_to_container(self):
+        et = EquipmentType.objects.get_or_create(
+            iso_code="20GP",
+            defaults={"category": "GP", "length_ft": 20, "high_cube": False, "description": "20' GP"},
+        )[0]
+        check = calculate_check_digit("PLN", "U", "999999")
+        container = Container.objects.create(
+            team=self.team,
+            owner_code="PLN",
+            category_id="U",
+            serial_number="999999",
+            check_digit=check,
+            equipment_type=et,
+        )
+        pc = PlannedContainer.objects.create(
+            team=self.team,
+            container_number="PLN" + "U" + "999999" + str(check),
+            container=container,
+        )
+        self.assertEqual(pc.container, container)
+        self.assertIn(pc, container.planned_entries.all())

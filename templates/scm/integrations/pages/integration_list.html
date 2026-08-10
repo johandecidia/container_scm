@@ -1,0 +1,55 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold">{% translate "Business Central integrations" %}</h1>
+  </div>
+
+  {% if rows %}
+    <div class="overflow-x-auto app-card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>{% translate "Name" %}</th>
+            <th>{% translate "Status" %}</th>
+            <th>{% translate "Environment" %}</th>
+            <th>{% translate "Last success" %}</th>
+            <th>{% translate "Last sync" %}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>
+                <a class="link link-primary font-medium" href="{% url 'integrations:detail' row.integration.pk %}">
+                  {{ row.integration.name }}
+                </a>
+              </td>
+              <td><span class="badge badge-outline badge-sm">{{ row.integration.get_status_display }}</span></td>
+              <td>{{ row.environment|default:"—" }}</td>
+              <td>{{ row.integration.last_success_at|default:"—" }}</td>
+              <td>
+                {% if row.in_progress %}
+                  <span class="badge badge-info badge-sm">{% translate "Running" %}</span>
+                {% elif row.latest_run %}
+                  {{ row.latest_run.get_status_display }}
+                {% else %}—{% endif %}
+              </td>
+              <td class="text-right">
+                <a class="btn btn-ghost btn-xs" href="{% url 'integrations:detail' row.integration.pk %}">
+                  {% translate "View" %}
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="app-card">
+      <p class="text-base-content/60">{% translate "No Business Central integrations configured." %}</p>
+    </div>
+  {% endif %}
+{% endblock %}

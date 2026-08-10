@@ -1,0 +1,51 @@
+{
+  "containerNo": "COSU1234567",
+  "bookingNo": "COSCO-BKG-9988",
+  "blNo": "COSCO-BL-9988",
+  "trackingDetails": [
+    {
+      "trackNo": "COSCO-TK-001",
+      "actCode": "GATE_IN",
+      "description": "Gate In",
+      "actDate": "2024-03-05T09:00:00Z",
+      "portCode": "CNSHA",
+      "portName": "Shanghai Port",
+      "vessel": "COSCO SHIPPING UNIVERSE",
+      "voyage": "025E",
+      "eta": null
+    },
+    {
+      "trackNo": "COSCO-TK-002",
+      "actCode": "VESSEL_DEPARTURE",
+      "description": "Vessel Departed",
+      "actDate": "2024-03-07T18:00:00Z",
+      "portCode": "CNSHA",
+      "portName": "Shanghai Port",
+      "vessel": "COSCO SHIPPING UNIVERSE",
+      "voyage": "025E",
+      "eta": "2024-04-05"
+    },
+    {
+      "trackNo": "COSCO-TK-003",
+      "actCode": "VESSEL_ARRIVAL",
+      "description": "Vessel Arrived",
+      "actDate": "2024-04-06T06:00:00Z",
+      "portCode": "NLRTM",
+      "portName": "Port of Rotterdam",
+      "vessel": "COSCO SHIPPING UNIVERSE",
+      "voyage": "025E",
+      "eta": null
+    },
+    {
+      "trackNo": "COSCO-TK-004",
+      "actCode": "DELIVERY",
+      "description": "Delivered",
+      "actDate": "2024-04-10T14:00:00Z",
+      "portCode": "NLRTM",
+      "portName": "Port of Rotterdam",
+      "vessel": null,
+      "voyage": null,
+      "eta": null
+    }
+  ]
+}

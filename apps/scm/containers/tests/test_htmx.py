@@ -82,13 +82,14 @@ class ContainerHtmxTest(TestCase):
         template_names = [t.name for t in response.templates]
         self.assertIn("scm/containers/pages/container_list.html", template_names)
 
-    def test_create_htmx_returns_form_partial(self):
+    def test_create_htmx_returns_intake_modal(self):
         client = Client()
         client.force_login(self.user)
         response = client.get(reverse("containers:create"), HTTP_HX_REQUEST="true")
         self.assertEqual(response.status_code, 200)
         template_names = [t.name for t in response.templates]
-        self.assertIn("scm/containers/partials/container_form.html", template_names)
+        self.assertIn("scm/containers/partials/container_intake_modal.html", template_names)
+        self.assertIn("scm/containers/partials/container_intake_single.html", template_names)
 
     def test_update_htmx_returns_row_on_success(self):
         container = _make_container(self.team)
@@ -103,7 +104,6 @@ class ContainerHtmxTest(TestCase):
                 "status": "BOOKED",
                 "condition": "GOOD",
                 "color_system": "UNKNOWN",
-                "current_location": "Rotterdam",
             },
             HTTP_HX_REQUEST="true",
         )

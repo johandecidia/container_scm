@@ -2,6 +2,7 @@
 
 from django.test import TestCase
 
+from apps.scm.imports.models import ImportError as ImportJobError
 from apps.scm.imports.models import ImportJob, ImportRow, ImportTemplate
 from apps.teams.models import BaseTeamModel
 
@@ -94,3 +95,88 @@ class ImportTemplateModelTest(TestCase):
             mapping={},
         )
         self.assertIsNone(tmpl.team)
+
+
+class ImportErrorModelTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="err-model-team")
+        cls.user = make_user("err-model@example.com")
+        cls.team.members.add(cls.user)
+        cls.job = make_import_job(cls.team, cls.user)
+        cls.row = ImportRow.objects.create(import_job=cls.job, row_number=1, raw_data={})
+
+    def test_create_error_linked_to_job(self):
+        err = ImportJobError.objects.create(
+            import_job=self.job,
+            code="INVALID_FORMAT",
+            message="Container number format is invalid.",
+        )
+        self.assertIsNotNone(err.pk)
+        self.assertEqual(err.import_job, self.job)
+        self.assertEqual(err.severity, ImportJobError.Severity.ERROR)
+
+    def test_create_error_linked_to_row(self):
+        err = ImportJobError.objects.create(
+            import_job=self.job,
+            import_row=self.row,
+            code="MISSING_FIELD",
+            message="Required field owner_code is missing.",
+        )
+        self.assertEqual(err.import_row, self.row)
+        self.assertIn(err, self.row.import_errors.all())
+
+    def test_warning_severity(self):
+        err = ImportJobError.objects.create(
+            import_job=self.job,
+            code="WARN_DUPLICATE",
+            message="Possible duplicate entry.",
+            severity=ImportJobError.Severity.WARNING,
+        )
+        self.assertEqual(err.severity, ImportJobError.Severity.WARNING)
+
+    def test_str_contains_code(self):
+        err = ImportJobError.objects.create(
+            import_job=self.job,
+            code="E_STR_TEST",
+            message="Test error message for str.",
+        )
+        self.assertIn("E_STR_TEST", str(err))
+
+    def test_error_reverse_relation_on_job(self):
+        err = ImportJobError.objects.create(
+            import_job=self.job,
+            code="E_REV",
+            message="Reverse relation test.",
+        )
+        self.assertIn(err, self.job.import_errors.all())
+
+
+class ImportCascadeDeleteTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = make_team(slug="cascade-import-team")
+        cls.user = make_user("cascade-import@example.com")
+        cls.team.members.add(cls.user)
+
+    def test_deleting_job_cascades_rows(self):
+        job = make_import_job(self.team, self.user)
+        ImportRow.objects.create(import_job=job, row_number=1, raw_data={})
+        pk = job.pk
+        job.delete()
+        self.assertEqual(ImportRow.objects.filter(import_job_id=pk).count(), 0)
+
+    def test_deleting_job_cascades_errors(self):
+        job = make_import_job(self.team, self.user)
+        ImportJobError.objects.create(import_job=job, code="E_CASCADE", message="Cascade test.")
+        pk = job.pk
+        job.delete()
+        self.assertEqual(ImportJobError.objects.filter(import_job_id=pk).count(), 0)
+
+    def test_deleting_row_cascades_row_errors(self):
+        job = make_import_job(self.team, self.user)
+        row = ImportRow.objects.create(import_job=job, row_number=1, raw_data={})
+        ImportJobError.objects.create(import_job=job, import_row=row, code="E_ROW", message="Row error.")
+        row_pk = row.pk
+        row.delete()
+        self.assertEqual(ImportJobError.objects.filter(import_row_id=row_pk).count(), 0)

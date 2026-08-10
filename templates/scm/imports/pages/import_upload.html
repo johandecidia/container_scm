@@ -12,6 +12,16 @@
 
     <form method="post" enctype="multipart/form-data" class="space-y-4">
       {% csrf_token %}
+      {% if form.non_field_errors %}
+        <div class="alert alert-error items-start text-sm">
+          <i class="fa fa-triangle-exclamation mt-0.5"></i>
+          <ul class="list-disc list-inside">
+            {% for error in form.non_field_errors %}
+              <li>{{ error }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
       {% for field in form %}
         <div class="form-control">
           <label class="label" for="{{ field.id_for_label }}">

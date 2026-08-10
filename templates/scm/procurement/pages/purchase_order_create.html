@@ -1,0 +1,90 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  {% include "scm/components/page_header.html" with title=_("Lägg till Purchase Order") back_url="javascript:history.back()" back_label=_("Tillbaka") %}
+
+  <section class="app-card max-w-2xl">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+        <div class="form-control">
+          <label class="label" for="{{ form.po_number.id_for_label }}">
+            <span class="label-text">{{ form.po_number.label }}</span>
+          </label>
+          {{ form.po_number }}
+          {% if form.po_number.errors %}
+            <div class="label"><span class="label-text-alt text-error">{{ form.po_number.errors|join:", " }}</span></div>
+          {% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.status.id_for_label }}">
+            <span class="label-text">{{ form.status.label }}</span>
+          </label>
+          {{ form.status }}
+          {% if form.status.errors %}
+            <div class="label"><span class="label-text-alt text-error">{{ form.status.errors|join:", " }}</span></div>
+          {% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.supplier_no.id_for_label }}">
+            <span class="label-text">{{ form.supplier_no.label }}</span>
+          </label>
+          {{ form.supplier_no }}
+          {% if form.supplier_no.errors %}
+            <div class="label"><span class="label-text-alt text-error">{{ form.supplier_no.errors|join:", " }}</span></div>
+          {% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.supplier_name.id_for_label }}">
+            <span class="label-text">{{ form.supplier_name.label }}</span>
+          </label>
+          {{ form.supplier_name }}
+          {% if form.supplier_name.errors %}
+            <div class="label"><span class="label-text-alt text-error">{{ form.supplier_name.errors|join:", " }}</span></div>
+          {% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.order_date.id_for_label }}">
+            <span class="label-text">{{ form.order_date.label }}</span>
+          </label>
+          {{ form.order_date }}
+          {% if form.order_date.errors %}
+            <div class="label"><span class="label-text-alt text-error">{{ form.order_date.errors|join:", " }}</span></div>
+          {% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.expected_receipt_date.id_for_label }}">
+            <span class="label-text">{{ form.expected_receipt_date.label }}</span>
+          </label>
+          {{ form.expected_receipt_date }}
+          {% if form.expected_receipt_date.errors %}
+            <div class="label"><span class="label-text-alt text-error">{{ form.expected_receipt_date.errors|join:", " }}</span></div>
+          {% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.currency.id_for_label }}">
+            <span class="label-text">{{ form.currency.label }}</span>
+          </label>
+          {{ form.currency }}
+          {% if form.currency.errors %}
+            <div class="label"><span class="label-text-alt text-error">{{ form.currency.errors|join:", " }}</span></div>
+          {% endif %}
+        </div>
+
+      </div>
+
+      <div class="flex gap-2 mt-6">
+        <button type="submit" class="btn btn-primary">{% translate "Spara" %}</button>
+        <a href="javascript:history.back()" class="btn btn-ghost">{% translate "Avbryt" %}</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}

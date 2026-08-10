@@ -22,6 +22,8 @@ class ImportJob(BaseTeamModel):
 
     class ImportType(models.TextChoices):
         CONTAINERS = "containers", _("Containers")
+        CONTAINER_MOVEMENTS = "container_movements", _("Container Movements")
+        PURCHASE_ORDERS = "purchase_orders", _("Purchase Orders")
         SHIPMENTS = "shipments", _("Shipments")
         TRACKING_EVENTS = "tracking_events", _("Tracking Events")
         RATES = "rates", _("Rates")

@@ -140,3 +140,114 @@ class TrackingPauseResumeTest(TestCase):
         client.post(reverse("tracking:resume", kwargs={"pk": self.sub.pk}))
         self.sub.refresh_from_db()
         self.assertEqual(self.sub.status, TrackingSubscription.Status.ACTIVE)
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
+class TrackingDetailContentTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = _make_user_and_team("detail-content-track@example.com", "detail-content-track-team")
+        cls.provider = _provider("DETAIL_CONTENT_PROV")
+        cls.sub = create_tracking_subscription(cls.team, cls.provider, "DETAIL-CONTENT-REF")
+
+    def test_detail_shows_tracking_reference(self):
+        client = Client()
+        client.force_login(self.user)
+        url = reverse("tracking:detail", kwargs={"pk": self.sub.pk})
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "DETAIL-CONTENT-REF")
+
+    def test_detail_context_has_subscription(self):
+        client = Client()
+        client.force_login(self.user)
+        url = reverse("tracking:detail", kwargs={"pk": self.sub.pk})
+        response = client.get(url)
+        self.assertEqual(response.context["subscription"], self.sub)
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
+class TrackingTimelinePartialTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = _make_user_and_team("tl-track@example.com", "tl-track-team")
+        cls.provider = _provider("TL_PROV")
+        cls.sub = create_tracking_subscription(cls.team, cls.provider, "TL-TRACK-REF")
+
+    def test_timeline_partial_returns_200(self):
+        client = Client()
+        client.force_login(self.user)
+        url = reverse("tracking:timeline", kwargs={"pk": self.sub.pk})
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+
+    def test_timeline_htmx_partial_returns_200(self):
+        client = Client()
+        client.force_login(self.user)
+        url = reverse("tracking:timeline", kwargs={"pk": self.sub.pk})
+        response = client.get(url, HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+
+    def test_timeline_cross_team_gives_404(self):
+        other_user, other_team = _make_user_and_team("tl-other-track@example.com", "tl-other-track-team")
+        other_sub = create_tracking_subscription(other_team, self.provider, "TL-OTHER-TRACK-REF")
+        client = Client()
+        client.force_login(self.user)
+        url = reverse("tracking:timeline", kwargs={"pk": other_sub.pk})
+        response = client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
+class TrackingStartTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = _make_user_and_team("start-track@example.com", "start-track-team")
+        cls.provider = _provider("START_PROV")
+
+    def test_start_tracking_get_loads(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("tracking:start"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_start_tracking_requires_login(self):
+        client = Client()
+        response = client.get(reverse("tracking:start"))
+        self.assertIn(response.status_code, [302, 403])
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
+class TrackingListEmptyStateTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = _make_user_and_team("empty-track@example.com", "empty-track-team")
+
+    def test_empty_list_returns_200(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("tracking:list"))
+        self.assertEqual(response.status_code, 200)
+        subscriptions = list(response.context["subscriptions"])
+        self.assertEqual(len(subscriptions), 0)
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
+class TrackingListHtmxTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = _make_user_and_team("htmx-track@example.com", "htmx-track-team")
+
+    def test_htmx_list_returns_partial_template(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("tracking:list"), HTTP_HX_REQUEST="true")
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "scm/tracking/partials/_tracking_subscriptions_table.html")
+
+    def test_non_htmx_list_returns_full_page(self):
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(reverse("tracking:list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "scm/tracking/pages/tracking_list.html")

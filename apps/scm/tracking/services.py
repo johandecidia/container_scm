@@ -3,11 +3,11 @@
 import hashlib
 import json
 
-from django.db import transaction
 from django.utils import timezone
 
 from apps.teams.models import Team
 
+from .ingestion import build_event_fingerprint, upsert_event
 from .models import TrackingEvent, TrackingProvider, TrackingRawPayload, TrackingSubscription, TrackingSyncRun
 
 
@@ -46,9 +46,16 @@ def resume_tracking_subscription(subscription: TrackingSubscription) -> Tracking
 
 
 def complete_tracking_subscription(subscription: TrackingSubscription) -> TrackingSubscription:
-    """Mark a tracking subscription as completed."""
+    """Mark a tracking subscription as completed and stop scheduling it.
+
+    Clearing ``next_sync_at`` is part of completing, not a separate step: the
+    dispatcher reads a null next_sync_at as "due now", so a completed subscription
+    that kept a stale timestamp would become pollable again the moment anything
+    reopened its status.
+    """
     subscription.status = TrackingSubscription.Status.COMPLETED
-    subscription.save(update_fields=["status", "updated_at"])
+    subscription.next_sync_at = None
+    subscription.save(update_fields=["status", "next_sync_at", "updated_at"])
     return subscription
 
 
@@ -101,6 +108,43 @@ def create_sync_run(
     return sync_run
 
 
+def finish_sync_run(
+    sync_run: TrackingSyncRun,
+    *,
+    status: str,
+    error_type: str = TrackingSyncRun.ErrorType.NONE,
+    error_message: str = "",
+    events_created: int = 0,
+    events_updated: int = 0,
+    raw_payloads_created: int = 0,
+    metadata: dict | None = None,
+) -> TrackingSyncRun:
+    """Close a sync run with an explicit status, error classification and counters."""
+    sync_run.status = status
+    sync_run.error_type = error_type
+    sync_run.error_message = error_message
+    sync_run.finished_at = timezone.now()
+    sync_run.events_created = events_created
+    sync_run.events_updated = events_updated
+    sync_run.raw_payloads_created = raw_payloads_created
+    if metadata:
+        sync_run.metadata = {**(sync_run.metadata or {}), **metadata}
+    sync_run.save(
+        update_fields=[
+            "status",
+            "error_type",
+            "error_message",
+            "finished_at",
+            "events_created",
+            "events_updated",
+            "raw_payloads_created",
+            "metadata",
+            "updated_at",
+        ]
+    )
+    return sync_run
+
+
 def finish_sync_run_success(
     sync_run: TrackingSyncRun,
     events_created: int = 0,
@@ -108,37 +152,63 @@ def finish_sync_run_success(
     raw_payloads_created: int = 0,
 ) -> TrackingSyncRun:
     """Mark a sync run as successful and update counters."""
-    sync_run.status = TrackingSyncRun.Status.SUCCESS
-    sync_run.finished_at = timezone.now()
-    sync_run.events_created = events_created
-    sync_run.events_updated = events_updated
-    sync_run.raw_payloads_created = raw_payloads_created
-    sync_run.save(
-        update_fields=[
-            "status",
-            "finished_at",
-            "events_created",
-            "events_updated",
-            "raw_payloads_created",
-            "updated_at",
-        ]
+    return finish_sync_run(
+        sync_run,
+        status=TrackingSyncRun.Status.SUCCESS,
+        events_created=events_created,
+        events_updated=events_updated,
+        raw_payloads_created=raw_payloads_created,
     )
-    return sync_run
 
 
 def finish_sync_run_failed(
     sync_run: TrackingSyncRun,
     error_message: str,
+    error_type: str = TrackingSyncRun.ErrorType.UNEXPECTED,
 ) -> TrackingSyncRun:
     """Mark a sync run as failed."""
-    sync_run.status = TrackingSyncRun.Status.FAILED
-    sync_run.finished_at = timezone.now()
-    sync_run.error_message = error_message
-    sync_run.save(update_fields=["status", "finished_at", "error_message", "updated_at"])
-    return sync_run
+    return finish_sync_run(
+        sync_run,
+        status=TrackingSyncRun.Status.FAILED,
+        error_type=error_type,
+        error_message=error_message,
+    )
 
 
-@transaction.atomic
+def finish_sync_run_skipped(
+    sync_run: TrackingSyncRun,
+    error_type: str,
+    error_message: str = "",
+) -> TrackingSyncRun:
+    """Mark a sync run as skipped — nothing was attempted.
+
+    Never use this for a carrier that answered with no data; that is a success.
+    """
+    return finish_sync_run(
+        sync_run,
+        status=TrackingSyncRun.Status.SKIPPED,
+        error_type=error_type,
+        error_message=error_message,
+    )
+
+
+def mark_raw_payload_parsed(
+    payload: TrackingRawPayload,
+    *,
+    success: bool,
+    error_message: str = "",
+) -> TrackingRawPayload:
+    """Record whether a stored payload was actually parsed.
+
+    Payloads are stored before parsing, so this is the only place that may claim a
+    payload parsed successfully.
+    """
+    payload.parsed_successfully = success
+    payload.error_message = error_message
+    payload.save(update_fields=["parsed_successfully", "error_message", "updated_at"])
+    return payload
+
+
 def upsert_tracking_event(
     team: Team,
     provider: TrackingProvider,
@@ -156,16 +226,39 @@ def upsert_tracking_event(
     event_timezone: str = "",
     confidence: int = 100,
     raw_data: dict | None = None,
+    event_time_type: str = TrackingEvent.EventTimeType.UNKNOWN,
 ) -> tuple[TrackingEvent, bool]:
-    """Create or update a tracking event, avoiding duplicates.
+    """Create or update a tracking event from explicit field values.
 
-    Deduplication strategy:
-    1. If source_event_id is set, use (team, provider, source_event_id) as unique key.
-    2. Otherwise fall back to (team, provider, subscription, event_type, event_datetime).
+    Used by ingestion sources that already work in internal terms (manual entry,
+    webhooks, imports). The carrier pipeline uses
+    :func:`apps.scm.tracking.ingestion.persist_normalised_event` instead.
 
-    Returns (event, created) tuple.
+    Deduplication uses the same fingerprint as the carrier pipeline: derived from
+    the carrier event ID when there is one, otherwise from the fields that identify
+    the event. Returns (event, created).
     """
+    reference = ""
+    if container is not None:
+        reference = container.container_id
+    elif subscription is not None:
+        reference = subscription.tracking_reference
+
+    fingerprint = build_event_fingerprint(
+        team_id=team.pk,
+        provider_code=provider.code,
+        source_event_id=source_event_id,
+        reference=reference,
+        carrier_event_type=event_type,
+        event_code=event_code,
+        event_time_type=event_time_type,
+        event_datetime=event_datetime,
+        location_unlocode=location_unlocode,
+        location_name=location_name,
+    )
     defaults = {
+        "event_type": event_type,
+        "event_time_type": event_time_type,
         "event_code": event_code,
         "status": status,
         "description": description,
@@ -173,31 +266,15 @@ def upsert_tracking_event(
         "location_unlocode": location_unlocode,
         "event_datetime": event_datetime,
         "event_timezone": event_timezone,
+        "received_at": timezone.now(),
         "confidence": confidence,
         "raw_data": raw_data or {},
+        "source_event_id": source_event_id,
         "shipment": shipment,
         "container": container,
         "subscription": subscription,
-        "event_type": event_type,
     }
-
-    if source_event_id:
-        event, created = TrackingEvent.objects.update_or_create(
-            team=team,
-            provider=provider,
-            source_event_id=source_event_id,
-            defaults=defaults,
-        )
-    else:
-        event, created = TrackingEvent.objects.update_or_create(
-            team=team,
-            provider=provider,
-            subscription=subscription,
-            event_type=event_type,
-            event_datetime=event_datetime,
-            defaults=defaults,
-        )
-    return event, created
+    return upsert_event(team=team, provider=provider, fingerprint=fingerprint, defaults=defaults)
 
 
 def deduplicate_tracking_event(
@@ -225,43 +302,49 @@ def update_subscription_sync_state(
     success: bool,
     error_message: str = "",
     next_sync_at=None,
+    *,
+    skipped: bool = False,
+    tracking_status: str | None = None,
+    last_event_at=None,
 ) -> TrackingSubscription:
-    """Update sync state fields on a subscription after a sync attempt.
+    """Update sync state on a subscription after a sync attempt.
 
-    On success: resets failure counters, sets status back to ACTIVE.
-    On failure: increments consecutive_failures, records error details, sets status to FAILED.
+    On success: resets the failure counter and returns the subscription to ACTIVE.
+    On failure: increments consecutive_failures, records the error, sets FAILED.
+    On skipped: nothing was attempted, so the failure counter is left alone — a
+    carrier we never called must not accumulate failures — but the next poll is
+    still rescheduled so the subscription does not spin.
     """
     now = timezone.now()
-    if success:
+    fields = ["status", "updated_at"]
+
+    if tracking_status is not None:
+        subscription.tracking_status = tracking_status
+        fields.append("tracking_status")
+    if last_event_at is not None:
+        subscription.last_event_at = last_event_at
+        fields.append("last_event_at")
+    if next_sync_at is not None:
+        subscription.next_sync_at = next_sync_at
+        fields.append("next_sync_at")
+
+    if skipped:
+        subscription.status = TrackingSubscription.Status.ACTIVE
+        subscription.last_error_message = error_message
+        fields.append("last_error_message")
+    elif success:
         subscription.status = TrackingSubscription.Status.ACTIVE
         subscription.last_synced_at = now
-        subscription.next_sync_at = next_sync_at
         subscription.consecutive_failures = 0
         subscription.last_error_message = ""
         subscription.last_error_at = None
-        subscription.save(
-            update_fields=[
-                "status",
-                "last_synced_at",
-                "next_sync_at",
-                "consecutive_failures",
-                "last_error_message",
-                "last_error_at",
-                "updated_at",
-            ]
-        )
+        fields += ["last_synced_at", "consecutive_failures", "last_error_message", "last_error_at"]
     else:
         subscription.status = TrackingSubscription.Status.FAILED
         subscription.last_error_message = error_message
         subscription.last_error_at = now
         subscription.consecutive_failures += 1
-        subscription.save(
-            update_fields=[
-                "status",
-                "last_error_message",
-                "last_error_at",
-                "consecutive_failures",
-                "updated_at",
-            ]
-        )
+        fields += ["last_error_message", "last_error_at", "consecutive_failures"]
+
+    subscription.save(update_fields=list(dict.fromkeys(fields)))
     return subscription

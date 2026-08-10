@@ -1,11 +1,18 @@
-from apps.scm.integrations.carriers.base import BaseCarrierParser
+"""Maersk payload parser.
+
+Maersk publishes DCSA-conformant Track & Trace events, so the shared
+:class:`DcsaCarrierParser` handles them. This subclass exists to name the provider
+and to hold any genuine Maersk deviation, of which there is none yet.
+"""
+
+from __future__ import annotations
+
+from apps.scm.integrations.carriers.dcsa.carrier_parser import DcsaCarrierParser
+
+PROVIDER_CODE = "maersk"
 
 
-class MaerskParser(BaseCarrierParser):
-    """Maersk payload parser (placeholder — DCSA-style; full implementation pending API access)."""
+class MaerskParser(DcsaCarrierParser):
+    """Parses Maersk DCSA Track & Trace responses into normalised events."""
 
-    provider_code = "maersk"
-
-    def parse_tracking_events(self, raw_payload: dict) -> list[dict]:
-        # TODO: parse Maersk DCSA-style API response into normalised event dicts
-        raise NotImplementedError("Maersk parser not yet implemented")
+    provider_code = PROVIDER_CODE

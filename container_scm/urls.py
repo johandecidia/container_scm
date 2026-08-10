@@ -28,6 +28,7 @@ from wagtail.api.v2.views import PagesAPIViewSet
 from wagtail.contrib.sitemaps import Sitemap
 from wagtail.documents import urls as wagtaildocs_urls
 
+from apps.scm.health_views import health_scm
 from apps.subscriptions.urls import team_urlpatterns as subscriptions_team_urls
 from apps.teams.urls import team_urlpatterns as single_team_urls
 from apps.utils.health_views import health, health_db, health_redis
@@ -54,6 +55,7 @@ urlpatterns = [
     path("health/", health, name="health"),
     path("health/db/", health_db, name="health-db"),
     path("health/redis/", health_redis, name="health-redis"),
+    path("health/scm/", health_scm, name="health-scm"),
     path("admin/doc/", include("django.contrib.admindocs.urls")),
     # redirect Django admin login to main login page
     path("admin/login/", RedirectView.as_view(pattern_name="account_login")),

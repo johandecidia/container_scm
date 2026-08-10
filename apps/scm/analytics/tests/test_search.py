@@ -110,6 +110,74 @@ class SearchShipmentsTest(TestCase):
         self.assertEqual(results, [])
 
 
+class SearchPurchaseOrdersTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderStatus
+
+        cls.team = Team.objects.create(name="PO Search Team", slug="po-search-team")
+        cls.other_team = Team.objects.create(name="Other PO Search", slug="other-po-search-team")
+        cls.po = PurchaseOrder.objects.create(
+            team=cls.team,
+            external_id="EXT-001",
+            po_number="PO-SEARCH-001",
+            supplier_no="SUP-001",
+            supplier_name="ACME Corp",
+            status=PurchaseOrderStatus.OPEN,
+        )
+        PurchaseOrder.objects.create(
+            team=cls.other_team,
+            external_id="EXT-002",
+            po_number="PO-OTHER-001",
+            supplier_no="SUP-002",
+            supplier_name="Other Corp",
+            status=PurchaseOrderStatus.OPEN,
+        )
+
+    def test_finds_po_by_number(self):
+        results = search_scm(self.team, "PO-SEARCH-001")
+        self.assertTrue(any(r.kind == "purchase_order" for r in results))
+
+    def test_finds_po_by_supplier_name(self):
+        results = search_scm(self.team, "ACME")
+        self.assertTrue(any(r.kind == "purchase_order" for r in results))
+
+    def test_team_isolation(self):
+        results = search_scm(self.team, "Other Corp")
+        self.assertFalse(any(r.kind == "purchase_order" for r in results))
+
+
+class SearchSupplierDeliveriesTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from apps.scm.procurement.models import PurchaseOrder
+        from apps.scm.supplier_deliveries.models import SupplierDelivery
+
+        cls.team = Team.objects.create(name="SD Search Team", slug="sd-search-team")
+        cls.other_team = Team.objects.create(name="Other SD Search", slug="other-sd-search-team")
+        po = PurchaseOrder.objects.create(
+            team=cls.team,
+            external_id="EXT-SD-001",
+            po_number="PO-SD-001",
+            supplier_no="SUP-SD-001",
+            supplier_name="SD Supplier",
+        )
+        cls.delivery = SupplierDelivery.objects.create(
+            team=cls.team,
+            purchase_order=po,
+            delivery_reference="DR-SEARCH-001",
+            supplier="SD Supplier",
+        )
+
+    def test_finds_delivery_by_reference(self):
+        results = search_scm(self.team, "DR-SEARCH-001")
+        self.assertTrue(any(r.kind == "supplier_delivery" for r in results))
+
+    def test_team_isolation(self):
+        results = search_scm(self.other_team, "DR-SEARCH-001")
+        self.assertFalse(any(r.kind == "supplier_delivery" for r in results))
+
+
 @override_settings(STORAGES=_TEST_STORAGES)
 class SearchViewTest(TestCase):
     @classmethod

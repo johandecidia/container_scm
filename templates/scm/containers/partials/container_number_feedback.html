@@ -1,0 +1,12 @@
+{% load i18n %}
+
+{% if parts %}
+  <p class="text-success">
+    ✓ {% translate "Valid container number" %}
+    <span class="font-mono text-base-content/70 ml-2">
+      {{ parts.owner_code }} | {{ parts.category_id }} | {{ parts.serial_number }} | {{ parts.check_digit }}
+    </span>
+  </p>
+{% elif error %}
+  <p class="text-error">✕ {% translate "Invalid container number" %} <span class="text-base-content/60">{{ error }}</span></p>
+{% endif %}

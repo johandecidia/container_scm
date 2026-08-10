@@ -19,15 +19,45 @@
   </a>
 </li>
 <li>
-  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-box h-4 w-4"></i>
-    {% translate "Containers" %}
+  <a href="{% url 'procurement:purchase_order_list' %}" {% if '/scm/procurement/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-file-invoice h-4 w-4"></i>
+    {% translate "Purchase Orders" %}
+  </a>
+</li>
+<li>
+  <a href="{% url 'supplier_deliveries:list' %}" {% if '/scm/supplier-deliveries/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-truck h-4 w-4"></i>
+    {% translate "Supplier Deliveries" %}
+  </a>
+</li>
+<li>
+  <a href="{% url 'visibility:overview' %}" {% if '/scm/visibility/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-earth-americas h-4 w-4"></i>
+    {% translate "Visibility" %}
   </a>
 </li>
 <li>
   <a href="{% url 'shipments:list' %}" {% if '/scm/shipments/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-ship h-4 w-4"></i>
     {% translate "Shipments" %}
+  </a>
+</li>
+<li>
+  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path and '/discovery/' not in request.path and '/locations/' not in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-box h-4 w-4"></i>
+    {% translate "Containers" %}
+  </a>
+</li>
+<li>
+  <a href="{% url 'containers:location_list' %}" {% if '/scm/containers/locations/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-map-marker-alt h-4 w-4"></i>
+    {% translate "Container Locations" %}
+  </a>
+</li>
+<li>
+  <a href="{% url 'containers:discovery_dashboard' %}" {% if '/scm/containers/discovery/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-magnifying-glass h-4 w-4"></i>
+    {% translate "Discovery" %}
   </a>
 </li>
 <li>

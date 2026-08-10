@@ -1,0 +1,27 @@
+{% load i18n %}
+
+{% comment %}
+  The outcome of the refresh the user just asked for. The message is built in
+  manual_refresh.py from the sync run's status and error type — never from the
+  carrier's own error text, which can carry a response body or a credential.
+{% endcomment %}
+
+<div
+  role="alert"
+  class="alert alert-soft mb-4
+    {% if refresh.level == 'success' %}alert-success
+    {% elif refresh.level == 'warning' %}alert-warning
+    {% elif refresh.level == 'error' %}alert-error
+    {% else %}alert-info{% endif %}"
+>
+  {% if refresh.level == "success" %}
+    <i class="fa fa-check"></i>
+  {% elif refresh.level == "error" %}
+    <i class="fa fa-circle-exclamation"></i>
+  {% elif refresh.level == "warning" %}
+    <i class="fa fa-triangle-exclamation"></i>
+  {% else %}
+    <i class="fa fa-circle-info"></i>
+  {% endif %}
+  <span class="text-sm">{{ refresh.message }}</span>
+</div>
