@@ -125,6 +125,33 @@ class HttpConfig:
         )
 
 
+@dataclass(frozen=True)
+class CarrierResponse:
+    """A successful carrier response: the parsed JSON and the headers that came with it.
+
+    Headers are exposed because some carriers paginate through them rather than
+    through the body — DCSA Track & Trace advertises the next cursor in a
+    ``Next-Page`` header. Lookup is case-insensitive, so a plain dict from a test
+    double behaves like the ``CaseInsensitiveDict`` requests returns.
+    """
+
+    payload: dict | list
+    headers: dict = field(default_factory=dict)
+
+    def header(self, name: str) -> str:
+        """Return the named header's value, stripped, or "" when it is absent."""
+        if not name or not self.headers:
+            return ""
+        value = self.headers.get(name)
+        if value is None:
+            lowered = name.lower()
+            for key, candidate in self.headers.items():
+                if str(key).lower() == lowered:
+                    value = candidate
+                    break
+        return str(value or "").strip()
+
+
 def _retry_after_seconds(response) -> int | None:
     value = response.headers.get("Retry-After")
     if not value:
@@ -167,6 +194,15 @@ class CarrierHttpClient:
 
     def get(self, url: str, *, params: dict | None = None) -> dict:
         """GET ``url`` and return parsed JSON, raising a typed CarrierError on failure."""
+        return self.get_with_headers(url, params=params).payload
+
+    def get_with_headers(self, url: str, *, params: dict | None = None) -> CarrierResponse:
+        """GET ``url`` and return the parsed JSON together with the response headers.
+
+        Same request handling, retries and error classification as :meth:`get` — the
+        only difference is that the headers survive, for carriers that paginate
+        through them.
+        """
         request_id = uuid.uuid4().hex
         started = time.monotonic()
         endpoint = log_path(url)
@@ -206,7 +242,7 @@ class CarrierHttpClient:
                             error_message, provider_code=self.provider_code, status_code=status_code
                         ) from exc
                     succeeded = True
-                    return payload
+                    return CarrierResponse(payload=payload, headers=response.headers or {})
 
                 if status_code in self.config.no_data_statuses:
                     # Not an error: the carrier simply does not know this reference.
