@@ -38,6 +38,7 @@ from apps.scm.integrations.carriers.exceptions import (
     CarrierNotImplementedError,
     CarrierTimeoutError,
 )
+from apps.scm.integrations.models import Integration
 from apps.scm.shipments.models import Shipment, ShipmentContainer
 from apps.scm.tracking.models import TrackingSubscription
 from apps.teams.models import Team
@@ -397,6 +398,136 @@ class CheckPlannedContainerTest(TestCase):
 
         self.assertEqual(Container.objects.filter(team=self.team, owner_code="MRK").count(), 1)
         self.assertEqual(TrackingSubscription.objects.filter(team=self.team).count(), 1)
+
+
+class PlannedCarrierFallbackTest(TestCase):
+    """The carrier a number was registered with is a starting point, not a verdict.
+
+    A packing list often names the wrong carrier, or none at all. Rather than giving
+    up, a pass falls back to the team's other connected carriers — the same sweep the
+    container detail page uses — and promotes the container with whichever one
+    actually answered.
+    """
+
+    def setUp(self):
+        self.team = _team("disc-fallback")
+        _equipment_type()
+        for code in ("maersk", "cosco"):
+            Integration.objects.create(
+                team=self.team,
+                name=code,
+                provider_code=code,
+                provider_family=Integration.ProviderFamily.CARRIER,
+                is_active=True,
+            )
+
+    def _check(self, planned, behaviour, events_by_code=None):
+        """Run one pass with each carrier behaving as ``behaviour`` says."""
+        from unittest import mock
+
+        clients = {
+            code: FakeCarrierClient(code, error=value)
+            if isinstance(value, Exception)
+            else FakeCarrierClient(code, payload=value)
+            for code, value in behaviour.items()
+        }
+        events_by_code = events_by_code or {}
+        with mock.patch.multiple(
+            "apps.scm.integrations.carriers.factory",
+            build_carrier_client=mock.Mock(side_effect=lambda code, **kwargs: clients[code]),
+            build_carrier_parser=mock.Mock(side_effect=lambda code: FakeParser(events_by_code.get(code, []))),
+        ):
+            return check_planned_container(planned), clients
+
+    def test_the_planned_carrier_is_asked_first(self):
+        planned = add_planned_container(self.team, MRKU_1, carrier="cosco")
+        result, clients = self._check(
+            planned,
+            {"cosco": {"events": [{"eventID": "E1"}]}, "maersk": {"events": []}},
+            events_by_code={"cosco": [_normalised_event(MRKU_1)]},
+        )
+
+        self.assertEqual(result, PlannedContainerResult.DETECTED)
+        self.assertEqual(clients["cosco"].calls, [MRKU_1])
+        self.assertEqual(clients["maersk"].calls, [], "the planned carrier answered, so nobody else is asked")
+
+    def test_a_fallback_carrier_can_find_the_container(self):
+        planned = add_planned_container(self.team, MRKU_1, carrier="maersk")
+        result, clients = self._check(
+            planned,
+            {"maersk": CarrierNoDataError("404"), "cosco": {"events": [{"eventID": "E1"}]}},
+            events_by_code={"cosco": [_normalised_event(MRKU_1)]},
+        )
+
+        self.assertEqual(result, PlannedContainerResult.DETECTED)
+        self.assertEqual(clients["maersk"].calls, [MRKU_1])
+        self.assertEqual(clients["cosco"].calls, [MRKU_1])
+
+    def test_promotion_uses_the_carrier_that_returned_the_data(self):
+        planned = add_planned_container(self.team, MRKU_1, carrier="maersk")
+        self._check(
+            planned,
+            {"maersk": CarrierNoDataError("404"), "cosco": {"events": [{"eventID": "E1"}]}},
+            events_by_code={"cosco": [_normalised_event(MRKU_1)]},
+        )
+
+        container = Container.objects.get(team=self.team, owner_code="MRK", serial_number="123456")
+        subscription = TrackingSubscription.objects.get(team=self.team, container=container)
+        self.assertEqual(subscription.provider.code, "cosco")
+        planned.refresh_from_db()
+        self.assertEqual(planned.carrier, "cosco")
+
+    def test_a_number_without_a_carrier_still_gets_swept(self):
+        """Registering a number from a packing list should not require naming a carrier."""
+        planned = add_planned_container(self.team, MCUU_5)  # unknown owner prefix
+        self.assertEqual(planned.carrier, "")
+
+        result, clients = self._check(
+            planned,
+            # Both connected carriers are asked, in a stable order, until one answers.
+            {"cosco": CarrierNoDataError("404"), "maersk": {"events": [{"eventID": "E1"}]}},
+            events_by_code={"maersk": [_normalised_event(MCUU_5)]},
+        )
+
+        self.assertEqual(result, PlannedContainerResult.DETECTED)
+        self.assertEqual(clients["cosco"].calls, [MCUU_5])
+        self.assertEqual(clients["maersk"].calls, [MCUU_5])
+
+    def test_one_pass_over_many_carriers_is_one_attempt(self):
+        """The attempt budget limits how often a number is chased, not how widely."""
+        planned = add_planned_container(self.team, MRKU_1, carrier="maersk")
+        result, _ = self._check(planned, {code: CarrierNoDataError("404") for code in ("maersk", "cosco")})
+
+        self.assertEqual(result, PlannedContainerResult.NOT_FOUND)
+        planned.refresh_from_db()
+        self.assertEqual(planned.attempts, 1)
+
+    def test_a_sweep_that_finds_nothing_writes_no_tracking_records(self):
+        planned = add_planned_container(self.team, MRKU_1, carrier="maersk")
+        self._check(planned, {code: CarrierNoDataError("404") for code in ("maersk", "cosco")})
+
+        self.assertEqual(Container.objects.filter(team=self.team).count(), 0)
+        self.assertEqual(TrackingSubscription.objects.filter(team=self.team).count(), 0)
+        planned.refresh_from_db()
+        self.assertEqual(planned.status, PlannedContainerStatus.PLANNED)
+
+    def test_a_broken_carrier_does_not_stop_the_next_one(self):
+        planned = add_planned_container(self.team, MRKU_1, carrier="maersk")
+        result, _ = self._check(
+            planned,
+            {"maersk": CarrierTimeoutError("timed out"), "cosco": {"events": [{"eventID": "E1"}]}},
+            events_by_code={"cosco": [_normalised_event(MRKU_1)]},
+        )
+        self.assertEqual(result, PlannedContainerResult.DETECTED)
+
+    def test_carriers_from_another_team_are_never_swept(self):
+        other = _team("disc-fallback-other")
+        planned = add_planned_container(other, MRKU_1)
+        result, clients = self._check(planned, {"maersk": {"events": [{"eventID": "E1"}]}})
+
+        self.assertEqual(result, PlannedContainerResult.SKIPPED)
+        self.assertEqual(clients["maersk"].calls, [])
+        self.assertEqual(planned.attempts, 0)
 
 
 class RunDiscoveryForTeamTest(TestCase):
