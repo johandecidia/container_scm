@@ -493,6 +493,22 @@ class PlannedCarrierFallbackTest(TestCase):
         self.assertEqual(clients["cosco"].calls, [MCUU_5])
         self.assertEqual(clients["maersk"].calls, [MCUU_5])
 
+    def test_an_unconfigured_planned_carrier_falls_back_to_the_connected_ones(self):
+        """Hapag-Lloyd is named but not connected, so it is skipped rather than fatal."""
+        planned = add_planned_container(self.team, MRKU_1, carrier="hapag_lloyd")
+        self.assertEqual(planned.carrier, "hapag_lloyd")
+
+        result, clients = self._check(
+            planned,
+            {"cosco": CarrierNoDataError("404"), "maersk": {"events": [{"eventID": "E1"}]}},
+            events_by_code={"maersk": [_normalised_event(MRKU_1)]},
+        )
+
+        self.assertEqual(result, PlannedContainerResult.DETECTED)
+        self.assertNotIn("hapag_lloyd", clients, "an unconnected carrier is never built or called")
+        planned.refresh_from_db()
+        self.assertEqual(planned.carrier, "maersk")
+
     def test_one_pass_over_many_carriers_is_one_attempt(self):
         """The attempt budget limits how often a number is chased, not how widely."""
         planned = add_planned_container(self.team, MRKU_1, carrier="maersk")

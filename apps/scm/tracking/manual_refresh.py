@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, Any
 from django.utils.translation import gettext_lazy as _
 
 from apps.scm.integrations.carriers.http import interactive_carrier_requests
+from apps.scm.integrations.locks import LockNotAcquiredError, resource_lock
 
 from .models import TrackingSubscription, TrackingSyncRun
 from .services import create_sync_run
@@ -90,6 +91,13 @@ NOT_CONFIGURED = "not_configured"
 CARRIER_UNKNOWN = "carrier_unknown"
 UNAVAILABLE = "unavailable"
 IN_PROGRESS = "in_progress"
+
+# One discovery sweep per container at a time. Kept in its own namespace because it
+# guards a container, not a subscription — there is no subscription to guard yet.
+_DISCOVERY_LOCK_PREFIX = "tracking_discovery_lock"
+# A sweep is bounded by the interactive HTTP ceilings, so it cannot run for long;
+# the advisory lock underneath has no TTL and is released if the worker dies.
+_DISCOVERY_LOCK_TTL_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -280,6 +288,29 @@ def _sync_verified_subscription(subscription: TrackingSubscription) -> RefreshRe
 
 def _discover_and_activate(*, team, container) -> RefreshResult:
     """Find a carrier that knows this container, and make it its tracking source.
+
+    Held under the same kind of lock a scheduled sync takes, for the same reason and
+    one more. A second refresh arriving while the first is still sweeping would ask
+    every carrier a second time — the cost of a double click is now N carrier calls,
+    not one — and both passes would reach ``get_or_create`` for the subscription
+    believing none exists. Serialising them makes the second refresh report "already
+    running" instead, which is what it is.
+    """
+    lock_name = f"container:{container.pk}"
+    try:
+        with resource_lock(lock_name, ttl=_DISCOVERY_LOCK_TTL_SECONDS, prefix=_DISCOVERY_LOCK_PREFIX):
+            return _run_discovery(team=team, container=container)
+    except LockNotAcquiredError:
+        logger.info("Discovery for container %s skipped — a refresh is already running.", container.pk)
+        return RefreshResult(
+            level=INFO,
+            state=IN_PROGRESS,
+            message=_("A tracking refresh for this container is already running."),
+        )
+
+
+def _run_discovery(*, team, container) -> RefreshResult:
+    """Sweep the candidate carriers and act on the first one with data.
 
     The subscription is created between the two halves of this function, and only
     there: everything above it can leave the container unassigned, everything below

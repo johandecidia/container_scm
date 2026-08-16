@@ -29,6 +29,7 @@ from apps.scm.shipments.models import Shipment, ShipmentContainer
 from apps.scm.tracking.manual_refresh import (
     CARRIER_UNKNOWN,
     ERROR,
+    IN_PROGRESS,
     INFO,
     NO_DATA,
     NOT_CONFIGURED,
@@ -828,6 +829,160 @@ class MultiCarrierRefreshTest(TestCase):
         result, _ = self._refresh({code: CarrierTimeoutError(f"secret-{code}") for code in self.CARRIERS})
         for code in self.CARRIERS:
             self.assertNotIn(f"secret-{code}", str(result.message))
+
+    # -- An explicitly named carrier that cannot be called --------------------
+
+    def test_an_unconfigured_shipment_carrier_falls_back_to_the_connected_ones(self):
+        """The shipment names Hapag-Lloyd, which is not connected. Keep going."""
+        shipment = Shipment.objects.create(team=self.team, shipment_number="SHP-GAP", carrier="Hapag-Lloyd")
+        ShipmentContainer.objects.create(shipment=shipment, container=self.container)
+
+        result, clients = self._refresh(
+            {"cosco": {"events": [{"id": 1}]}},
+            events_by_code={"cosco": [_normalised_event(self.container.container_id)]},
+        )
+
+        self.assertEqual(result.level, SUCCESS)
+        self.assertEqual(result.carrier_code, "cosco")
+        self.assertEqual(self._subscriptions().get().provider.code, "cosco")
+        # Hapag-Lloyd was never called: there is no integration to call it with.
+        self.assertNotIn("Hapag-Lloyd", result.carriers_checked)
+
+    def test_an_unconfigured_planned_carrier_falls_back_to_the_connected_ones(self):
+        from apps.scm.containers.models import PlannedContainer
+
+        PlannedContainer.objects.create(
+            team=self.team,
+            container_number=self.container.container_id,
+            carrier="hapag_lloyd",
+        )
+
+        result, _ = self._refresh(
+            {"cosco": {"events": [{"id": 1}]}},
+            events_by_code={"cosco": [_normalised_event(self.container.container_id)]},
+        )
+
+        self.assertEqual(result.level, SUCCESS)
+        self.assertEqual(self._subscriptions().get().provider.code, "cosco")
+
+    def test_an_unconfigured_named_carrier_alone_is_still_a_configuration_problem(self):
+        """With nothing else to fall back to, the gap is what the user needs to hear."""
+        team = Team.objects.create(name="sweep-gap-only", slug="sweep-gap-only")
+        container = _container(team, serial="925897", check_digit=9)
+        shipment = Shipment.objects.create(team=team, shipment_number="SHP-ONLY", carrier="Hapag-Lloyd")
+        ShipmentContainer.objects.create(shipment=shipment, container=container)
+
+        result = refresh_container_tracking(team=team, container=container)
+
+        self.assertEqual(result.state, NOT_CONFIGURED)
+        self.assertIn("Hapag-Lloyd", str(result.message))
+
+    # -- Every kind of technical failure is survivable ------------------------
+
+    def test_an_authentication_failure_does_not_end_the_sweep(self):
+        from apps.scm.integrations.carriers.exceptions import CarrierAuthenticationError
+
+        result, clients = self._refresh(
+            {"cma_cgm": CarrierAuthenticationError("bad key sk-live-123"), "cosco": {"events": [{"id": 1}]}},
+            events_by_code={"cosco": [_normalised_event(self.container.container_id)]},
+        )
+
+        self.assertEqual(result.level, SUCCESS)
+        self.assertEqual(result.carrier_code, "cosco")
+        self.assertEqual(clients["cma_cgm"].calls, [self.container.container_id])
+        self.assertNotIn("sk-live-123", str(result.message))
+
+    def test_a_server_error_does_not_end_the_sweep(self):
+        from apps.scm.integrations.carriers.exceptions import CarrierServerError
+
+        result, _ = self._refresh(
+            {"cma_cgm": CarrierServerError("500 <html>stack trace</html>"), "cosco": {"events": [{"id": 1}]}},
+            events_by_code={"cosco": [_normalised_event(self.container.container_id)]},
+        )
+
+        self.assertEqual(result.level, SUCCESS)
+        self.assertEqual(result.carrier_code, "cosco")
+        self.assertNotIn("stack trace", str(result.message))
+
+    def test_no_carrier_response_body_survives_into_a_failure_message(self):
+        from apps.scm.integrations.carriers.exceptions import (
+            CarrierAuthenticationError,
+            CarrierServerError,
+        )
+
+        result, _ = self._refresh(
+            {
+                "maersk": CarrierAuthenticationError("consumer-key refresh-secret-key rejected"),
+                "cma_cgm": CarrierServerError("<html>stack trace</html>"),
+                "cosco": CarrierTimeoutError("read timeout to api.cosco.example"),
+            }
+        )
+
+        rendered = str(result.message)
+        for leak in ("refresh-secret-key", "stack trace", "api.cosco.example", "consumer-key"):
+            self.assertNotIn(leak, rendered)
+
+    # -- Exactly one subscription, for the carrier that answered --------------
+
+    def test_only_the_carrier_that_answered_gets_a_subscription(self):
+        result, _ = self._refresh(
+            {
+                "maersk": CarrierNoDataError("404"),
+                "cma_cgm": CarrierTimeoutError("timed out"),
+                "cosco": {"events": [{"id": 1}]},
+            },
+            events_by_code={"cosco": [_normalised_event(self.container.container_id)]},
+        )
+
+        self.assertEqual(result.carrier_code, "cosco")
+        self.assertEqual(self._subscriptions().count(), 1)
+        self.assertEqual(
+            list(TrackingSubscription.objects.filter(team=self.team).values_list("provider__code", flat=True)),
+            ["cosco"],
+        )
+
+    # -- Two refreshes at once ------------------------------------------------
+
+    def test_a_second_refresh_while_one_is_sweeping_is_told_to_wait(self):
+        """The lock is what stops a double click costing two full sweeps."""
+        from apps.scm.integrations.locks import resource_lock
+        from apps.scm.tracking.manual_refresh import (
+            _DISCOVERY_LOCK_PREFIX,
+            _DISCOVERY_LOCK_TTL_SECONDS,
+        )
+
+        clients = {code: _fake_client(code, {"events": [{"id": 1}]}) for code in self.CARRIERS}
+        with (
+            resource_lock(
+                f"container:{self.container.pk}",
+                ttl=_DISCOVERY_LOCK_TTL_SECONDS,
+                prefix=_DISCOVERY_LOCK_PREFIX,
+            ),
+            _patch_carriers(
+                clients, {code: [_normalised_event(self.container.container_id)] for code in self.CARRIERS}
+            ),
+        ):
+            result = refresh_container_tracking(team=self.team, container=self.container)
+
+        self.assertEqual(result.state, IN_PROGRESS)
+        self.assertFalse(self._subscriptions().exists())
+        for code in self.CARRIERS:
+            self.assertEqual(clients[code].calls, [], "no carrier is asked while another sweep holds the lock")
+
+    def test_a_lost_race_still_leaves_one_subscription_and_no_duplicate_events(self):
+        """Belt and braces: if two sweeps did interleave, the writes are idempotent."""
+        events = [_normalised_event(self.container.container_id)]
+        behaviour = {"cosco": {"events": [{"id": 1}]}}
+
+        self._refresh(behaviour, events_by_code={"cosco": events})
+        # Force the second refresh down the discovery path as if it had never seen
+        # the subscription the first one created — the race, without the threads.
+        with mock.patch("apps.scm.tracking.manual_refresh.get_verified_container_subscription", return_value=None):
+            second, _ = self._refresh(behaviour, events_by_code={"cosco": events})
+
+        self.assertEqual(self._subscriptions().count(), 1)
+        self.assertEqual(TrackingEvent.objects.filter(team=self.team, container=self.container).count(), 1)
+        self.assertEqual(second.events_created, 0)
 
     # -- Tenancy -------------------------------------------------------------
 
