@@ -36,10 +36,12 @@
         </p>
 
         {% comment %}
-          The shipment's carrier is context, not a tracking state: it says who we
-          would ask. Shown whenever it is not already the verified tracking carrier,
-          so "Not tracked" reads as an answer about Maersk rather than a gap in the
-          setup. What the last refresh actually returned is the banner's job.
+          The shipment's carrier is context, not a tracking state: it says who a
+          refresh would ask first, not who it is limited to — an untracked container
+          is swept across every connected carrier. Shown whenever it is not already
+          the verified tracking carrier, so "Not tracked" reads as an answer about
+          Maersk rather than a gap in the setup. What the last refresh actually
+          returned is the banner's job.
         {% endcomment %}
         {% if not workspace.is_tracked %}
           <p class="text-xs text-base-content/60 mt-1">
@@ -48,7 +50,7 @@
                 Shipment carrier: {{ carrier }}. No tracking data available yet.
               {% endblocktranslate %}
             {% else %}
-              {% translate "No carrier has been assigned as a tracking source." %}
+              {% translate "No tracking source yet. A refresh checks the connected carriers." %}
             {% endif %}
           </p>
         {% elif workspace.shipment_carrier and workspace.shipment_carrier != workspace.tracking_carrier_name %}
@@ -210,7 +212,7 @@
       </ol>
     {% else %}
       <p class="text-sm text-base-content/60">{% translate "No tracking events yet." %}</p>
-      <p class="text-sm text-base-content/50">{% translate "Refresh tracking to check the carrier." %}</p>
+      <p class="text-sm text-base-content/50">{% translate "Refresh tracking to check the carriers." %}</p>
     {% endif %}
   </section>
 </div>
