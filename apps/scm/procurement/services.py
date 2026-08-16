@@ -123,6 +123,25 @@ def create_purchase_order(team: Team, **kwargs: Any) -> PurchaseOrder:
 
 
 # ---------------------------------------------------------------------------
+# Delete service
+# ---------------------------------------------------------------------------
+
+
+def delete_purchase_order(purchase_order: PurchaseOrder) -> None:
+    """Hard-delete a purchase order and everything that hangs off it.
+
+    Cascades to the PO's lines, its timeline events and its supplier deliveries
+    (including their delivery lines). Containers are not deleted — a delivery
+    line only references them, so the container itself survives.
+
+    A Business Central PO deleted here is only removed from SCM; BC remains
+    master and a later sync will recreate it.
+    """
+    with transaction.atomic():
+        purchase_order.delete()
+
+
+# ---------------------------------------------------------------------------
 # Upsert service (canonical entry point for all PO sources)
 # ---------------------------------------------------------------------------
 

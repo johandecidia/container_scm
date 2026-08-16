@@ -1,0 +1,14 @@
+{% load i18n %}
+
+{% comment %}
+  Says which purchase order the container intake is working for. Shown on every
+  step of the modal so the target is never guessed from memory.
+{% endcomment %}
+<div class="alert alert-info mb-4 text-sm">
+  <i class="fa fa-link"></i>
+  <span>
+    {% translate "Linking to purchase order" %}
+    <span class="font-semibold">{{ purchase_order.po_number }}</span>
+    &mdash; {{ purchase_order.supplier_name }}
+  </span>
+</div>

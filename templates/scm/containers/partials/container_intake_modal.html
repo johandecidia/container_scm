@@ -3,6 +3,10 @@
 {% comment %}
   Shell for adding containers. The tabs are plain hx-get links that re-render this
   whole dialog; the forms inside post into #intake-body only.
+
+  When opened from a purchase order, every tab link carries the PO along, so
+  switching tabs mid-flow does not silently turn a "link to this order" into a
+  plain add. The banner below says which order that is.
 {% endcomment %}
 
 <dialog id="container-intake-modal" class="modal modal-open">
@@ -16,25 +20,29 @@
 
     <h3 class="font-bold text-lg mb-4">{% translate "Add containers" %}</h3>
 
+    {% if purchase_order %}
+      {% include "scm/supplier_deliveries/partials/link_containers_banner.html" %}
+    {% endif %}
+
     <div role="tablist" class="tabs tabs-bordered mb-4">
       <a
         role="tab"
         class="tab {% if tab == 'single' %}tab-active{% endif %}"
-        hx-get="{% url 'containers:create' %}"
+        hx-get="{% url 'containers:create' %}{% if purchase_order %}?purchase_order={{ purchase_order.pk }}{% endif %}"
         hx-target="#modal-container"
         hx-swap="innerHTML"
       >{% translate "Single" %}</a>
       <a
         role="tab"
         class="tab {% if tab == 'paste' or tab == 'preview-paste' %}tab-active{% endif %}"
-        hx-get="{% url 'containers:import_paste' %}"
+        hx-get="{% url 'containers:import_paste' %}{% if purchase_order %}?purchase_order={{ purchase_order.pk }}{% endif %}"
         hx-target="#modal-container"
         hx-swap="innerHTML"
       >{% translate "Multiple" %}</a>
       <a
         role="tab"
         class="tab {% if tab == 'csv' %}tab-active{% endif %}"
-        hx-get="{% url 'containers:import_csv' %}"
+        hx-get="{% url 'containers:import_csv' %}{% if purchase_order %}?purchase_order={{ purchase_order.pk }}{% endif %}"
         hx-target="#modal-container"
         hx-swap="innerHTML"
       >{% translate "CSV" %}</a>

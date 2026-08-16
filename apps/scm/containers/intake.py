@@ -168,11 +168,17 @@ class IntakePreview:
 
 @dataclass(frozen=True)
 class IntakeResult:
-    """What an import actually did."""
+    """What an import actually did.
+
+    ``containers`` holds the rows that now exist, whether this import created them
+    or found them already there — an import run against a purchase order links both,
+    since a number that was registered last week still belongs on today's order.
+    """
 
     created: list[str] = field(default_factory=list)
     existed: list[str] = field(default_factory=list)
     invalid: list[IntakeRow] = field(default_factory=list)
+    containers: list[Container] = field(default_factory=list)
 
     @property
     def created_count(self) -> int:
@@ -277,20 +283,24 @@ def bulk_create_containers(*, team: Team, user: CustomUser, entries: list[tuple[
     created: list[str] = []
     existed: list[str] = []
     invalid: list[IntakeRow] = [row for row in preview.rows if row.state == INVALID]
+    containers: list[Container] = []
 
     for row in preview.rows:
         if row.state == INVALID:
             continue
         try:
-            _, was_created = create_or_get_container(team=team, user=user, number=row.number, carrier=row.carrier)
+            container, was_created = create_or_get_container(
+                team=team, user=user, number=row.number, carrier=row.carrier
+            )
         except ValidationError as exc:
             invalid.append(
                 IntakeRow(number=row.number, state=INVALID, carrier=row.carrier, error=" ".join(exc.messages))
             )
             continue
         (created if was_created else existed).append(row.number)
+        containers.append(container)
 
-    return IntakeResult(created=created, existed=existed, invalid=invalid)
+    return IntakeResult(created=created, existed=existed, invalid=invalid, containers=containers)
 
 
 def link_container_carrier(*, team: Team, container: Container, carrier: str) -> None:

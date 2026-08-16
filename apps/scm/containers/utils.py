@@ -3,7 +3,7 @@ ISO 6346 container identification helpers.
 
 Container ID format: OOOOCU######C
   OOO  — owner code (3 letters)
-  C    — category identifier (U, J, or Z)
+  C    — category identifier (see ContainerCategory)
   ###### — serial number (6 digits)
   C    — check digit (1 digit)
 
@@ -15,7 +15,10 @@ import re
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 
-_CONTAINER_ID_RE = re.compile(r"^([A-Z]{3})([UJZ])(\d{6})(\d)$")
+from .choices import ContainerCategory
+
+_CATEGORY_IDS = "".join(ContainerCategory.values)
+_CONTAINER_ID_RE = re.compile(rf"^([A-Z]{{3}})([{_CATEGORY_IDS}])(\d{{6}})(\d)$")
 
 # ISO 6346 assigns numeric values to letters A–Z.
 # Starts at 10 for A and increments by 1, skipping any value that is a multiple of 11.
