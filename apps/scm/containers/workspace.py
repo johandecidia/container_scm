@@ -20,6 +20,13 @@ questions and are presented separately.
 
 **Position quality is part of the position.** The last known place carries how it
 was obtained, so a terminal coordinate is never shown as a live GPS fix.
+
+**Several tracking sources, one journey.** A container can have more than one
+verified source — carriers that covered different legs, plus our own physical
+record — so freshness spans all of them and the journey is assembled from all of
+them by :func:`~apps.scm.tracking.journey.get_container_journey`. ``active_subscription``
+still names the one watch the panel's status line speaks for; it is not a claim
+that it is the only one.
 """
 
 from __future__ import annotations
@@ -32,6 +39,8 @@ from apps.teams.models import Team
 from .models import Container
 
 if TYPE_CHECKING:
+    from apps.scm.tracking.gaps import TrackingGap
+    from apps.scm.tracking.journey import ContainerJourney, DerivedCurrentLocation, JourneyPoint, JourneySource
     from apps.scm.tracking.models import TrackingEvent
     from apps.scm.tracking.positions import ContainerPosition
 
@@ -70,6 +79,12 @@ class ContainerWorkspace:
     position: ContainerPosition | None = None
     timeline: list = field(default_factory=list)
     recent_sync_runs: list = field(default_factory=list)
+
+    # The container's journey across every source that has reported it. Only the
+    # full workspace builds it — a bulk-built one leaves it None rather than
+    # issuing a query per container, so a caller reading it there gets nothing
+    # rather than a partial answer.
+    journey: ContainerJourney | None = None
 
     # Every internal event type the carrier has actually *observed* for this
     # container. Forecasts are excluded on purpose: an estimated arrival must never
@@ -112,11 +127,72 @@ class ContainerWorkspace:
 
     @property
     def tracking_carrier_name(self) -> str:
-        """The carrier that actually tracks this container, or "" when none does."""
+        """The carrier that actually tracks this container, or "" when none does.
+
+        One name, for the places that can only show one — the list column, the
+        carrier filter. Where several sources have reported this box,
+        :attr:`tracking_sources` is the honest answer and this is the primary of them.
+        """
         subscription = self.active_subscription
         if subscription is not None and subscription.provider_id:
             return subscription.provider.name
         return ""
+
+    @property
+    def tracking_sources(self) -> list[JourneySource]:
+        """Every source that has reported this container, carriers first.
+
+        Empty for a bulk-built workspace, which does not load the journey.
+        """
+        return self.journey.sources if self.journey is not None else []
+
+    @property
+    def tracking_source_names(self) -> list[str]:
+        return [source.name for source in self.tracking_sources]
+
+    @property
+    def has_multiple_tracking_sources(self) -> bool:
+        return len(self.tracking_sources) > 1
+
+    @property
+    def physical_observation(self) -> JourneyPoint | None:
+        """Our own physical record of where the box is, or None when we have none."""
+        return self.journey.physical_observation if self.journey is not None else None
+
+    @property
+    def derived_current_location(self) -> DerivedCurrentLocation | None:
+        """Where the container is now, from whichever source knows most recently.
+
+        Not the same question as :attr:`position`, which is the last place a *carrier*
+        reported. When we have physically seen the box more recently than the
+        carrier's last observation, that is where it is — and the carrier's event
+        stays on the timeline, because it did happen.
+        """
+        return self.journey.current_location if self.journey is not None else None
+
+    @property
+    def current_position(self) -> ContainerPosition | None:
+        """The derived current location as a position, falling back to the carrier's.
+
+        Lets the existing position component render either without knowing which it
+        was given.
+        """
+        current = self.derived_current_location
+        return current.position if current is not None else self.position
+
+    @property
+    def tracking_gap(self) -> TrackingGap | None:
+        """The segment of the journey nothing accounts for, or None.
+
+        Derived on read, so it disappears as soon as an event explains the segment.
+        """
+        from apps.scm.tracking.gaps import detect_tracking_gap
+
+        return detect_tracking_gap(self.journey) if self.journey is not None else None
+
+    @property
+    def has_tracking_gap(self) -> bool:
+        return self.tracking_gap is not None
 
     @property
     def shipment_carrier(self) -> str:
@@ -159,22 +235,35 @@ class ContainerWorkspace:
 
     @property
     def last_refreshed_at(self):
-        """When the carrier was last asked about this container."""
-        subscription = self.active_subscription
-        return subscription.last_synced_at if subscription else None
+        """When any of this container's carriers was last asked.
+
+        Across every source, not just the primary one: with two watches on one box,
+        reporting only one of them would say "last checked 3 days ago" about a
+        container that was checked a minute ago.
+        """
+        times = [
+            subscription.last_synced_at
+            for subscription in self.tracking_subscriptions
+            if subscription.last_synced_at is not None
+        ]
+        return max(times) if times else None
 
     @property
     def next_check_at(self):
-        """When the scheduler will next ask the carrier, or None.
+        """When the scheduler will next ask a carrier about this container, or None.
 
-        Only meaningful while the watch is live: a completed or paused subscription
-        may still carry an old ``next_sync_at`` that nothing will act on, and showing
-        it would promise an update that is never coming.
+        The soonest across the live watches. Only live ones: a completed or paused
+        subscription may still carry an old ``next_sync_at`` that nothing will act
+        on, and showing it would promise an update that is never coming.
         """
-        subscription = self.active_subscription
-        if subscription is None or not self.is_tracking_active:
-            return None
-        return subscription.next_sync_at
+        from apps.scm.tracking.models import TrackingSubscription
+
+        times = [
+            subscription.next_sync_at
+            for subscription in self.tracking_subscriptions
+            if subscription.next_sync_at is not None and subscription.status == TrackingSubscription.Status.ACTIVE
+        ]
+        return min(times) if times else None
 
     @property
     def is_tracking_active(self) -> bool:
@@ -267,6 +356,17 @@ class ContainerWorkspace:
         return None
 
     @property
+    def journey_timeline(self) -> list[JourneyPoint]:
+        """The journey as the panel shows it: newest first, capped like ``timeline``.
+
+        One screen's worth. The cap is a display limit, not a claim about how much
+        happened — the journey itself is complete.
+        """
+        if self.journey is None:
+            return []
+        return self.journey.newest_first[:_TIMELINE_LIMIT]
+
+    @property
     def last_sync_run(self):
         return self.recent_sync_runs[0] if self.recent_sync_runs else None
 
@@ -314,6 +414,7 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
     """Gather all workspace data for a container detail view, team-scoped throughout."""
     from apps.scm.shipments.models import ShipmentContainer
     from apps.scm.supplier_deliveries.models import SupplierDeliveryLine
+    from apps.scm.tracking.journey import get_container_journey
     from apps.scm.tracking.models import TrackingEvent, TrackingSubscription, TrackingSyncRun
     from apps.scm.tracking.positions import get_latest_container_position
     from apps.scm.tracking.selectors import get_container_tracking_eta_event, get_latest_meaningful_actual_event
@@ -332,6 +433,9 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
     )
 
     events = TrackingEvent.objects.filter(team=team, container=container).select_related("provider")
+    # Every provider's events, oldest first, for the journey. Loaded once and handed
+    # over so the journey costs one query rather than repeating this page's reads.
+    journey_events = list(events.order_by("event_datetime", "created_at"))
     latest_event = events.order_by("-event_datetime", "-created_at").first()
     latest_actual_event = (
         events.filter(event_time_type=TrackingEvent.EventTimeType.ACTUAL)
@@ -387,6 +491,17 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
         timeline=timeline,
         recent_sync_runs=recent_sync_runs,
         observed_event_types=observed_event_types,
+        journey=get_container_journey(
+            team,
+            container,
+            events=journey_events,
+            # Cancelled watches are not sources: someone stopped them on purpose.
+            subscriptions=[
+                subscription
+                for subscription in reversed(tracking_subscriptions)
+                if subscription.status != TrackingSubscription.Status.CANCELLED
+            ],
+        ),
     )
 
 

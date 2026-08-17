@@ -13,6 +13,11 @@
   has returned data, so "Maersk ● Active" is never shown for a carrier that was
   merely tried. A shipment booked with Maersk that Maersk has no events for yet
   reads as an untracked container with a shipment carrier — which is what it is.
+
+  A container can have several verified sources at once — carriers that covered
+  different legs, plus our own physical record — so they are listed, every timeline
+  entry says which one reported it, and a segment none of them explains is called
+  out rather than smoothed over.
 {% endcomment %}
 
 <div id="container-tracking-panel" class="flex flex-col gap-6">
@@ -92,6 +97,50 @@
     {% endif %}
 
     {% comment %}
+      What is unexplained is stated, not hidden. A gap is only ever raised by a
+      contradiction — the box was seen somewhere no source followed it to — never by
+      a carrier being quiet, so this line means something every time it appears.
+    {% endcomment %}
+    {% with gap=workspace.tracking_gap %}
+      {% if gap %}
+        <div role="alert" class="alert alert-warning alert-soft mb-4 items-start">
+          <i class="fa fa-link-slash mt-0.5"></i>
+          <div class="text-sm">
+            <p class="font-medium">
+              {% translate "Journey gap detected" %}
+              <span class="font-normal">— {{ gap.segment }}</span>
+            </p>
+            <p class="text-xs mt-0.5">{{ gap.description }}</p>
+            <p class="text-xs text-base-content/60 mt-0.5">
+              {% blocktranslate trimmed with origin=gap.from_source.name origin_at=gap.from_datetime|date:"d M" destination=gap.to_source.name destination_at=gap.to_datetime|date:"d M" %}
+                Last reported by {{ origin }} on {{ origin_at }}, observed by {{ destination }} on {{ destination_at }}.
+              {% endblocktranslate %}
+            </p>
+          </div>
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% comment %}
+      Every source that has reported this container, in the order they took over the
+      box. Compact on purpose: this says who knows what, and the timeline below says
+      what each of them said.
+    {% endcomment %}
+    {% if workspace.tracking_sources %}
+      <div class="mb-4">
+        <p class="text-xs text-base-content/60 mb-1">{% translate "Tracking sources" %}</p>
+        <div class="flex flex-wrap gap-1.5">
+          {% for source in workspace.tracking_sources %}
+            <span class="badge badge-sm {% if source.is_physical %}badge-neutral{% else %}badge-ghost{% endif %}">
+              {% if source.is_physical %}<i class="fa fa-warehouse text-xs mr-1"></i>{% endif %}
+              {{ source.name }}
+            </span>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% comment %}
       Status, position, ETA and freshness are rendered by the shared visibility
       components, so this panel, the map cards and the visibility overview cannot
       disagree about what the same carrier data means.
@@ -110,7 +159,22 @@
         </dd>
       </div>
       <div>
-        {% include "scm/visibility/components/position_summary.html" with position=workspace.position %}
+        {% comment %}
+          The derived current location, which is not always the newest carrier
+          event: when we have physically seen the box more recently than the carrier
+          last reported it, that is where it is. The carrier's event keeps its place
+          on the timeline either way.
+        {% endcomment %}
+        {% include "scm/visibility/components/position_summary.html" with position=workspace.current_position %}
+        {% with current=workspace.derived_current_location %}
+          {% if current %}
+            <p class="text-xs text-base-content/50 mt-1">
+              {% blocktranslate trimmed with source=current.source.name basis=current.basis_label %}
+                {{ basis }} · {{ source }}
+              {% endblocktranslate %}
+            </p>
+          {% endif %}
+        {% endwith %}
       </div>
     </dl>
 
@@ -144,70 +208,92 @@
   </section>
 
   {% comment %}
-    Every row shows only what the carrier actually sent for that event, in a fixed
-    order — what happened, where, on what. Absent fields collapse rather than render
-    as blanks or dashes, so the shape of a row says how much is known about it.
+    One timeline for the whole journey, whoever reported each part of it: every
+    carrier that has tracked this box, and our own physical observations. Each row
+    names its source, so two sources describing the same leg read as two accounts of
+    one journey rather than as a contradiction.
+
+    Every row shows only what its source actually said, in a fixed order — what
+    happened, where, on what. Absent fields collapse rather than render as blanks or
+    dashes, so the shape of a row says how much is known about it.
 
     An event we could not classify still shows the carrier's own wording and codes:
     a gap in our mapping tables must cost the reader detail, not the whole event.
 
-    An event that has coordinates carries data-map-event-id, which is the whole
+    A point that has coordinates carries data-map-event-id, which is the whole
     contract between the timeline and the map: clicking the row flies the map to
-    that event, and selecting it on the map highlights the row. The timeline stays
-    the authoritative chronology — the map only points at it.
+    that point, and selecting it on the map highlights the row. The timeline stays
+    the authoritative chronology — the map only points at it, and cannot show a
+    place we have no coordinates for.
   {% endcomment %}
   <section class="app-card">
     <h2 class="text-lg font-semibold mb-4">{% translate "Tracking Timeline" %}</h2>
-    {% if workspace.timeline %}
+    {% if workspace.journey_timeline %}
       <ol class="divide-y divide-base-200">
-        {% for event in workspace.timeline %}
-          <li
-            class="py-3 flex items-start gap-3 {% if event.location_latitude is not None %}cursor-pointer hover:bg-base-200/60 rounded-box px-2 -mx-2{% endif %}"
-            {% if event.location_latitude is not None %}data-map-event-id="{{ event.pk }}"{% endif %}
-          >
-            <p class="text-xs text-base-content/50 shrink-0 w-28 pt-0.5">
-              {{ event.event_datetime|date:"d M H:i"|default:"—" }}
-            </p>
-            <div class="min-w-0">
-              <p class="font-medium text-sm">
-                {{ event.display_title }}
-                {% if not event.is_actual %}
-                  <span class="badge badge-xs badge-ghost ml-1">{{ event.get_event_time_type_display }}</span>
-                {% endif %}
+        {% for point in workspace.journey_timeline %}
+          {% with event=point.event %}
+            <li
+              class="py-3 flex items-start gap-3 {% if point.has_coordinates %}cursor-pointer hover:bg-base-200/60 rounded-box px-2 -mx-2{% endif %}"
+              {% if point.has_coordinates %}data-map-event-id="{{ point.event_id }}"{% endif %}
+            >
+              <p class="text-xs text-base-content/50 shrink-0 w-28 pt-0.5">
+                {{ point.occurred_at|date:"d M H:i"|default:"—" }}
               </p>
-
-              {% if event.location_name or event.location_unlocode %}
-                <p class="text-xs text-base-content/70 mt-0.5">
-                  {{ event.location_name }}
-                  {% if event.location_unlocode %}
-                    <span class="badge badge-xs badge-ghost font-mono ml-1">{{ event.location_unlocode }}</span>
+              <div class="min-w-0">
+                <p class="font-medium text-sm">
+                  {{ point.title }}
+                  {% if not point.is_actual %}
+                    <span class="badge badge-xs badge-ghost ml-1">{{ event.get_event_time_type_display }}</span>
                   {% endif %}
                 </p>
-              {% endif %}
 
-              {% if event.vessel_name %}
-                <p class="text-xs text-base-content/60 mt-0.5">
-                  {{ event.vessel_name }}{% if event.voyage_number %} · {{ event.voyage_number }}{% endif %}
-                </p>
-              {% elif event.voyage_number %}
-                <p class="text-xs text-base-content/60 mt-0.5">
-                  {% blocktranslate trimmed with voyage=event.voyage_number %}Voyage {{ voyage }}{% endblocktranslate %}
-                </p>
-              {% endif %}
+                {% if point.location_name or point.location_unlocode %}
+                  <p class="text-xs text-base-content/70 mt-0.5">
+                    {{ point.location_name }}
+                    {% if point.location_unlocode %}
+                      <span class="badge badge-xs badge-ghost font-mono ml-1">{{ point.location_unlocode }}</span>
+                    {% endif %}
+                  </p>
+                {% endif %}
 
-              {% if event.description and event.description != event.get_event_type_display %}
-                <p class="text-xs text-base-content/60 mt-0.5">{{ event.description }}</p>
-              {% endif %}
+                {% if point.vessel_name %}
+                  <p class="text-xs text-base-content/60 mt-0.5">
+                    {{ point.vessel_name }}{% if point.voyage_number %} · {{ point.voyage_number }}{% endif %}
+                  </p>
+                {% elif point.voyage_number %}
+                  <p class="text-xs text-base-content/60 mt-0.5">
+                    {% blocktranslate trimmed with voyage=point.voyage_number %}Voyage {{ voyage }}{% endblocktranslate %}
+                  </p>
+                {% endif %}
 
-              {% if event.is_unclassified and event.carrier_reference %}
-                <p class="text-xs text-base-content/50 font-mono mt-0.5">
-                  {% blocktranslate trimmed with reference=event.carrier_reference %}
-                    Carrier: {{ reference }}
-                  {% endblocktranslate %}
+                {% if point.description and point.description != point.title %}
+                  <p class="text-xs text-base-content/60 mt-0.5">{{ point.description }}</p>
+                {% endif %}
+
+                {% if event.is_unclassified and event.carrier_reference %}
+                  <p class="text-xs text-base-content/50 font-mono mt-0.5">
+                    {% blocktranslate trimmed with reference=event.carrier_reference %}
+                      Carrier: {{ reference }}
+                    {% endblocktranslate %}
+                  </p>
+                {% endif %}
+
+                {% comment %}
+                  Who says so. A second source that reported the same physical event
+                  is listed beside the first rather than replacing it — neither is
+                  discarded, and the reader can see they agree.
+                {% endcomment %}
+                <p class="text-xs text-base-content/50 mt-0.5">
+                  {% blocktranslate trimmed with source=point.source.name %}Source: {{ source }}{% endblocktranslate %}
+                  {% for name in point.corroborating_source_names %}
+                    <span class="text-base-content/40">
+                      {% blocktranslate trimmed with source=name %}· also {{ source }}{% endblocktranslate %}
+                    </span>
+                  {% endfor %}
                 </p>
-              {% endif %}
-            </div>
-          </li>
+              </div>
+            </li>
+          {% endwith %}
         {% endfor %}
       </ol>
     {% else %}

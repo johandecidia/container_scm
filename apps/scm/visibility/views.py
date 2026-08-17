@@ -15,12 +15,17 @@ from django.urls import reverse
 from apps.scm.containers.models import Container
 from apps.scm.decorators import scm_login_required
 from apps.scm.shipments.models import Shipment
+from apps.scm.tracking.journey import get_container_journey
 
-from .geojson import journey_feature_collection, object_detail_urls, overview_feature_collection
+from .geojson import (
+    container_journey_feature_collection,
+    journey_feature_collection,
+    object_detail_urls,
+    overview_feature_collection,
+)
 from .mapbox import get_mapbox_config
 from .read_models import ObjectKind
 from .selectors import (
-    get_container_journey_events,
     get_container_visibility,
     get_shipment_journey_events,
     get_shipment_visibility,
@@ -90,11 +95,16 @@ def shipment_map_data(request, pk: int):
 
 @scm_login_required
 def container_map_data(request, pk: int):
-    """One container's journey. Works with or without a shipment."""
+    """One container's journey. Works with or without a shipment.
+
+    Drawn from the unified journey, so every source that has reported this box
+    contributes and the point marked current is the one the domain derived — which
+    may be a physical observation rather than the newest carrier event.
+    """
     team = request.default_team
     container = get_object_or_404(Container, pk=pk, team=team)
-    events = get_container_journey_events(team=team, container=container)
-    return JsonResponse(journey_feature_collection(events, container_number=container.container_id))
+    journey = get_container_journey(team=team, container=container)
+    return JsonResponse(container_journey_feature_collection(journey, container_number=container.container_id))
 
 
 def _map_data_url(request) -> str:

@@ -7,12 +7,13 @@ scheduled poller never has to ask, and then hand over:
 Is this container already tracked?
     A scheduled sync starts from a subscription, which already names its provider.
     A person pressing "Refresh tracking" starts from a container, which may not have
-    one yet. When it does, that subscription is a verified tracking source and the
-    refresh is an ordinary sync cycle through
-    :func:`apps.scm.tracking.sync.sync_tracking_subscription`. No other carrier is
-    tried, and a later empty answer or carrier outage never withdraws a subscription
-    that has already proved itself — that would throw away a working tracking source
-    over a transient blip.
+    one yet. When it does, *every* verified source it has is refreshed — a container
+    can have several, covering different legs of one journey — each through an
+    ordinary sync cycle in
+    :func:`apps.scm.tracking.sync.sync_tracking_subscription`. No *new* carrier is
+    tried on this path, and a later empty answer or carrier outage never withdraws a
+    subscription that has already proved itself — that would throw away a working
+    tracking source over a transient blip.
 
 If not, who might know it?
     The user is not asked to name the carrier. Instead:
@@ -65,6 +66,7 @@ from apps.scm.integrations.carriers.http import interactive_carrier_requests
 from apps.scm.integrations.locks import LockNotAcquiredError, resource_lock
 
 from .models import TrackingSubscription, TrackingSyncRun
+from .selectors import get_verified_container_subscriptions
 from .services import create_sync_run
 from .sync import apply_sync_outcome, store_verified_carrier_result, sync_tracking_subscription
 
@@ -173,20 +175,19 @@ def get_preferred_carrier_codes_for_container(team, container) -> list[str]:
 
 
 def get_verified_container_subscription(*, team, container):
-    """Return this container's established subscription, or None.
+    """Return this container's most recently established subscription, or None.
 
     "Established" means it exists and has not been cancelled — every subscription is
     created from carrier data, so the presence of one *is* the record that a carrier
     tracks this container, and which. None means no carrier has proved itself yet
     and the container is open to discovery.
+
+    The newest of possibly several: see
+    :func:`~apps.scm.tracking.selectors.get_verified_container_subscriptions` for all
+    of them, which is what a refresh acts on.
     """
-    return (
-        TrackingSubscription.objects.filter(team=team, container=container)
-        .exclude(status=TrackingSubscription.Status.CANCELLED)
-        .select_related("provider", "shipment")
-        .order_by("-created_at")
-        .first()
-    )
+    subscriptions = get_verified_container_subscriptions(team, container)
+    return subscriptions[-1] if subscriptions else None
 
 
 def get_or_create_container_subscription(*, team, container, carrier_code: str, carrier_name: str = ""):
@@ -240,18 +241,30 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
     the sync engine and the probe classify every one of them — so the result is
     always something the UI can show.
     """
-    subscription = get_verified_container_subscription(team=team, container=container)
-    if subscription is not None:
-        return _sync_verified_subscription(subscription)
+    subscriptions = get_verified_container_subscriptions(team, container)
+    if subscriptions:
+        return _sync_verified_subscriptions(subscriptions)
     return _discover_and_activate(team=team, container=container)
 
 
-def _sync_verified_subscription(subscription: TrackingSubscription) -> RefreshResult:
-    """Refresh a container that already has a proven tracking source.
+def _sync_verified_subscriptions(subscriptions: list[TrackingSubscription]) -> RefreshResult:
+    """Refresh every proven tracking source this container has.
 
-    No other carrier is tried: the question "who tracks this box" is settled, and
-    re-opening it on every refresh would spend the team's rate limits re-proving it.
+    No *new* carrier is tried: the question "who tracks this box" has been answered
+    at least once, and re-opening it on every refresh would spend the team's rate
+    limits re-proving it. But it may have been answered more than once — an ocean
+    carrier for the sea leg, another for the onward move — and refreshing only the
+    newest would leave the earlier leg frozen at whatever it last said.
+
+    One HTTP budget covers all of them, because someone is waiting for the response.
     """
+    with interactive_carrier_requests():
+        results = [_sync_one_source(subscription) for subscription in subscriptions]
+    return results[0] if len(results) == 1 else _combine_source_results(results)
+
+
+def _sync_one_source(subscription: TrackingSubscription) -> RefreshResult:
+    """Run one sync cycle for one of the container's sources and describe it."""
     from apps.scm.integrations.carriers.registry import (
         UnknownCarrierError,
         get_carrier_definition,
@@ -264,10 +277,7 @@ def _sync_verified_subscription(subscription: TrackingSubscription) -> RefreshRe
     except UnknownCarrierError:
         carrier_name = subscription.provider.name or carrier_code
 
-    # Bound the call: someone is waiting for this response.
-    with interactive_carrier_requests():
-        sync_run = sync_tracking_subscription(subscription)
-
+    sync_run = sync_tracking_subscription(subscription)
     if sync_run is None:
         return RefreshResult(
             level=INFO,
@@ -283,6 +293,54 @@ def _sync_verified_subscription(subscription: TrackingSubscription) -> RefreshRe
         carrier_code=carrier_code,
         reference=subscription.tracking_reference,
         tracked=True,
+    )
+
+
+# Which result speaks for a multi-source refresh, worst news first: a reader needs to
+# know that something failed even when something else succeeded.
+_LEVEL_RANK = {ERROR: 3, WARNING: 2, SUCCESS: 1, INFO: 0}
+
+
+def _combine_source_results(results: list[RefreshResult]) -> RefreshResult:
+    """Report one refresh that asked several of this container's sources.
+
+    The source that returned events leads — it is the one with something to say —
+    and the counts are the whole refresh's. The level is the most serious of the
+    individual levels, so a carrier that failed is never hidden behind one that
+    succeeded.
+    """
+    with_events = [result for result in results if result.events_seen]
+    lead = max(with_events, key=lambda result: result.events_seen, default=None) or max(
+        results, key=lambda result: _LEVEL_RANK.get(result.level, 0)
+    )
+    level = max((result.level for result in results), key=lambda value: _LEVEL_RANK.get(value, 0))
+    names = [result.carrier_name for result in results if result.carrier_name]
+    created = sum(result.events_created for result in results)
+    updated = sum(result.events_updated for result in results)
+
+    if created or updated:
+        message = _(
+            "Tracking updated from %(count)s sources — %(total)s events · %(created)s new · %(updated)s unchanged."
+        ) % {"count": len(results), "total": created + updated, "created": created, "updated": updated}
+    else:
+        message = _("No new tracking data from the %(count)s sources tracking this container.") % {
+            "count": len(results)
+        }
+    if level in (WARNING, ERROR):
+        # Say that not every source answered; which one, and why, is in the log.
+        message = _("%(summary)s Not every source could be reached.") % {"summary": message}
+
+    return RefreshResult(
+        level=level,
+        state=UPDATED if (created or updated) else lead.state,
+        message=message,
+        carrier_code=lead.carrier_code,
+        carrier_name=lead.carrier_name,
+        events_created=created,
+        events_updated=updated,
+        sync_run=lead.sync_run,
+        tracked=True,
+        carriers_checked=tuple(dict.fromkeys(names)),
     )
 
 

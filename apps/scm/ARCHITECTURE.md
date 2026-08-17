@@ -20,6 +20,24 @@ All contributors must follow these rules consistently across every SCM sub-app.
 | `tracking`     | Carrier subscriptions, events, ETA, position |
 | `visibility`   | Read-only composition layer + map GeoJSON    |
 
+### Derived tracking reads
+
+A container can have several verified tracking sources over one physical journey —
+carriers that covered different legs, plus the operator's own physical record. The
+derivations that hold that together live in `tracking`, beside the schema they read,
+and own no writes:
+
+```
+apps/scm/tracking/
+    journey.py    # The unified multi-source journey and the derived current location
+    gaps.py       # The segment of a journey no source explains
+    positions.py  # Where a container was last reported, and how well we know it
+```
+
+Nothing here persists a journey, a leg or a gap: all three are computed on read from
+`TrackingEvent` and the container's own location record, so a new event changes the
+answer immediately and there is nothing to reconcile.
+
 ---
 
 ## Composition layers

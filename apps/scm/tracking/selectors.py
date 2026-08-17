@@ -50,11 +50,36 @@ def get_tracking_events_for_shipment(team: Team, shipment):
 
 
 def get_tracking_events_for_container(team: Team, container):
-    """Return all tracking events for a specific container, scoped to the team."""
+    """Return all tracking events for a specific container, scoped to the team.
+
+    Every provider's events, not the current one's. A container can be tracked by
+    several carriers over one physical journey — an ocean carrier for the sea leg, a
+    second for the onward move — and each of them describes a part of the same trip.
+    Filtering to one provider would delete the rest of the journey from the screen.
+    """
     return (
         TrackingEvent.objects.filter(team=team, container=container)
         .select_related("provider", "subscription", "shipment")
         .order_by("-event_datetime", "-created_at")
+    )
+
+
+def get_verified_container_subscriptions(team: Team, container) -> list[TrackingSubscription]:
+    """Return every tracking source this container has proved, oldest first.
+
+    A subscription is only ever created once a carrier has answered with data, so
+    each one is a verified source — and there can be more than one, because a box
+    changes hands. Cancelled watches are excluded: someone stopped that source
+    deliberately. Everything else is kept, including COMPLETED sources whose leg is
+    over, because their events are still part of the journey.
+
+    Oldest first, so the list reads in the order the sources took over the box.
+    """
+    return list(
+        TrackingSubscription.objects.filter(team=team, container=container)
+        .exclude(status=TrackingSubscription.Status.CANCELLED)
+        .select_related("provider", "shipment")
+        .order_by("created_at")
     )
 
 
