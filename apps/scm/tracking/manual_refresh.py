@@ -45,6 +45,17 @@ Does that carrier actually track this container?
     that can tell us where a box is and the carrier a shipment was booked with are
     separate facts, and reconciling them is not this button's job.
 
+Do its sources actually account for where it has been?
+    Refreshing what already tracks a container is not the same as knowing where it
+    is. A box discharged in Born and later received in Gothenburg has moved under
+    somebody nobody has asked about, and its own carrier will never mention that leg.
+    So once the known sources have been refreshed, an unexplained segment sends the
+    container to
+    :func:`apps.scm.tracking.continuation.discover_journey_continuation`, which
+    sweeps the team's *other* carriers and adds whichever one covered it. The
+    existing sources, their events and the shipment's carrier are all left alone —
+    the container simply ends up with two verified sources instead of one.
+
 Either way the calls run inside :func:`interactive_carrier_requests`, so a slow
 carrier cannot hold the web worker for minutes — and because discovery may ask
 several carriers, each one is asked exactly once per refresh.
@@ -95,11 +106,14 @@ UNAVAILABLE = "unavailable"
 IN_PROGRESS = "in_progress"
 
 # One discovery sweep per container at a time. Kept in its own namespace because it
-# guards a container, not a subscription — there is no subscription to guard yet.
-_DISCOVERY_LOCK_PREFIX = "tracking_discovery_lock"
+# guards a container, not a subscription — the first sweep has no subscription to
+# guard yet, and a continuation sweep must not run beside one that has.
+# Public so continuation discovery takes the same lock: two sweeps for one container
+# would ask every carrier twice and both believe they are creating its first source.
+CONTAINER_DISCOVERY_LOCK_PREFIX = "tracking_discovery_lock"
 # A sweep is bounded by the interactive HTTP ceilings, so it cannot run for long;
 # the advisory lock underneath has no TTL and is released if the worker dies.
-_DISCOVERY_LOCK_TTL_SECONDS = 300
+CONTAINER_DISCOVERY_LOCK_TTL_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -242,9 +256,59 @@ def refresh_container_tracking(*, team, container) -> RefreshResult:
     always something the UI can show.
     """
     subscriptions = get_verified_container_subscriptions(team, container)
-    if subscriptions:
-        return _sync_verified_subscriptions(subscriptions)
-    return _discover_and_activate(team=team, container=container)
+    if not subscriptions:
+        return _discover_and_activate(team=team, container=container)
+
+    result = _sync_verified_subscriptions(subscriptions)
+    return _extend_over_a_gap(team=team, container=container, result=result)
+
+
+def _extend_over_a_gap(*, team, container, result: RefreshResult) -> RefreshResult:
+    """Look for a further source when the refreshed ones leave a segment unexplained.
+
+    Runs after the sources have been refreshed, never before: their new events may be
+    exactly what explains the segment, and sweeping first would spend calls answering
+    a question that had already resolved itself.
+
+    A gap is a contradiction, not carrier silence, so this is not a sweep on every
+    refresh — and continuation discovery rations itself further with a cooldown and
+    the shared per-container lock. Nothing it does can withdraw the sources just
+    refreshed, so a failed sweep leaves ``result`` exactly as it is.
+    """
+    from .continuation import discover_journey_continuation
+
+    with interactive_carrier_requests():
+        continuation = discover_journey_continuation(team=team, container=container)
+
+    if not continuation.found:
+        return result
+    return _describe_continuation(result, continuation)
+
+
+def _describe_continuation(result: RefreshResult, continuation) -> RefreshResult:
+    """Fold a new source's events into what the refresh reports.
+
+    Both halves are stated: the sources that were already known were refreshed, and a
+    further one was found for the part of the journey they did not cover.
+    """
+    created = result.events_created + continuation.events_created
+    updated = result.events_updated + continuation.events_updated
+    return RefreshResult(
+        level=SUCCESS,
+        state=UPDATED,
+        message=_(
+            "Tracking updated. A further source was found for the unexplained part of the journey: "
+            "%(carrier)s, %(total)s events."
+        )
+        % {"carrier": continuation.carrier_name, "total": continuation.events_seen},
+        carrier_code=continuation.carrier_code,
+        carrier_name=continuation.carrier_name,
+        events_created=created,
+        events_updated=updated,
+        sync_run=continuation.sync_run,
+        tracked=True,
+        carriers_checked=tuple(dict.fromkeys([*result.carriers_checked, *continuation.carriers_checked])),
+    )
 
 
 def _sync_verified_subscriptions(subscriptions: list[TrackingSubscription]) -> RefreshResult:
@@ -356,7 +420,7 @@ def _discover_and_activate(*, team, container) -> RefreshResult:
     """
     lock_name = f"container:{container.pk}"
     try:
-        with resource_lock(lock_name, ttl=_DISCOVERY_LOCK_TTL_SECONDS, prefix=_DISCOVERY_LOCK_PREFIX):
+        with resource_lock(lock_name, ttl=CONTAINER_DISCOVERY_LOCK_TTL_SECONDS, prefix=CONTAINER_DISCOVERY_LOCK_PREFIX):
             return _run_discovery(team=team, container=container)
     except LockNotAcquiredError:
         logger.info("Discovery for container %s skipped — a refresh is already running.", container.pk)
@@ -394,21 +458,13 @@ def _run_discovery(*, team, container) -> RefreshResult:
     if not outcome.found:
         return _describe_no_match(outcome)
 
-    # Verified: this carrier knows the container, so it becomes its tracking source.
-    # Nothing else about the container changes — in particular the shipment keeps
-    # whatever carrier it was booked with.
     common: dict[str, Any] = {
         "carrier_code": outcome.carrier_code,
         "carrier_name": outcome.carrier_name,
         "carriers_checked": tuple(outcome.carrier_names(outcome.answered)),
     }
-    subscription = get_or_create_container_subscription(
-        team=team,
-        container=container,
-        carrier_code=outcome.carrier_code,
-        carrier_name=outcome.carrier_name,
-    )
-    if subscription is None:
+    subscription, sync_run = store_discovered_carrier_source(team=team, container=container, outcome=outcome)
+    if subscription is None or sync_run is None:
         return RefreshResult(
             level=ERROR,
             state=NOT_CONFIGURED,
@@ -416,13 +472,6 @@ def _run_discovery(*, team, container) -> RefreshResult:
             **common,
         )
 
-    sync_run = create_sync_run(team=team, subscription=subscription, provider=subscription.provider)
-    sync_outcome = store_verified_carrier_result(
-        subscription,
-        raw_payload=outcome.raw_payload,
-        events=outcome.events,
-    )
-    apply_sync_outcome(subscription, sync_run, sync_outcome)
     return _describe(
         sync_run,
         carrier_name=outcome.carrier_name,
@@ -432,6 +481,43 @@ def _run_discovery(*, team, container) -> RefreshResult:
         discovered=True,
         carriers_checked=common["carriers_checked"],
     )
+
+
+def store_discovered_carrier_source(
+    *, team, container, outcome: CarrierDiscoveryOutcome
+) -> tuple[TrackingSubscription | None, TrackingSyncRun | None]:
+    """Make a carrier that answered with data one of this container's tracking sources.
+
+    Called only for a sweep that found events, and the only place a subscription is
+    created from one: everything before it can leave the container as it was, and a
+    carrier that has nothing, is down or rejects our credentials is never recorded as
+    a source. Shared with continuation discovery so a second source is added exactly
+    the way the first was — same natural key, same write path, same state transition
+    a scheduled sync makes.
+
+    What it deliberately does not touch: any existing subscription, any stored event,
+    and ``Shipment.carrier``. The carrier that can say where a box is and the carrier
+    a shipment was booked with are separate facts.
+
+    Returns (None, None) when the provider could not be resolved at all.
+    """
+    subscription = get_or_create_container_subscription(
+        team=team,
+        container=container,
+        carrier_code=outcome.carrier_code,
+        carrier_name=outcome.carrier_name,
+    )
+    if subscription is None:
+        return None, None
+
+    sync_run = create_sync_run(team=team, subscription=subscription, provider=subscription.provider)
+    sync_outcome = store_verified_carrier_result(
+        subscription,
+        raw_payload=outcome.raw_payload,
+        events=outcome.events,
+    )
+    apply_sync_outcome(subscription, sync_run, sync_outcome)
+    return subscription, sync_run
 
 
 def _describe_no_match(outcome: CarrierDiscoveryOutcome) -> RefreshResult:

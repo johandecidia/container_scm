@@ -947,16 +947,16 @@ class MultiCarrierRefreshTest(TestCase):
         """The lock is what stops a double click costing two full sweeps."""
         from apps.scm.integrations.locks import resource_lock
         from apps.scm.tracking.manual_refresh import (
-            _DISCOVERY_LOCK_PREFIX,
-            _DISCOVERY_LOCK_TTL_SECONDS,
+            CONTAINER_DISCOVERY_LOCK_PREFIX,
+            CONTAINER_DISCOVERY_LOCK_TTL_SECONDS,
         )
 
         clients = {code: _fake_client(code, {"events": [{"id": 1}]}) for code in self.CARRIERS}
         with (
             resource_lock(
                 f"container:{self.container.pk}",
-                ttl=_DISCOVERY_LOCK_TTL_SECONDS,
-                prefix=_DISCOVERY_LOCK_PREFIX,
+                ttl=CONTAINER_DISCOVERY_LOCK_TTL_SECONDS,
+                prefix=CONTAINER_DISCOVERY_LOCK_PREFIX,
             ),
             _patch_carriers(
                 clients, {code: [_normalised_event(self.container.container_id)] for code in self.CARRIERS}
@@ -977,7 +977,7 @@ class MultiCarrierRefreshTest(TestCase):
         self._refresh(behaviour, events_by_code={"cosco": events})
         # Force the second refresh down the discovery path as if it had never seen
         # the subscription the first one created — the race, without the threads.
-        with mock.patch("apps.scm.tracking.manual_refresh.get_verified_container_subscription", return_value=None):
+        with mock.patch("apps.scm.tracking.manual_refresh.get_verified_container_subscriptions", return_value=[]):
             second, _ = self._refresh(behaviour, events_by_code={"cosco": events})
 
         self.assertEqual(self._subscriptions().count(), 1)

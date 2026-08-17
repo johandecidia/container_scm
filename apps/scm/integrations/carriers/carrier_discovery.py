@@ -165,6 +165,7 @@ def build_carrier_candidates(
     container_number: str = "",
     preferred_carrier_codes: list[str] | tuple[str, ...] = (),
     also_usable: frozenset[str] = frozenset(),
+    exclude_carrier_codes: frozenset[str] = frozenset(),
 ) -> list[CarrierCandidate]:
     """Return the carriers worth asking about ``container_number``, best first.
 
@@ -180,8 +181,15 @@ def build_carrier_candidates(
 
     ``also_usable`` names carrier codes to treat as connected regardless of the
     team's integrations; discovery uses it for injected test clients.
+
+    ``exclude_carrier_codes`` drops carriers the caller has already answered its own
+    question about — a continuation sweep passes the sources it has just polled, so
+    the sweep spends its calls on carriers that might add something rather than
+    re-asking one that has just said nothing new. They are dropped entirely, not
+    marked unusable: they were not skipped for want of a connection.
     """
     configured = _configured_carrier_codes(team)
+    excluded = frozenset(code for code in (resolve_carrier_code(value) for value in exclude_carrier_codes) if code)
 
     signals: list[tuple[str, str]] = []
     for value in preferred_carrier_codes:
@@ -199,7 +207,7 @@ def build_carrier_candidates(
     candidates: list[CarrierCandidate] = []
     seen: set[str] = set()
     for code, source in signals:
-        if code in seen:
+        if code in seen or code in excluded:
             continue
         seen.add(code)
         candidate = _describe_candidate(code, source, configured=configured | also_usable)
@@ -214,6 +222,7 @@ def discover_carrier_for_container(
     container_number: str,
     preferred_carrier_codes: list[str] | tuple[str, ...] = (),
     clients: dict[str, BaseCarrierClient] | None = None,
+    exclude_carrier_codes: frozenset[str] = frozenset(),
 ) -> CarrierDiscoveryOutcome:
     """Ask candidate carriers about ``container_number`` until one has real data.
 
@@ -221,8 +230,14 @@ def discover_carrier_for_container(
     is recorded and the sweep continues. Never raises — the probe classifies every
     carrier failure, and the outcome always describes what happened.
 
+    Stopping at the first hit is a decision about *this* sweep, not about the
+    container: finding one carrier that knows the box does not mean no other does,
+    and a later sweep is free to find a second. What ends discovery for a container
+    is its journey being explained, not a carrier having once been found.
+
     ``clients`` may inject carrier adapters by provider code for testing; the codes
-    it names are treated as connected.
+    it names are treated as connected. ``exclude_carrier_codes`` leaves carriers out
+    of the sweep entirely — see :func:`build_carrier_candidates`.
     """
     clients = clients or {}
     candidates = build_carrier_candidates(
@@ -230,6 +245,7 @@ def discover_carrier_for_container(
         container_number=container_number,
         preferred_carrier_codes=preferred_carrier_codes,
         also_usable=frozenset(clients),
+        exclude_carrier_codes=exclude_carrier_codes,
     )
 
     outcome = CarrierDiscoveryOutcome()
