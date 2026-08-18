@@ -11,6 +11,14 @@ way:
     5xx / timeout  CarrierServerError / CarrierTimeoutError, after retries
     other 4xx      CarrierInvalidResponseError
 
+A provider whose API gives a status a meaning of its own can supply an
+``error_classifier`` to name it, in the same spirit as ``no_data_statuses``: it sees
+the status and the response before the rules above run, and returns either a typed
+error to raise or None to fall through to them. That keeps status-to-outcome
+classification in this one module instead of growing a second transport beside it.
+A classifier that returns None for 429 and 5xx keeps their retry and Retry-After
+behaviour, which is the point of having them here.
+
 Every request is logged to IntegrationRequestLog with the path only — never the
 query string, never headers, never the body — so a credential in a query
 parameter or an Authorization header cannot end up in the log table.
@@ -172,7 +180,14 @@ def log_path(url: str) -> str:
 
 
 class CarrierHttpClient:
-    """A small GET client with carrier-typed errors and sanitised request logging."""
+    """A small GET client with carrier-typed errors and sanitised request logging.
+
+    ``error_classifier`` is an optional ``(status_code, response) -> CarrierError |
+    None`` hook for a provider that gives a status a meaning the defaults do not
+    cover. It is consulted after a 200 and after ``no_data_statuses``, and before the
+    401/429/5xx rules, so it can name a status those would otherwise generalise. None
+    means "not mine" and the default handling applies.
+    """
 
     def __init__(
         self,
@@ -183,12 +198,14 @@ class CarrierHttpClient:
         integration: Integration | None = None,
         extra_headers: dict | None = None,
         session=None,
+        error_classifier=None,
     ) -> None:
         self.provider_code = provider_code
         self.config = config or HttpConfig()
         self.auth = auth
         self.integration = integration
         self.extra_headers = extra_headers or {}
+        self.error_classifier = error_classifier
         # Injectable for tests; defaults to the requests module's functional API.
         self._session = session or requests
 
@@ -251,6 +268,12 @@ class CarrierHttpClient:
                         f"{self.provider_code} has no data for this reference (HTTP {status_code}).",
                         provider_code=self.provider_code,
                     )
+
+                if self.error_classifier is not None:
+                    classified = self.error_classifier(status_code, response)
+                    if classified is not None:
+                        error_message = str(classified)
+                        raise classified
 
                 if status_code == 401 and not refreshed and self.auth is not None:
                     # One token refresh, then retry immediately.
