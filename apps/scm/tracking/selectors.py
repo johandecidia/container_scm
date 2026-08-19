@@ -138,15 +138,22 @@ def get_latest_meaningful_actual_event(team: Team, container) -> TrackingEvent |
     )
 
 
-def get_container_tracking_eta_event(team: Team, container) -> TrackingEvent | None:
+def get_container_tracking_eta_event(team: Team, container, *, provider=None) -> TrackingEvent | None:
     """Return the carrier's current arrival forecast for a container, or None.
 
     The latest ESTIMATED or PLANNED arrival event — but only while it is still a
     forecast. Once the carrier reports an *actual* arrival at or after it, the
     forecast has been answered and showing it as an ETA would contradict what
     happened, which is the same rule the shipment ETA already follows.
+
+    ``provider`` narrows both halves of that rule to one source, answering "what would
+    this container's ETA be if only this provider existed". Left None — as every
+    production caller does — every provider's events count, because a container tracked
+    by several sources has one arrival, not one per source.
     """
     events = TrackingEvent.objects.filter(team=team, container=container).exclude(event_datetime__isnull=True)
+    if provider is not None:
+        events = events.filter(provider=provider)
 
     forecast = (
         events.filter(
