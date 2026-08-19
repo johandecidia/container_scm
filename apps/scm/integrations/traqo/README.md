@@ -125,6 +125,97 @@ Fixing that needs one of:
 
 Both are Phase 2 decisions. Nothing here is pre-built for them.
 
+## Phase 2 — the benchmark (`benchmark/`)
+
+Phase 1 asked whether Traqo can integrate cleanly. It can. Phase 2 asks a different
+question — **is Traqo's data good enough to rely on** — and answers it by comparing what
+two providers stored for the same real container.
+
+```bash
+# Read-only: compare what is already stored, no provider request at all.
+make manage ARGS='traqo_test CPWU2588229 --sealine MAEU --compare --live --no-fetch'
+
+# One live Traqo request, ingested through the Phase 1 pipeline, then compared.
+make manage ARGS='traqo_test CPWU2588229 --sealine MAEU --compare --live'
+make manage ARGS='traqo_test CPWU2588229 --sealine MAEU --compare --live --json --output run.json'
+```
+
+`--compare` demands an explicit `--live` or `--sandbox`. The sandbox returns the same
+demo shipment whatever container you ask about, so comparing real carrier events against
+it measures nothing — and silently choosing it would hide that.
+
+### What the benchmark is, and is not
+
+It is measurement apparatus: no model, no migration, no schedule, no UI. Delete
+`benchmark/` and the tracking domain is untouched. The only write in the package is the
+candidate's ordinary Phase 1 ingestion, which is how its data becomes canonical in the
+first place.
+
+The experiment is not "fixed" to make the candidate look good:
+
+- no event of either provider is altered, merged or enriched from the other;
+- a place *name* is never credited as a UN/LOCODE — Traqo saying "Rotterdam" earns it
+  the name and nothing else;
+- a shipment-level vessel is never attributed to an event that does not name it;
+- ambiguity is reported, never resolved by guessing.
+
+### Matching rules
+
+`event_type` and `event_time_type` are hard partitions — an estimated arrival can never
+pair with an actual one, which is the single most misleading thing this benchmark could
+do. Within a partition, time proximity proposes (±24h by default, `--tolerance-hours`)
+and identity disposes: disagreeing UN/LOCODEs or IMOs disqualify a pair outright.
+
+A disagreeing place *name* does not disqualify. Spelling and choice of name ("Yantian"
+versus "Shenzhen") is exactly the provider difference being measured, and treating it as
+proof of two different events would manufacture a false `MAERSK_ONLY` **and** a false
+`TRAQO_ONLY` from one real event. Those disagreements are counted and printed instead.
+
+Every event lands in exactly one of `MATCHED`, `REFERENCE_ONLY`, `CANDIDATE_ONLY` or
+`AMBIGUOUS`.
+
+### Coverage, scoped twice
+
+`benchmark event coverage` is matched events over the reference provider's *classified*
+events, for **one container's journey against one reference provider**. It is not carrier
+coverage and must never be quoted as such.
+
+Document milestones Container SCM itself cannot classify (`SHIPMENT/DRFT`, `ISSU`,
+`PENA`, `RELS`, `EQUIPMENT/PICK`, `DROP`) are excluded from that denominator, because no
+aggregator claims to carry transport-document paperwork. The excluded codes are printed,
+and `raw event coverage` over *every* reference event is printed beside it, so neither
+number can flatter the candidate unnoticed.
+
+### Freshness, and what one run may claim
+
+`received_at` records when Container SCM learned of an event. On the run that first
+ingests a provider it therefore records when the *experiment* started, not when the
+provider knew — so those runs are flagged `first_observation` and their lag figures are
+labelled backfill artefacts. Only repeated runs over days can measure real latency.
+
+What a single run *can* measure is **milestone recency**: whose newest observed milestone
+is more recent. That is reported separately and does indicate staleness. The provider's
+own `last_updated_at` is reported separately again, and never written over a canonical
+event timestamp.
+
+The between-providers figure is called **provider observation lag**, deliberately — it is
+a property of this installation's polling, not carrier latency.
+
+### Live-run safety
+
+Before a production request the command prints the container, the sealine, `Mode:
+PRODUCTION` and a warning that a Traqo shipment slot may be consumed. It fetches once,
+persists once, and compares locally; `--no-fetch` compares stored data without spending
+a request. Without `TRAQO_API_KEY` a `--live` run fails with instructions and writes
+nothing — it never falls back to the sandbox.
+
+### One production change Phase 2 made
+
+`get_container_tracking_eta_event(team, container, *, provider=None)` gained the optional
+filter, so the benchmark can ask "what would this container's ETA be if only this
+provider existed" through the canonical rule instead of restating it. Every production
+caller passes nothing and behaves exactly as before.
+
 ## Error semantics
 
 Statuses are mapped by consequence, onto the error hierarchy the sync layer already
