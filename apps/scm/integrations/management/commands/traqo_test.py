@@ -13,12 +13,32 @@ requires TRAQO_ENABLED and TRAQO_API_KEY; the key is never printed.
 
 ``--dry-run`` fetches and maps without writing anything, which is the quickest way to
 see how a payload would be interpreted.
+
+Phase 2 adds ``--compare``, which benchmarks Traqo's data against what a direct carrier
+integration already stored for the same real container::
+
+    make manage ARGS='traqo_test CPWU2588229 --sealine MAEU --compare --live'
+    make manage ARGS='traqo_test CPWU2588229 --sealine MAEU --compare --live --json --output run.json'
+
+``--compare`` requires an explicit ``--live`` or ``--sandbox``: sandbox returns fixed
+demo data for one container whatever you ask about, so comparing real carrier events
+against it would measure nothing, and silently choosing it would hide that.
 """
+
+import json
+import pathlib
 
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.scm.integrations.carriers.exceptions import CarrierError, CarrierNoDataError
 from apps.scm.integrations.traqo import PROVIDER_CODE
+from apps.scm.integrations.traqo.benchmark import (
+    DEFAULT_TOLERANCE_HOURS,
+    REFERENCE_PROVIDER_CODE,
+    compare_providers,
+    render_json,
+    render_text,
+)
 from apps.scm.integrations.traqo.mapper import map_traqo_container_payload
 from apps.scm.integrations.traqo.sealines import resolve_sealine
 from apps.scm.integrations.traqo.service import fetch_traqo_container, ingest_traqo_container
@@ -26,7 +46,7 @@ from apps.teams.models import Team
 
 
 class Command(BaseCommand):
-    help = "Fetch one container from Traqo and run it through the tracking ingestion pipeline."
+    help = "Fetch one container from Traqo, ingest it, and optionally benchmark it against a direct carrier."
 
     def add_arguments(self, parser):
         parser.add_argument("container_number", help="Container number, e.g. MRSU6859427")
@@ -37,7 +57,7 @@ class Command(BaseCommand):
         )
         parser.add_argument("--team", help="Team slug. Optional when the installation has exactly one team.")
         mode = parser.add_mutually_exclusive_group()
-        mode.add_argument("--sandbox", action="store_true", help="Use the Traqo sandbox (default).")
+        mode.add_argument("--sandbox", action="store_true", help="Use the Traqo sandbox (default outside --compare).")
         mode.add_argument("--live", action="store_true", help="Use the live Traqo API (needs TRAQO_ENABLED).")
         parser.add_argument(
             "--dry-run",
@@ -45,14 +65,49 @@ class Command(BaseCommand):
             help="Fetch and map only; write nothing to the database.",
         )
 
+        benchmark = parser.add_argument_group("comparison (Phase 2 benchmark)")
+        benchmark.add_argument(
+            "--compare",
+            action="store_true",
+            help="Benchmark Traqo against the carrier data already stored for this container.",
+        )
+        benchmark.add_argument(
+            "--reference-provider",
+            default=REFERENCE_PROVIDER_CODE,
+            help=f"Provider to benchmark against (default: {REFERENCE_PROVIDER_CODE}).",
+        )
+        benchmark.add_argument(
+            "--tolerance-hours",
+            type=int,
+            default=DEFAULT_TOLERANCE_HOURS,
+            help=f"How far apart two reports of one event may be and still match (default: {DEFAULT_TOLERANCE_HOURS}).",
+        )
+        benchmark.add_argument(
+            "--refresh-reference",
+            action="store_true",
+            help="Refresh the reference provider through its own existing sync first (extra carrier call).",
+        )
+        benchmark.add_argument(
+            "--no-fetch",
+            action="store_true",
+            help="Compare what is already stored without spending another Traqo request.",
+        )
+        benchmark.add_argument("--json", action="store_true", help="Print the benchmark result as JSON.")
+        benchmark.add_argument("--output", help="Write the benchmark JSON to this path.")
+        benchmark.add_argument("--verbose-events", action="store_true", help="Show every field difference per event.")
+
     def handle(self, *args, **options):
         container_number = options["container_number"].strip().upper()
-        sandbox = not options["live"]
         try:
             sealine = resolve_sealine(options["sealine"])
         except CarrierError as exc:
             raise CommandError(str(exc)) from exc
 
+        if options["compare"]:
+            self._compare(container_number=container_number, sealine=sealine, options=options)
+            return
+
+        sandbox = not options["live"]
         mode = "sandbox" if sandbox else "live"
         self.stdout.write(f"Asking Traqo ({mode}) about {container_number}, sealine {sealine}…")
 
@@ -82,6 +137,125 @@ class Command(BaseCommand):
         self._write_shipment_summary(data)
         for event in events:
             self._write_normalised_event(event)
+
+    def _compare(self, *, container_number: str, sealine: str, options: dict) -> None:
+        """Benchmark Traqo against a provider that already tracks this real container."""
+        if not (options["live"] or options["sandbox"]):
+            raise CommandError(
+                "--compare needs an explicit mode. Pass --live to benchmark real Traqo data, or "
+                "--sandbox to exercise the benchmark machinery on fixed demo data. There is no "
+                "default, because sandbox returns the same demo shipment whatever container you ask "
+                "about, and comparing real carrier events against it would measure nothing."
+            )
+        sandbox = options["sandbox"]
+
+        team = self._resolve_team(options.get("team"))
+        container = self._require_container(team, container_number)
+        reference_provider = options["reference_provider"].strip().lower()
+        self._require_reference_data(team, container, reference_provider, options)
+        self._announce_comparison(
+            container_number=container_number,
+            sealine=sealine,
+            sandbox=sandbox,
+            reference_provider=reference_provider,
+            options=options,
+        )
+
+        try:
+            result = compare_providers(
+                team=team,
+                container=container,
+                sealine=sealine,
+                reference_provider_code=reference_provider,
+                sandbox=sandbox,
+                ingest_candidate=not options["no_fetch"],
+                refresh_reference=options["refresh_reference"],
+                tolerance_hours=options["tolerance_hours"],
+            )
+        except CarrierNoDataError:
+            raise CommandError(
+                f"Traqo has no shipment for {container_number} with sealine {sealine}. "
+                "Nothing was written, and no comparison is possible."
+            ) from None
+        except CarrierError as exc:
+            # Already sanitised by the client — no key, no headers, no body.
+            raise CommandError(f"{type(exc).__name__}: {exc}") from exc
+
+        payload = render_json(result)
+        if options["json"]:
+            self.stdout.write(json.dumps(payload, indent=2))
+        else:
+            self.stdout.write(render_text(result, verbose=options["verbose_events"]))
+
+        if options["output"]:
+            path = pathlib.Path(options["output"]).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2))
+            self.stdout.write(self.style.SUCCESS(f"Benchmark JSON written to {path}"))
+
+    def _announce_comparison(self, *, container_number, sealine, sandbox, reference_provider, options) -> None:
+        """State the side effects before causing any of them."""
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING("Benchmark run"))
+        self.stdout.write(f"  Container:          {container_number}")
+        self.stdout.write(f"  Carrier / sealine:  {sealine}")
+        self.stdout.write(f"  Reference provider: {reference_provider}")
+        self.stdout.write(f"  Mode:               {'sandbox' if sandbox else 'PRODUCTION'}")
+        self.stdout.write(f"  Match tolerance:    ±{options['tolerance_hours']}h")
+
+        if options["no_fetch"]:
+            self.stdout.write("  Traqo request:      none (--no-fetch; comparing stored data)")
+        elif sandbox:
+            self.stdout.write("  Traqo request:      1 sandbox request (fixed demo data, no slot consumed)")
+        else:
+            self.stdout.write(
+                self.style.WARNING("  Traqo request:      1 PRODUCTION request — a Traqo shipment slot may be consumed")
+            )
+        if options["refresh_reference"]:
+            self.stdout.write(f"  Reference refresh:  yes — one extra {reference_provider} carrier call")
+        self.stdout.write("")
+
+    def _require_container(self, team: Team, container_number: str):
+        """Return the team's existing container, or explain that the benchmark needs one.
+
+        The benchmark measures providers against a real journey, so it never creates a
+        container — an empty one would compare nothing against nothing.
+        """
+        from django.core.exceptions import ValidationError
+
+        from apps.scm.containers.models import Container
+        from apps.scm.containers.utils import parse_container_id
+
+        try:
+            parts = parse_container_id(container_number)
+        except (ValidationError, ValueError) as exc:
+            raise CommandError(f"{container_number} is not a valid container number: {exc}") from exc
+
+        container = Container.objects.filter(
+            team=team,
+            owner_code=parts["owner_code"],
+            category_id=parts["category_id"],
+            serial_number=parts["serial_number"],
+        ).first()
+        if container is None:
+            raise CommandError(
+                f"Team '{team.slug}' has no container {container_number}. The benchmark compares providers "
+                "on a container Container SCM already tracks; it does not create one."
+            )
+        return container
+
+    def _require_reference_data(self, team, container, reference_provider: str, options: dict) -> None:
+        """Refuse to spend a production request when there is nothing to compare against."""
+        from apps.scm.tracking.models import TrackingEvent
+
+        count = TrackingEvent.objects.filter(team=team, container=container, provider__code=reference_provider).count()
+        if count or options["refresh_reference"] or options["no_fetch"]:
+            return
+        raise CommandError(
+            f"No {reference_provider} events are stored for {container.container_id}, so there is nothing to "
+            f"benchmark against. Pick a container with {reference_provider} tracking, or pass "
+            "--refresh-reference to fetch it first."
+        )
 
     def _ingest(self, *, team, container, sealine: str, sandbox: bool) -> None:
         result = self._fetch(
