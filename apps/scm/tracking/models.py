@@ -508,6 +508,9 @@ class TrackingSyncRun(BaseTeamModel):
         NONE = "", _("None")
         NOT_IMPLEMENTED = "not_implemented", _("Adapter not implemented")
         NOT_CONFIGURED = "not_configured", _("Integration not configured")
+        # A working provider that this poller is simply not the one to call. Distinct
+        # from NOT_CONFIGURED because nothing is wrong and nobody needs to fix it.
+        NOT_CARRIER_POLLED = "not_carrier_polled", _("Not polled by the carrier sync")
         ALREADY_RUNNING = "already_running", _("Sync already running")
         UNSUPPORTED_REFERENCE = "unsupported_reference", _("Unsupported reference")
         AUTHENTICATION = "authentication", _("Authentication failed")

@@ -8,6 +8,7 @@ from django.utils import timezone
 from apps.teams.models import Team
 
 from .models import TrackingEvent, TrackingProvider, TrackingSubscription, TrackingSyncRun
+from .sources import non_carrier_provider_codes
 
 
 def get_team_tracking_providers(team: Team):  # noqa: ARG001 — providers are global, team arg kept for API consistency
@@ -183,10 +184,15 @@ def get_due_tracking_subscriptions(team: Team | None = None):
     """Return subscriptions that are due for syncing.
 
     A subscription is due when:
+    - its provider is one the carrier sync actually drives, and
     - status is ACTIVE or FAILED, or it has been stuck in SYNCING long enough that
       the worker holding it is presumed dead (otherwise a crashed sync would
       starve the subscription forever), and
     - next_sync_at is in the past or null.
+
+    A non-carrier provider is excluded here rather than skipped later, because a skip
+    per cycle forever is noise: the run would be correct and useless. Calling
+    ``sync_tracking_subscription`` for one directly still skips safely.
 
     Concurrency is prevented by the sync lock, not by the SYNCING status.
     """
@@ -196,8 +202,10 @@ def get_due_tracking_subscriptions(team: Team | None = None):
         status=TrackingSubscription.Status.SYNCING, updated_at__lte=stale_cutoff
     )
 
-    qs = TrackingSubscription.objects.filter(runnable).filter(
-        models.Q(next_sync_at__isnull=True) | models.Q(next_sync_at__lte=now)
+    qs = (
+        TrackingSubscription.objects.filter(runnable)
+        .exclude(provider__code__in=non_carrier_provider_codes())
+        .filter(models.Q(next_sync_at__isnull=True) | models.Q(next_sync_at__lte=now))
     )
     if team is not None:
         qs = qs.filter(team=team)

@@ -13,8 +13,10 @@ SUCCESS
 
 SKIPPED
     Nothing was attempted: the adapter is a stub, the integration is not
-    configured, or another run holds the lock. A skipped run must never look like
-    "synced, nothing found".
+    configured, another run holds the lock, or the provider is not one this poller
+    drives at all. A skipped run must never look like "synced, nothing found" —
+    and only the skips that mean "this reference cannot be tracked as things
+    stand" are allowed to change ``tracking_status``.
 
 FAILED
     The call was attempted and failed. ``error_type`` records which kind, so an
@@ -55,6 +57,7 @@ from .services import (
     store_raw_payload,
     update_subscription_sync_state,
 )
+from .sources import get_non_carrier_source
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +207,20 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
     from apps.scm.integrations.carriers.registry import UnknownCarrierError
 
     provider_code = subscription.provider.code
+
+    # 0. Is this poller even the right caller? A non-carrier provider is a working
+    # provider whose data arrives another way, so stepping aside is the correct
+    # outcome — not a fault, and specifically not NOT_CONFIGURED, which would mark
+    # the subscription untrackable and stop the UI offering it at all.
+    non_carrier = get_non_carrier_source(provider_code)
+    if non_carrier is not None:
+        return SyncOutcome(
+            status=TrackingSyncRun.Status.SKIPPED,
+            error_type=_ErrorType.NOT_CARRIER_POLLED,
+            # Deliberately no error_message: it would be copied onto the subscription's
+            # last_error_message and read as a fault. The explanation goes in metadata.
+            metadata={"provider": non_carrier.name, "refresh_with": non_carrier.refresh_hint},
+        )
 
     # 1. Resolve the adapter for this team.
     try:
@@ -359,6 +376,9 @@ def _tracking_status_for(subscription: TrackingSubscription, outcome: SyncOutcom
     """Decide what the carrier is currently telling us about this reference."""
     statuses = TrackingSubscription.TrackingStatus
     if outcome.skipped:
+        # Only a skip that means "this reference cannot be tracked as things stand"
+        # changes the status. Every other skip — a lock held, a provider this poller
+        # does not drive — leaves whatever the last real answer was standing.
         if outcome.error_type in (_ErrorType.NOT_IMPLEMENTED, _ErrorType.NOT_CONFIGURED):
             return statuses.NOT_CONFIGURED
         return subscription.tracking_status

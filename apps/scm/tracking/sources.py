@@ -69,3 +69,8 @@ def is_polled_by_carrier_sync(provider_code: str) -> bool:
     poller that cannot fetch it should step aside rather than record a fault.
     """
     return get_non_carrier_source(provider_code) is None
+
+
+def non_carrier_provider_codes() -> tuple[str, ...]:
+    """Provider codes the carrier poller does not drive, for excluding from its queue."""
+    return tuple(_NON_CARRIER_SOURCES)

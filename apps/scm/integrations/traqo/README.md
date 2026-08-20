@@ -149,20 +149,35 @@ location-truth model is out of Phase 1 scope.
 not among them, so `resolve_sealine("evergreen")` raises rather than inventing `EGLV`.
 OOLU is the reverse case: Traqo supports it and Container SCM has no adapter.
 
-## The architectural conflict Phase 1 does not resolve
+## The architectural conflict, and how far Phase 2.1 takes it
 
 `tracking/sync.py` resolves its client and parser through the **carrier** registry, and
 `fetch_tracking()` has no `sealine` argument. A Traqo subscription therefore cannot be
-driven by the scheduled poller or by the container refresh button — both would record a
-SKIPPED run with `NOT_CONFIGURED`. Re-run `traqo_test` to refresh a Traqo subscription.
+*fetched* by the scheduled poller, and Phase 1 left it recording a SKIPPED run with
+`NOT_CONFIGURED` — which also set `tracking_status = NOT_CONFIGURED`, telling the product
+a container whose events were already stored and correct could not be tracked.
 
-Fixing that needs one of:
+Phase 2.1 separates the two facts. `tracking/sources.py` knows which providers the
+carrier sync drives, so:
 
-1. a dispatch seam in `sync.py` that resolves a non-carrier tracking source, and
-2. somewhere to persist the SCAC per subscription, since `TrackingSubscription` has no
-   metadata field — which is a migration, and Phase 1 was asked to avoid one.
+- the scheduled poller never queues a Traqo subscription in the first place — a skip per
+  cycle forever is correct and useless;
+- a direct `sync_tracking_subscription()` call still skips safely, with the new
+  `NOT_CARRIER_POLLED` error type, and leaves `tracking_status` exactly as it was;
+- a genuinely misconfigured *carrier* still reports `NOT_CONFIGURED` and still degrades,
+  which is the behaviour that surfaces real faults.
 
-Both are Phase 2 decisions. Nothing here is pre-built for them.
+Fetching Traqo on a schedule remains out of scope, and still needs somewhere to persist
+the SCAC per subscription — `TrackingSubscription` has no metadata field. Re-run
+`traqo_test` to refresh a Traqo subscription. The container refresh button still reports
+a Traqo source as "not configured": correct about the *action*, misleading about the
+container, and a known gap rather than something Phase 2.1 redesigned the UI to fix.
+
+Correcting how a *stored* response is read needs no fetch at all:
+
+```bash
+make manage ARGS='reparse_tracking_payloads --provider traqo --container CPWU2588297'
+```
 
 ## Phase 2 — the benchmark (`benchmark/`)
 
