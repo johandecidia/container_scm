@@ -15,6 +15,9 @@ What one Traqo event actually carries, read from live sandbox responses::
      "is_actual": 1, "status": "CGI",
      "status_description": "Container arrival at first POL (Gate in)"}
 
+A production event carries more — including the ``location_id`` that resolves its
+timezone, see :func:`_event_time` — but nothing fewer.
+
 Four consequences of that shape, each deliberate:
 
 *No stable event ID.* ``idx`` is a position in the list, not an identity — a later
@@ -34,15 +37,19 @@ does carry them is not silently dropped; on today's payloads they simply yield
 nothing, and the shipment-level position and ``vessels_table`` stay in
 TrackingRawPayload for later.
 
-*Naive timestamps.* Traqo sends ``"YYYY-MM-DD HH:MM:SS"`` with no offset, so they are
-read as UTC and ``event_datetime_timezone`` is left empty rather than claiming a zone
-Traqo did not state. Confirming that assumption needs production data — see README.
+*Local naive timestamps.* Traqo sends ``"YYYY-MM-DD HH:MM:SS"`` with no offset, and the
+production benchmark proved those are **local** times at the event's place, not UTC:
+reading them as UTC put every Yantian event 8 h and every Gothenburg event 2 h away from
+what Maersk reported for the same movement. They are converted through the timezone Traqo
+publishes for the event's location — see :func:`_event_time`.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apps.scm.integrations.carriers.dcsa.schemas import DcsaEventClassifier, NormalisedTrackingEvent
 from apps.scm.integrations.carriers.exceptions import CarrierInvalidResponseError
@@ -63,6 +70,10 @@ _VESSEL_IMO_KEYS = ("imo", "vessel_imo", "imo_number")
 _VOYAGE_KEYS = ("voyage", "voyage_number", "voyage_no")
 _FACILITY_KEYS = ("facility", "facility_name", "terminal")
 
+# Where the timestamp audit trail lands in a stored event's raw_data. Prefixed so it
+# cannot collide with a Traqo field: every key Traqo sends is a plain snake_case name.
+TIMESTAMP_AUDIT_KEY = "_timestamp_normalisation"
+
 
 def _text(source: dict, keys: tuple[str, ...]) -> str:
     """Return the first non-empty value among ``keys``, as a stripped string."""
@@ -73,24 +84,113 @@ def _text(source: dict, keys: tuple[str, ...]) -> str:
     return ""
 
 
-def _parse_timestamp(value) -> datetime | None:
-    """Parse a Traqo timestamp into an aware UTC datetime, or None.
+# Why an event's instant is what it is. Recorded on the row so a timestamp can be
+# audited later without re-reading the whole response.
+TZ_OFFSET_SUPPLIED = "offset_supplied"  # Traqo stated an offset; it is kept verbatim
+TZ_FROM_LOCATION = "location_timezone"  # converted through locations_table
+TZ_NO_LOCATION = "no_location_id"  # the event names no location
+TZ_LOCATION_NOT_FOUND = "location_not_found"  # location_id absent from locations_table
+TZ_NOT_PUBLISHED = "timezone_not_published"  # the location row states no timezone
+TZ_UNKNOWN_ZONE = "timezone_not_recognised"  # the stated zone is not an IANA name
+TZ_UNPARSEABLE = "timestamp_unparseable"  # the timestamp itself could not be read
+
+# Statuses where the instant on the row is trustworthy.
+_TZ_CONVERTED = (TZ_OFFSET_SUPPLIED, TZ_FROM_LOCATION)
+
+
+@dataclass(frozen=True)
+class _EventTime:
+    """One event's instant, and the provenance of the zone used to reach it."""
+
+    value: datetime | None
+    timezone_name: str
+    status: str
+    raw: str
+
+    @property
+    def is_converted(self) -> bool:
+        return self.status in _TZ_CONVERTED
+
+
+def _parse_timestamp(value) -> tuple[datetime | None, bool]:
+    """Parse a Traqo timestamp, returning (datetime, whether it stated an offset).
 
     Accepts the space-separated form Traqo sends, with or without fractional seconds,
-    and an ISO-8601 string with an offset should Traqo ever send one — in which case
-    the offset it states is kept.
+    and an ISO-8601 string with an offset should Traqo ever send one.
     """
     if not value:
-        return None
+        return None, False
     text = str(value).strip()
     if not text:
-        return None
+        return None, False
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError, TypeError:
         logger.debug("Traqo: could not parse timestamp %r", value)
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+        return None, False
+    return parsed, parsed.tzinfo is not None
+
+
+def _location_zone(event: dict, locations: dict[str, dict]) -> tuple[ZoneInfo | None, str, str]:
+    """Return (zone, zone name, status) for the place Traqo puts this event at.
+
+    Traqo publishes an IANA timezone per row of ``locations_table`` and each event
+    points at one through ``location_id``. That is the only statement Traqo makes about
+    what its naive timestamps mean, so it is the only thing used here.
+
+    Nothing is inferred when it is missing: not from the country, not from the
+    coordinates, not from another provider's event, not from this server's zone. A
+    guessed zone is a wrong timestamp that looks authoritative.
+    """
+    location_id = event.get("location_id")
+    if location_id is None:
+        return None, "", TZ_NO_LOCATION
+
+    location = locations.get(str(location_id))
+    if location is None:
+        logger.warning("Traqo: event names location_id %r, which locations_table does not list.", location_id)
+        return None, "", TZ_LOCATION_NOT_FOUND
+
+    name = str(location.get("timezone") or "").strip()
+    if not name:
+        return None, "", TZ_NOT_PUBLISHED
+
+    try:
+        return ZoneInfo(name), name, TZ_FROM_LOCATION
+    except ZoneInfoNotFoundError, ValueError:
+        logger.warning("Traqo: %r is not an IANA timezone (location_id %r).", name, location_id)
+        return None, "", TZ_UNKNOWN_ZONE
+
+
+def _event_time(event: dict, locations: dict[str, dict]) -> _EventTime:
+    """Resolve one event's instant from a local timestamp and a published timezone.
+
+    ``timestamp`` → ``location_id`` → ``locations_table.timezone`` → aware local time →
+    UTC. Only ``locations_table`` is consulted: ``last_synced_at``, ``last_updated_at``
+    and ``closed_at`` are Traqo's own infrastructure clock (they arrive at UTC+05:30)
+    and say nothing about where the box was.
+
+    **When the zone cannot be established** — a location row with ``timezone: null``,
+    which the production benchmark hit for BORAAS — the instant is kept exactly as Traqo
+    sent it, ``event_datetime_timezone`` is left empty, and the reason is recorded in the
+    raw event. Three alternatives were rejected: guessing the zone from the country or
+    the coordinates invents an offset; borrowing another provider's is enrichment; and
+    dropping the timestamp hides the event from every timeline. So the row stays
+    orderable and readable, claims no zone, and is findable precisely *because* its
+    ``event_timezone`` is blank while every converted row names its zone.
+    """
+    raw = str(event.get("timestamp") or "").strip()
+    parsed, has_offset = _parse_timestamp(event.get("timestamp"))
+    if parsed is None:
+        return _EventTime(None, "", TZ_UNPARSEABLE, raw)
+    if has_offset:
+        return _EventTime(parsed.astimezone(UTC), str(parsed.tzinfo or ""), TZ_OFFSET_SUPPLIED, raw)
+
+    zone, zone_name, status = _location_zone(event, locations)
+    if zone is None:
+        # No zone claimed, and the instant is left as sent rather than shifted by a guess.
+        return _EventTime(parsed.replace(tzinfo=UTC), "", status, raw)
+    return _EventTime(parsed.replace(tzinfo=zone).astimezone(UTC), zone_name, status, raw)
 
 
 def _classifier(event: dict) -> str:
@@ -139,6 +239,15 @@ def _index_vessels(data: dict) -> dict[str, dict]:
     return indexed
 
 
+def _index_locations(data: dict) -> dict[str, dict]:
+    """Index ``locations_table`` by ``location_id`` so an event can be joined to it."""
+    indexed: dict[str, dict] = {}
+    for location in data.get("locations_table") or []:
+        if isinstance(location, dict) and location.get("location_id") is not None:
+            indexed[str(location["location_id"])] = location
+    return indexed
+
+
 def map_traqo_container_payload(payload: dict, *, container_number: str = "") -> list[NormalisedTrackingEvent]:
     """Map a Traqo container response envelope into normalised tracking events.
 
@@ -165,19 +274,23 @@ def map_traqo_container_payload(payload: dict, *, container_number: str = "") ->
 
     reference = (container_number or str(data.get("reference_number") or "")).strip().upper()
     vessels = _index_vessels(data)
+    locations = _index_locations(data)
 
     events: list[NormalisedTrackingEvent] = []
     for raw in data.get("events_table") or []:
         if not isinstance(raw, dict):
             logger.warning("Traqo: skipping non-object event in events_table: %r", raw)
             continue
-        events.append(_map_event(raw, reference=reference, vessels=vessels))
+        events.append(_map_event(raw, reference=reference, vessels=vessels, locations=locations))
     return events
 
 
-def _map_event(raw: dict, *, reference: str, vessels: dict[str, dict]) -> NormalisedTrackingEvent:
+def _map_event(
+    raw: dict, *, reference: str, vessels: dict[str, dict], locations: dict[str, dict]
+) -> NormalisedTrackingEvent:
     """Map one Traqo event, keeping everything the provider said about it."""
     vessel_name, vessel_imo, voyage = _vessel(raw, vessels)
+    event_time = _event_time(raw, locations)
     # Traqo's own short wording first; its longer status description stands in when
     # there is none, so an event is never left without a label it can be read by.
     description = str(raw.get("description") or raw.get("status_description") or "").strip()
@@ -187,9 +300,9 @@ def _map_event(raw: dict, *, reference: str, vessels: dict[str, dict]) -> Normal
         event_classifier=_classifier(raw),
         event_code=str(raw.get("event_code") or "").strip(),
         description=description,
-        event_datetime=_parse_timestamp(raw.get("timestamp")),
-        # Traqo states no offset, so no zone is claimed here. See the module docstring.
-        event_datetime_timezone="",
+        event_datetime=event_time.value,
+        # The zone actually used, or empty when Traqo published none — never a guess.
+        event_datetime_timezone=event_time.timezone_name,
         location_name=str(raw.get("location") or "").strip(),
         location_unlocode=_text(raw, _UNLOCODE_KEYS),
         facility_name=_text(raw, _FACILITY_KEYS),
@@ -205,6 +318,19 @@ def _map_event(raw: dict, *, reference: str, vessels: dict[str, dict]) -> Normal
         raw_event_id="",
         source_provider=PROVIDER_CODE,
         # The event verbatim — including idx, country, status and status_description,
-        # so nothing Traqo said about it is lost and the mapping can be revisited.
-        raw_payload=dict(raw),
+        # so nothing Traqo said about it is lost and the mapping can be revisited —
+        # plus how its local timestamp was read, which is not recoverable from the
+        # event alone once the instant has been converted.
+        raw_payload={**raw, TIMESTAMP_AUDIT_KEY: _timestamp_audit(event_time)},
     )
+
+
+def _timestamp_audit(event_time: _EventTime) -> dict:
+    """Return what was done to this event's timestamp, and on whose authority."""
+    return {
+        "provider_timestamp": event_time.raw,
+        "timezone": event_time.timezone_name,
+        "timezone_status": event_time.status,
+        "converted": event_time.is_converted,
+        "event_datetime_utc": event_time.value.isoformat() if event_time.value else "",
+    }

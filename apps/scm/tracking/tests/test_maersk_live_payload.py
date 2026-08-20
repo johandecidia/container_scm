@@ -151,7 +151,9 @@ class MaerskLivePayloadPersistenceTest(TestCase):
         return TrackingEvent.objects.get(team=self.team, event_code=code)
 
     def test_all_events_are_stored(self):
-        self.assertEqual(self.result, {"created": 10, "updated": 0, "failed": 0})
+        counts = {key: self.result[key] for key in ("created", "updated", "failed")}
+        self.assertEqual(counts, {"created": 10, "updated": 0, "failed": 0})
+        self.assertEqual(len(self.result["fingerprints"]), 10)
 
     def test_arrival_is_stored_with_place_vessel_and_voyage(self):
         arrival = self._event("ARRI")

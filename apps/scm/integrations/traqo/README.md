@@ -67,9 +67,46 @@ Read from a live sandbox response, not from documentation:
 
 Of the tables the Traqo docs mention, only `events_table` and `vessels_table` appear in
 sandbox responses. `voyage_plan_table`, `containers_table`, `locations_table`,
-`facilities_table`, `eta_history_table` and `route_json` were **not present**, so
-nothing here maps them — writing extractors against guessed field names would be
-untestable and would silently misread real data.
+`facilities_table`, `eta_history_table` and `route_json` were **not present**, so Phase 1
+mapped none of them — writing extractors against guessed field names would be untestable
+and would silently misread real data.
+
+A production response carries more. `locations_table` is now read, because it is what
+makes an event timestamp interpretable (below); the rest stay unmapped and preserved in
+`TrackingRawPayload`. Sandbox payloads still work unchanged: an event with no
+`location_id` simply has no zone to look up.
+
+## Timezones
+
+A production event names its place by `location_id`, and `locations_table` gives that
+place an IANA zone:
+
+```
+event.location_id → locations_table row → timezone → aware local time → UTC
+```
+
+That chain is the only authority the mapper will accept. Where it breaks, the timestamp
+is stored as sent and `event_timezone` is left **empty**, which is also how such events
+are found later:
+
+| Traqo sent | Stored `event_datetime` | `event_timezone` |
+| --- | --- | --- |
+| `2026-05-12 01:09:00`, Yantian, `Asia/Shanghai` | `2026-05-11 17:09Z` | `Asia/Shanghai` |
+| `2026-07-01 15:09:00`, Goteborg, `Europe/Stockholm` | `2026-07-01 13:09Z` | `Europe/Stockholm` |
+| `2026-07-13 09:30:05`, BORAAS, `timezone: null` | `2026-07-13 09:30:05Z` | *empty* |
+
+The third row is the honest answer, not the best one. BORAAS is Boraas, Sweden, and
+Maersk's own `SEBOS` event says so — but taking the zone from the country, the
+coordinates, another provider or this server would put a **guessed** offset on a canonical
+event timestamp with nothing to mark it as a guess. An unconverted timestamp is visibly
+unconverted; a wrongly converted one is not. Every event also carries a
+`_timestamp_normalisation` record in `raw_data` — the provider's original string, the zone
+used, why it was or was not converted — so a later decision has the evidence to act on.
+
+Traqo's `last_synced_at`, `last_updated_at` and `closed_at` arrive at UTC+05:30, which is
+Traqo's own infrastructure. They are provider sync times and are never used to place an
+event in time. Event time, provider sync time and Container SCM's `received_at` stay three
+separate things.
 
 ## Known gaps and the reasoning behind each
 
@@ -84,9 +121,11 @@ rather than an update. An extra row is recoverable; a silently rewritten history
 `0` → ESTIMATED. Traqo cannot express PLANNED or REQUESTED. An absent flag stays UNKNOWN
 rather than being read as either.
 
-**Naive timestamps.** Traqo sends `"YYYY-MM-DD HH:MM:SS"` with no offset. They are read
-as UTC and `event_timezone` is left empty rather than claiming a zone Traqo did not
-state. **This assumption needs production verification against a known movement.**
+**Local naive timestamps.** Traqo sends `"YYYY-MM-DD HH:MM:SS"` with no offset, and the
+production benchmark settled what they mean: reading them as UTC put every Yantian event
+exactly 8 h and every Gothenburg event exactly 2 h from Maersk's instant for the same
+movement. They are **local times at the place the event happened**, and are converted
+through the zone Traqo publishes for that place — see *Timezones* below.
 
 **No UN/LOCODE, coordinates or vessel on an event.** Sandbox events carry a place name
 only. The mapper still looks for those fields so a richer production payload is not
