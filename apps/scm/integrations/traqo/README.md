@@ -177,12 +177,31 @@ finished is answerable — `has_journey_arrived`.
 
 ## Known gaps and the reasoning behind each
 
-**No stable event ID.** `idx` is a position in the list, not an identity: an event
-inserted mid-history shifts every `idx` after it. Using it as `source_event_id` would
-make the ingestion layer overwrite one event with another. It is therefore left empty
-and the existing field-based fingerprint identifies the event, with `idx` kept in
-`raw_data`. Consequence: if Traqo corrects an event's **timestamp**, that is a new row
-rather than an update. An extra row is recoverable; a silently rewritten history is not.
+**No stable event ID.** A production event row offers three candidates and none of them
+survives inspection:
+
+| field | production value | what it is |
+| --- | --- | --- |
+| `idx` | 1…10 | position in the list — an insert mid-history shifts every one after it |
+| `event_id` | 1…10 | equal to `idx` on every row, so the same ordinal by another name |
+| `name` | 4122761…4122770 | a Frappe child-row primary key, contiguous across the ten rows |
+
+`name` is the only real identifier of the three, and the evidence available argues against
+trusting it: every row's `creation` **and** `modified` read `2026-08-19 19:55:37.097479`,
+114 ms before the response's own `last_updated_at` and 12 s after its `last_synced_at`.
+The rows were materialised *by the sync that answered this request* — `parent`,
+`parenttype` and `parentfield` confirm they are a child table hanging off container doc
+`CNT-82510`. A child table rebuilt per sync hands out new primary keys per sync, and
+adopting one as `source_event_id` would then either duplicate the whole history or
+overwrite one event with another.
+
+Proving that would take a second fetch of the same container to compare `name` values,
+which costs a shipment slot to confirm a negative. So identity stays **unresolved**: the
+field is left empty, the existing field-based fingerprint identifies the event, and `idx`,
+`event_id` and `name` are all kept in `raw_data` so the comparison can be made for free
+the next time any container is fetched twice. Consequence of leaving it: if Traqo corrects
+an event's **timestamp**, that is a new row rather than an update. An extra row is
+recoverable; a silently rewritten history is not.
 
 **Actual or forecast, and nothing finer.** `is_actual` is a boolean, so `1` → ACTUAL and
 `0` → ESTIMATED. Traqo cannot express PLANNED or REQUESTED. An absent flag stays UNKNOWN
@@ -335,6 +354,35 @@ nothing — it never falls back to the sandbox.
 filter, so the benchmark can ask "what would this container's ETA be if only this
 provider existed" through the canonical rule instead of restating it. Every production
 caller passes nothing and behaves exactly as before.
+
+### Re-run after the Phase 2.1 corrections
+
+The stored CPWU2588297 payload was re-read with `reparse_tracking_payloads --provider
+traqo --container CPWU2588297 --prune-superseded` and benchmarked again with
+`--compare --no-fetch --live`, so no Traqo request was spent. Against the same 16 stored
+Maersk events:
+
+| | before | after |
+| --- | --- | --- |
+| matched events | 10 | 10 |
+| matched within 1 h | 0 | 8 |
+| Yantian Δ | +8 h | +0 min |
+| Gothenburg Δ | +2 h | +0 min |
+| BORAAS Δ | +2 h | +2 h |
+| benchmark event coverage | 72.7% | 72.7% |
+
+Eight of the ten now agree with Maersk to the minute, and nothing that matched before
+stopped matching. The two unchanged rows are unchanged *necessarily*: an 8 h or 2 h offset
+sits well inside the ±24 h match tolerance, so it never cost a match to begin with. Which
+is the point — a tolerance wide enough to survive genuine provider disagreement is also
+wide enough to hide a systematic timezone error. The per-event Δ is the figure that
+catches it, and it is the figure that moved.
+
+The two that remain apart are the BORAAS pair, and their residual is exactly the
+unconverted offset: Maersk places them at 07:30Z, Traqo said `09:30` with `timezone:
+null`, and 09:30 is stored as sent. So the cost of refusing to guess a zone is bounded,
+attributable and visible in the one place it applies. Maersk's `SEBOS` reading is
+evidence that a zone *could* be inferred, and deliberately not used for it.
 
 ## Error semantics
 
