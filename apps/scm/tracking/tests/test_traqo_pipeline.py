@@ -7,6 +7,7 @@ the timeline and position logic read. Nothing is mocked but the socket layer.
 The acceptance case is the one in the brief: MRSU6859427, sealine MAEU, Traqo sandbox.
 """
 
+import datetime
 import json
 import pathlib
 
@@ -16,7 +17,9 @@ from apps.scm.containers.models import Container, EquipmentType
 from apps.scm.integrations.traqo import PROVIDER_CODE
 from apps.scm.integrations.traqo.client import TraqoClient
 from apps.scm.integrations.traqo.service import get_traqo_provider, ingest_traqo_container
+from apps.scm.shipments.models import Shipment, ShipmentContainer
 from apps.scm.tracking.models import (
+    ETAHistory,
     TrackingEvent,
     TrackingProvider,
     TrackingRawPayload,
@@ -400,3 +403,119 @@ class TraqoAlongsideCarrierTrackingTest(TestCase):
 
         self.assertEqual(len(events), 4)
         self.assertEqual({event.provider.code for event in events}, {"maersk", PROVIDER_CODE})
+
+
+@override_settings(CACHES=_LOCMEM)
+class TraqoShipmentLevelEtaTest(TestCase):
+    """Traqo's ``data.eta`` reaches the canonical ETA history, and nothing else.
+
+    The field is an observation, not an event: no TrackingEvent is invented for it, and
+    it goes through the same ETA history every source writes to.
+    """
+
+    def setUp(self):
+        self.team = Team.objects.create(name="traqo-eta", slug="traqo-eta")
+        equipment_type = EquipmentType.objects.get_or_create(
+            iso_code="22G1",
+            defaults={"category": "GP", "length_ft": 20, "high_cube": False, "description": "20' GP"},
+        )[0]
+        self.container = Container.objects.create(
+            team=self.team,
+            owner_code="MRS",
+            category_id="U",
+            serial_number="685942",
+            check_digit=7,
+            equipment_type=equipment_type,
+        )
+
+    def _ingest(self, payload=None):
+        session = FakeSession([FakeResponse(200, payload or sandbox_payload())])
+        client = TraqoClient(sandbox=True, session=session)
+        return ingest_traqo_container(
+            team=self.team,
+            container=self.container,
+            sealine=SEALINE,
+            sandbox=True,
+            client=client,
+        )
+
+    @staticmethod
+    def _delivered_payload() -> dict:
+        """The production benchmark's shape: every event actual, the box already home."""
+        payload = sandbox_payload()
+        data = payload["data"]
+        data["eta"] = "2026-07-13 13:15:00"
+        data["status"] = "DELIVERED"
+        data["is_active"] = 0
+        for event in data["events_table"]:
+            event["is_actual"] = 1
+        data["events_table"].append(
+            {
+                "idx": 4,
+                "location": "Caucedo",
+                "country": "Dominican Republic",
+                "description": "Discharged",
+                "timestamp": "2026-05-17 06:00:00",
+                "event_type": "EQUIPMENT",
+                "event_code": "DISC",
+                "transport_type": "VESSEL",
+                "is_actual": 1,
+                "status": "CDD",
+                "status_description": "Container discharge at final POD",
+            }
+        )
+        return payload
+
+    def test_the_shipment_level_eta_is_recorded_as_an_eta_observation(self):
+        result = self._ingest()
+
+        self.assertTrue(result.eta_observation_recorded)
+        row = ETAHistory.objects.get(team=self.team)
+        self.assertEqual(row.container, self.container)
+        self.assertIsNone(row.shipment)
+        self.assertEqual(row.source, PROVIDER_CODE)
+        self.assertEqual(row.new_eta, datetime.date(2026, 5, 17))
+
+    def test_no_tracking_event_is_synthesised_from_the_eta_field(self):
+        self._ingest()
+
+        # Three events in events_table, three rows — the ETA is not a fourth.
+        self.assertEqual(TrackingEvent.objects.filter(team=self.team).count(), 3)
+        self.assertFalse(ETAHistory.objects.filter(team=self.team, tracking_event__isnull=False).exists())
+
+    def test_re_ingesting_an_unchanged_eta_adds_no_second_entry(self):
+        self._ingest()
+        second = self._ingest()
+
+        self.assertFalse(second.eta_observation_recorded)
+        self.assertEqual(ETAHistory.objects.filter(team=self.team).count(), 1)
+
+    def test_a_moved_eta_is_recorded_as_a_change(self):
+        self._ingest()
+        moved = sandbox_payload()
+        moved["data"]["eta"] = "2026-05-20 00:00:00"
+
+        self._ingest(moved)
+
+        rows = ETAHistory.objects.filter(team=self.team).order_by("changed_at")
+        self.assertEqual([row.new_eta for row in rows], [datetime.date(2026, 5, 17), datetime.date(2026, 5, 20)])
+        self.assertEqual(rows[1].previous_eta, datetime.date(2026, 5, 17))
+        self.assertEqual(rows[1].delta_minutes, 3 * 24 * 60)
+
+    def test_a_delivered_container_records_no_eta_at_all(self):
+        result = self._ingest(self._delivered_payload())
+
+        self.assertFalse(result.eta_observation_recorded)
+        self.assertEqual(ETAHistory.objects.filter(team=self.team).count(), 0)
+
+    def test_the_forecast_event_and_the_eta_field_do_not_both_write_history(self):
+        shipment = Shipment.objects.create(team=self.team)
+        ShipmentContainer.objects.create(shipment=shipment, container=self.container)
+
+        self._ingest()
+
+        # The estimated arrival event already moved the shipment's ETA through the
+        # existing derivation; data.eta says the same thing and must not double it.
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.eta, datetime.date(2026, 5, 17))
+        self.assertEqual(ETAHistory.objects.filter(team=self.team).count(), 1)

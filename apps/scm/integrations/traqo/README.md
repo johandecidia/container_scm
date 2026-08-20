@@ -108,6 +108,73 @@ Traqo's own infrastructure. They are provider sync times and are never used to p
 event in time. Event time, provider sync time and Container SCM's `received_at` stay three
 separate things.
 
+## ETA
+
+An ETA is a Container SCM concept. A provider's ETA is an *observation* of it, and Traqo
+is one observer among several:
+
+```
+Maersk Direct events ─┐
+                      ├─→ ETA observation ─→ canonical ETA logic ─→ ETAHistory
+Traqo data.eta       ─┘                       (tracking/eta_observations.py)
+                                                      │
+                                          Shipment.eta / current-ETA selector
+                                                      │
+                                              delay detection
+```
+
+`data.eta` is a **field, not an event**. Every one of the benchmark container's ten
+`events_table` rows was `is_actual: 1`, so there was no forecast event to read and none
+is invented: a synthesised `ARRI`/`EST` row would claim Traqo reported a movement it
+never reported, and would be fingerprinted and shown alongside real ones. It is read by
+`eta.py` into a `ProviderEtaObservation` instead.
+
+**What the ETA is *for* is not assumed.** Traqo's `eta` on the benchmark container was
+`2026-07-13 13:15:00` — the timestamp of the *last* event, the empty container's return
+to the Gothenburg depot. The vessel had arrived at the POD on 1 July, eleven days
+earlier. So `eta` is not "vessel arrival at POD", and it is recorded as
+`provider_defined` rather than mapped onto a milestone we would be guessing at.
+
+**Its timestamp goes through the same chain as an event's**: the destination's row in
+`locations_table`, its published IANA zone, then UTC. The benchmark's destination is
+BORAAS, which publishes no zone, so the value is kept as sent and says so — the same
+honesty rule described under *Timezones*.
+
+**What is preserved with the forecast**, on `ETAHistory.raw_payload`: the provider code,
+`observed_at` (when Container SCM received it — not the forecast, and not Traqo's own
+clock), `provider_updated_at` verbatim, `eta_target`, `eta_reliable`, and Traqo's own
+`eta_warning`, `status` and `is_delayed`. The full response is not copied here; it is
+already in `TrackingRawPayload`.
+
+**A new history row only when the forecast actually moves.** Compared against *this*
+provider's own last observation, so re-polling an unchanged ETA writes nothing and
+Traqo's forecast is never measured as drift against Maersk's. Two providers watching one
+journey leave two attributable trails and are not merged.
+
+**Nothing is recorded once the journey is over** — an actual arrival, or a closed
+shipment. A delivered box must not display a future arrival, whatever the provider still
+says. This is why the completed benchmark container yields no ETA evidence: it is home,
+so the correct behaviour is to record nothing.
+
+**Traqo does not own the ETA.** Where the journey is on a shipment that has no forecast
+at all, the observation goes through `update_shipment_eta` — the same writer carrier
+events use, so `original_eta`, the shipment event and delay detection all follow with no
+second code path. Where a shipment already has a forecast, the observation is recorded
+against its own source and the cached value is left alone: choosing between two
+providers is precedence, which Phase 2.1 does not decide.
+
+`eta_history_table` stays raw and unmapped. It is Traqo's history of its own forecasts,
+not Container SCM's: on the benchmark container it held a single row whose `logged_at`
+was the moment we first fetched.
+
+**Read-model gaps, documented rather than fixed here.** `ContainerWorkspace.current_eta`
+reads the shipment's ETA or the container's forecast *event*, so an ETA observation for a
+container with neither is recorded and attributable but not displayed; `eta_source` on
+that read model answers `"shipment"`/`"tracking"` rather than naming the provider (the
+provider code is on `Shipment.eta_source` and on every `ETAHistory.source`); and
+`get_shipment_eta_history` has no container-scoped counterpart. Whether a journey is
+finished is answerable — `has_journey_arrived`.
+
 ## Known gaps and the reasoning behind each
 
 **No stable event ID.** `idx` is a position in the list, not an identity: an event
@@ -133,11 +200,10 @@ dropped, but on today's payloads they yield nothing. `vessels_table` describes t
 voyage, not the leg, so it is only attached to an event that names a `vessel_id` —
 hanging the current vessel on a truck gate-in would claim the box was aboard a ship.
 
-**Shipment-level ETA needs no new architecture.** Traqo's `data.eta` arrives on its own
-as a forecast `ARRI` event, which the existing derivation already reads as the ETA
-(`get_container_tracking_eta_event`) and feeds to `ETAHistory` through
-`apply_tracking_to_shipment`. Nothing extra is synthesised — doing so would double-count
-the same forecast. `eta_history_table` is not in the sandbox and is unmapped.
+**Shipment-level ETA needs no new architecture, but it does need reading.** Phase 1 read
+the sandbox, where `data.eta` duplicates an `is_actual: 0` `ARRI` event and the existing
+event-derived ETA therefore covered it. Production contained no forecast event at all —
+see *ETA* below.
 
 **Shipment-level position stays raw.** `data.latitude`/`longitude`/`route_json` are
 provider observations of the voyage, not of the box. They are preserved in

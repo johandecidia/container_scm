@@ -174,6 +174,7 @@ def update_shipment_eta(
     location_unlocode: str = "",
     tracking_event=None,
     container=None,
+    raw_payload=None,
 ) -> Shipment:
     """Update the shipment's ETA and append to its ETA history.
 
@@ -184,6 +185,10 @@ def update_shipment_eta(
     ``eta_at`` carries the carrier's hour-precision forecast when there is one;
     ``delta_minutes`` is computed from it where possible and from the dates
     otherwise, so a six-hour slip is not rounded away to nothing.
+
+    ``raw_payload`` carries the source's own framing of the forecast — how it described
+    its confidence, what it says the ETA is even *for* — onto the history row. It is
+    context, not the response: the full response stays in ``TrackingRawPayload``.
 
     A history row is written whenever the forecast moves — by date or by time —
     even if the date alone is unchanged.
@@ -206,7 +211,7 @@ def update_shipment_eta(
     if not (date_changed or time_changed):
         return shipment
 
-    from apps.scm.tracking.models import ETAHistory
+    from apps.scm.tracking.eta_observations import record_eta_change
 
     if date_changed:
         create_shipment_event(
@@ -217,7 +222,7 @@ def update_shipment_eta(
             metadata={"eta": str(eta_date) if eta_date else None, "source": source, "confidence": confidence},
         )
 
-    ETAHistory.objects.create(
+    record_eta_change(
         team=shipment.team,
         shipment=shipment,
         container=container,
@@ -226,17 +231,12 @@ def update_shipment_eta(
         new_eta=eta_date,
         previous_eta_at=old_eta_at,
         new_eta_at=eta_at,
-        delta_minutes=calculate_eta_delta_minutes(
-            previous_eta=old_eta,
-            new_eta=eta_date,
-            previous_eta_at=old_eta_at,
-            new_eta_at=eta_at,
-        ),
         changed_at=shipment.eta_last_updated,
         received_at=timezone.now(),
-        location_name=location_name[:200],
-        location_unlocode=location_unlocode[:10],
         source=source,
+        location_name=location_name,
+        location_unlocode=location_unlocode,
+        raw_payload=raw_payload,
     )
     return shipment
 

@@ -25,10 +25,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from django.utils import timezone
+
 from apps.scm.integrations.carriers.auto_link import get_or_create_tracking_provider
 
 from . import PROVIDER_CODE, PROVIDER_NAME
 from .client import PRODUCTION_BASE_URL, TraqoClient
+from .eta import read_traqo_eta_observation
 from .mapper import map_traqo_container_payload
 
 if TYPE_CHECKING:
@@ -52,6 +55,7 @@ class TraqoIngestResult:
     subscription: TrackingSubscription | None = None
     sync_run: TrackingSyncRun | None = None
     payload: dict = field(default_factory=dict)
+    eta_observation_recorded: bool = False
 
     @property
     def events_seen(self) -> int:
@@ -99,6 +103,7 @@ def ingest_traqo_container(
 
     Raises the client's typed carrier errors — nothing is written when the fetch fails.
     """
+    from apps.scm.tracking.eta_observations import record_provider_eta_observation
     from apps.scm.tracking.manual_refresh import get_or_create_container_subscription
     from apps.scm.tracking.services import create_sync_run
     from apps.scm.tracking.sync import apply_sync_outcome, store_verified_carrier_result
@@ -128,14 +133,30 @@ def ingest_traqo_container(
     outcome = store_verified_carrier_result(subscription, raw_payload=payload, events=events)
     apply_sync_outcome(subscription, sync_run, outcome)
 
+    # After the events, because whether this forecast is worth recording depends on what
+    # they say: a box the events have already brought home has no arrival left to
+    # forecast, however Traqo still describes it.
+    observation = read_traqo_eta_observation(payload, observed_at=timezone.now())
+    eta_row = (
+        record_provider_eta_observation(
+            team=team,
+            observation=observation,
+            shipment=subscription.shipment,
+            container=container,
+        )
+        if observation is not None
+        else None
+    )
+
     logger.info(
-        "Traqo ingest for %s (%s, %s): %d mapped, %d created, %d updated.",
+        "Traqo ingest for %s (%s, %s): %d mapped, %d created, %d updated, ETA observation %s.",
         container_number,
         sealine,
         "sandbox" if sandbox else "live",
         len(events),
         outcome.events_created,
         outcome.events_updated,
+        "recorded" if eta_row else "not recorded",
     )
 
     return TraqoIngestResult(
@@ -150,4 +171,5 @@ def ingest_traqo_container(
         subscription=subscription,
         sync_run=sync_run,
         payload=payload,
+        eta_observation_recorded=eta_row is not None,
     )

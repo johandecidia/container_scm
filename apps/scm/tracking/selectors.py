@@ -139,6 +139,32 @@ def get_latest_meaningful_actual_event(team: Team, container) -> TrackingEvent |
     )
 
 
+# The *actual* events that answer an arrival forecast. One tuple, because "has this
+# journey arrived" has to mean the same thing to the polling cadence, the container ETA
+# derivation and the ETA observation intake.
+ARRIVAL_ACTUAL_EVENT_TYPES = (TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED)
+
+
+def has_journey_arrived(team: Team, *, shipment=None, container=None) -> bool:
+    """True when arrival has actually been reported for this journey.
+
+    The shipment's own milestone is the cheaper and more authoritative answer where
+    there is a shipment. A container tracked on its own has no shipment to carry that
+    milestone, so its events are asked directly — otherwise a standalone container
+    would look permanently in transit.
+    """
+    if shipment is not None:
+        return shipment.actual_arrival_at is not None
+    if container is None:
+        return False
+    return TrackingEvent.objects.filter(
+        team=team,
+        container=container,
+        event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        event_type__in=ARRIVAL_ACTUAL_EVENT_TYPES,
+    ).exists()
+
+
 def get_container_tracking_eta_event(team: Team, container, *, provider=None) -> TrackingEvent | None:
     """Return the carrier's current arrival forecast for a container, or None.
 
@@ -170,7 +196,7 @@ def get_container_tracking_eta_event(team: Team, container, *, provider=None) ->
 
     has_arrived = events.filter(
         event_time_type=TrackingEvent.EventTimeType.ACTUAL,
-        event_type__in=(TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED),
+        event_type__in=ARRIVAL_ACTUAL_EVENT_TYPES,
     ).exists()
     return None if has_arrived else forecast
 
