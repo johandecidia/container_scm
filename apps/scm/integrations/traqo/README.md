@@ -384,6 +384,131 @@ null`, and 09:30 is stored as sent. So the cost of refusing to guess a zone is b
 attributable and visible in the one place it applies. Maersk's `SEBOS` reading is
 evidence that a zone *could* be inferred, and deliberately not used for it.
 
+## Phase 2.2 — repeat observation, and what one payload cannot say
+
+Phase 2.2 set out to answer what Traqo's ETA means during an **active** journey and how
+it evolves. It could not: on 2026-08-29 no container in the installation was in transit.
+Every one of the nine Maersk-watched and four CMA-watched containers derives
+`journey_state = ARRIVED`, with the newest observed movement on 2026-07-24 — five weeks
+old. So no live Traqo request was spent, and the T0 experiment is deferred rather than
+faked. `traqo_test --candidates` is the check, and it prints the reason per container:
+
+```bash
+make manage ARGS='traqo_test --candidates'
+make manage ARGS='traqo_test --candidates --reference-provider cma_cgm'
+```
+
+The bar it applies is the canonical journey derivation, not the subscription status. All
+four CMA subscriptions are `active / tracking` and synced within hours; all four are
+finished journeys. A watch nobody cancelled says nothing about where the box is.
+
+### Maersk Direct is currently returning 401
+
+Worth recording because it bounds what any near-term benchmark can measure: every Maersk
+subscription is `failed / error` with 9–11 consecutive failures and `authentication —
+maersk rejected the credentials (HTTP 401)`. The last successful Maersk sync was
+2026-08-26. Until the credential is restored, Maersk cannot act as a *live* reference —
+only as a frozen one.
+
+### What `data.eta` targets, from Traqo's own data
+
+`benchmark/eta_target.py` classifies the value by testing it against every milestone
+Traqo itself publishes. Maersk is never consulted: using the reference provider to supply
+the candidate's missing semantics would credit the candidate with a statement it never
+made. On the one production payload available (CPWU2588297, DELIVERED):
+
+| Traqo's own milestone | value | vs `data.eta` |
+| --- | --- | --- |
+| `data.eta` | `2026-07-13 13:15:00` | — |
+| `voyage_plan_table` `pod` @ Goteborg | `2026-07-01 15:09:00` | 11.9 days earlier |
+| `voyage_plan_table` `postpod` @ BORAAS | `2026-07-13 09:30:12` | 3 h 45 m earlier |
+| `destination` | `BORAAS` | a place, not a time |
+| last `events_table` row — `GTIN`/`CER` @ Goteborg | `2026-07-13 13:15:00` | **exact match** |
+
+The exact match is the *empty container's return to the Gothenburg depot*. Not the POD
+arrival, and not the inland destination Traqo itself names. On a finished journey
+`data.eta` has become a restatement of the final event, so it classifies as
+**`PROVIDER_DEFINED`** — Traqo supplies a value and does not say what future milestone it
+forecasts. What it targets on an *active* journey is unknown and cannot be inferred from
+this payload; that is the question a live T0 exists to answer.
+
+`compare_etas` therefore refuses to subtract two ETAs unless both name the same
+*specific* target. Two `PROVIDER_DEFINED` values are not comparable to each other:
+matching silence is not agreement. The report prints the verdict where a raw difference
+used to sit.
+
+### Structural findings, documented and not ingested
+
+| Table | Rows | Finding |
+| --- | --- | --- |
+| `events_table` | 10 | every row `is_actual: 1`. **No forecast events at all**, so the top-level ETA is the only forward-looking value Traqo supplies. |
+| `voyage_plan_table` | 4 | phases `prepol`, `pol`, `pod`, `postpod`; all `is_actual: 1`; every `predictive_eta` null. Carries a `location_id`, so it resolves to a place *and its timezone* — richer than Container SCM ingests. Whether it publishes forecast phases mid-journey is unknown. |
+| `eta_history_table` | 1 | one row, `logged_at` equal to the fetch instant, one distinct `eta`. A **snapshot of the current ETA, not a history of how it moved**, over a 62-day journey. Not ingested; Container SCM stays the owner of its own ETA history. |
+| `route_json` | 2 segments | sea + land, and the **only place Traqo publishes UN/LOCODEs** (`CNYTN`, `SEGOT`). `locations_table` has no locode field at all, which is why every Traqo event reaches `TrackingEvent` without one — and why `eta.py`'s `target_unlocode` is always empty. |
+| `locations_table` | 3 | one row (`BORAAS`) with `timezone: null` — the Phase 2.1 residual. |
+
+### Event identity — T0 baseline preserved, no conclusion drawn
+
+`source_event_id` is still deliberately unresolved. The snapshot preserves each event's
+`idx`, `event_id`, `name`, `creation` and `modified` so a refetch can decide it. What the
+T0 payload already suggests:
+
+* `event_id` runs 1–10 and equals `idx` — positional, so an event inserted mid-history
+  would shift it;
+* `name` runs 4122761–4122770, a global Frappe docname sequence;
+* `creation` **equals** `modified` on all ten events, identical to the microsecond
+  (`19:55:37.097479`), and sits between the payload's `last_synced_at` (`19:55:24`) and
+  `last_updated_at` (`19:55:37.211575`).
+
+That last line is the interesting one: the whole child table was written in a single
+operation *during that sync*. It is consistent with Traqo rebuilding its event rows on
+every fetch, which would make both `event_id` and `name` unstable. **Consistent with is
+not evidence of.** A refetch is what settles it, and until one happens the field-based
+fingerprint stays.
+
+### Comparing two runs
+
+```bash
+make manage ARGS='traqo_test <container> --sealine MAEU --compare --live --output T0.json'
+# later
+make manage ARGS='traqo_test <container> --sealine MAEU --compare --live --previous T0.json --output T1.json'
+```
+
+No Celery task and no schedule. ETA drift is measured per provider against that
+provider's own earlier value — never Traqo's new figure against Maersk's old one — and is
+withheld entirely when a provider's ETA *target* changed between runs, because the
+arrival did not move, the subject did.
+
+### The read-side gap, unchanged and now precisely located
+
+Phase 2.1 suspected it; Phase 2.2 confirms it. `ContainerWorkspace.current_eta`
+(`containers/workspace.py`) reads `shipment.eta`, then falls back to `tracking_eta`,
+which comes from `get_container_tracking_eta_event` — a **forecast `TrackingEvent`**.
+`VisibilityObject.current_eta` (`visibility/read_models.py`) applies the same two-step
+rule. Neither consults `ETAHistory`.
+
+So a provider ETA recorded through the Phase 2.1 path as an observation only — no
+shipment, no forecast event, which is exactly what Traqo's top-level `data.eta` produces
+— is stored correctly, attributably, and **is not displayed anywhere**. Whether to route
+those two properties through a canonical ETA selector is a Phase 2.3 question. Nothing
+here changes them.
+
+For the record, the pipeline is not merely untested against reality — `ETAHistory` is
+empty across the whole installation. `record_provider_eta_observation` correctly declined
+to write for CPWU2588297 because `_journey_is_over` is true, which is the intended
+behaviour and also why a live in-transit container is the only thing that can validate
+the path end to end.
+
+### Delay detection
+
+`check_shipment_delay` takes a `Shipment`. The installation has **zero** shipments, and
+none of the tracked containers is on one, so canonical delay detection currently has
+nothing to run against here — independent of any provider question. Even with a shipment,
+a Traqo observation recorded straight to `ETAHistory` could not influence the verdict:
+`evaluate_shipment_delay` compares `shipment.eta` against `shipment.original_eta`, and an
+observation that does not become `shipment.eta` never reaches it. Documented, not
+changed; a second delay engine is out of scope.
+
 ## Error semantics
 
 Statuses are mapped by consequence, onto the error hierarchy the sync layer already
