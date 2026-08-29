@@ -19,6 +19,8 @@ from .candidates import (
     assess_reference_candidates,
     choose_candidate,
 )
+from .drift import SnapshotMismatchError, compare_snapshots
+from .drift_report import render_drift_text
 from .eta_target import (
     EtaTargetReading,
     compare_etas,
@@ -50,15 +52,18 @@ __all__ = [
     "ComparisonResult",
     "EtaTargetReading",
     "EventComparison",
+    "SnapshotMismatchError",
     "assess_candidate",
     "assess_reference_candidates",
     "build_snapshot",
     "choose_candidate",
     "compare_etas",
     "compare_providers",
+    "compare_snapshots",
     "match_events",
     "read_carrier_eta_target",
     "read_traqo_eta_target",
+    "render_drift_text",
     "render_json",
     "render_text",
 ]

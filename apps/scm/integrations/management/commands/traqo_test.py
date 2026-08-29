@@ -28,6 +28,16 @@ Phase 2.2 adds two things to that. ``--candidates`` reports which containers are
 spending a live request on, and refuses to name one when none is in transit::
 
     make manage ARGS='traqo_test --candidates'
+
+And ``--previous`` reads a snapshot written by an earlier run and reports what moved
+between the two — ETA drift, new events, corrections, and whether the provider's own row
+identities survived the refetch::
+
+    make manage ARGS='traqo_test CPWU2588229 --sealine MAEU --compare --live --output T0.json'
+    make manage ARGS='traqo_test CPWU2588229 --sealine MAEU --compare --live --previous T0.json --output T1.json'
+
+There is no schedule for the second run. Phase 2.2 is an experiment, and when to take
+the next observation is a decision, not a cadence.
 """
 
 import json
@@ -40,9 +50,12 @@ from apps.scm.integrations.traqo import PROVIDER_CODE
 from apps.scm.integrations.traqo.benchmark import (
     DEFAULT_TOLERANCE_HOURS,
     REFERENCE_PROVIDER_CODE,
+    SnapshotMismatchError,
     assess_reference_candidates,
     choose_candidate,
     compare_providers,
+    compare_snapshots,
+    render_drift_text,
     render_json,
     render_text,
 )
@@ -112,6 +125,10 @@ class Command(BaseCommand):
             action="store_true",
             help="Report which containers are worth a live request, and exit. Fetches nothing.",
         )
+        observation.add_argument(
+            "--previous",
+            help="A benchmark JSON from an earlier run; report what changed since it was taken.",
+        )
 
     def handle(self, *args, **options):
         if options["candidates"]:
@@ -128,6 +145,9 @@ class Command(BaseCommand):
             sealine = resolve_sealine(options["sealine"])
         except CarrierError as exc:
             raise CommandError(str(exc)) from exc
+
+        if options["previous"] and not options["compare"]:
+            raise CommandError("--previous compares two benchmark runs, so it needs --compare.")
 
         if options["compare"]:
             self._compare(container_number=container_number, sealine=sealine, options=options)
@@ -213,11 +233,43 @@ class Command(BaseCommand):
         else:
             self.stdout.write(render_text(result, verbose=options["verbose_events"]))
 
+        if options["previous"]:
+            self._write_drift(previous_path=options["previous"], current=payload)
+
         if options["output"]:
             path = pathlib.Path(options["output"]).expanduser()
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, indent=2))
             self.stdout.write(self.style.SUCCESS(f"Benchmark JSON written to {path}"))
+
+    def _write_drift(self, *, previous_path: str, current: dict) -> None:
+        """Report what changed since an earlier run's JSON.
+
+        The comparison is of the two runs' snapshots, so a file from a build whose
+        snapshot shape differs is refused rather than partially read.
+        """
+        path = pathlib.Path(previous_path).expanduser()
+        try:
+            previous = json.loads(path.read_text())
+        except OSError as exc:
+            raise CommandError(f"Could not read the previous benchmark at {path}: {exc}") from exc
+        except ValueError as exc:
+            raise CommandError(f"{path} is not valid JSON: {exc}") from exc
+
+        previous_snapshot = previous.get("snapshot") if isinstance(previous, dict) else None
+        if not previous_snapshot:
+            raise CommandError(
+                f"{path} carries no snapshot, so there is nothing to compare against. It was probably "
+                "written before Phase 2.2 added one; take a fresh run as the new T0."
+            )
+
+        try:
+            diff = compare_snapshots(previous_snapshot, current["snapshot"])
+        except SnapshotMismatchError as exc:
+            raise CommandError(str(exc)) from exc
+
+        self.stdout.write(render_drift_text(diff))
+        current["comparison_with_previous"] = {"previous_file": str(path), **diff}
 
     def _candidates(self, options: dict) -> None:
         """Report which containers could carry a live benchmark, and name one or none."""
