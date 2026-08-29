@@ -85,6 +85,57 @@ make manage ARGS='vizion_test CPWU2588297 --compare'
 `--resolve` **creates a Vizion reference**, which is Vizion's billable unit. The command
 prints that before doing it.
 
+## Phase 1B — the live validation, and what is still blocked
+
+Phase 1A is complete and tested offline. Phase 1B is the live half: it exists to replace
+specification-derived assumptions with recorded evidence. **It has not been run.** No
+Vizion credential exists in this installation — not in `.env`, not in the shell
+environment — so every step that needs a live response is outstanding.
+
+What Phase 1B *added* is the apparatus, so the live run is one command that emits every
+figure the validation asks for:
+
+| Piece | Answers |
+| --- | --- |
+| `observation.compare_fetches()` | Are milestone ids stable? Does the EST→ACT flip reuse an id? |
+| `recording.write_fixture()` | Turns a live response into a committable fixture, account identifiers stripped |
+| `client.deactivate_reference()` | Can the reference be released? (`DELETE /references/{id}`) |
+| `vizion_test --observe` | Fetch → ingest → refetch → ingest → compare, in one run |
+
+```bash
+# Set VIZION_ENABLED=true and VIZION_API_KEY, then:
+make manage ARGS='vizion_test BBCU3273070 --resolve --track --observe --compare \
+    --verbose-events --record /tmp/vizion --output /tmp/BBCU3273070.json'
+make manage ARGS='vizion_test BBCU3273090 --resolve --track --observe --compare \
+    --verbose-events --record /tmp/vizion --output /tmp/BBCU3273090.json'
+```
+
+Add `--deactivate` to release the reference afterwards. Note that unsubscribing is not the
+same as never having created it: the reference was billable at creation.
+
+### The identity experiment, and why INCONCLUSIVE is a real result
+
+`compare_fetches` matches milestones on what they *are* — DCSA type, code, leg and place —
+never on the provider id, because the id's behaviour is the thing under test. Matching on
+it would make the experiment assume its own conclusion. It then reports one of:
+
+| Verdict | Meaning | Implication |
+| --- | --- | --- |
+| `UNSTABLE_ID_PER_FETCH` | Ids changed between fetches | Keep the field-based fingerprint. This is what Traqo's `name` turned out to be. |
+| `STABLE_ID_REPLACED_ON_FLIP` | Ids stable, but a realised forecast gets a new id | Keep it. The id identifies an observation, not an event — which the two-row model already expresses. |
+| `STABLE_ID_REUSED_ON_FLIP` | Ids stable *and* survive the flip | Consider an id-keyed fingerprint in Phase 2 — but it would overwrite the forecast, losing what the provider predicted. A trade-off, not a free win. |
+| `INCONCLUSIVE` | Nothing moved between the fetches | Expected for two fetches minutes apart. Re-run after a forecast has actually been realised. |
+
+Two fetches taken close together on a journey that has not moved will report
+`INCONCLUSIVE`, and that is the honest answer rather than a failure of the instrument.
+
+Matching runs in two passes. The exact pass compares identical keys; a second pass retries
+the leftovers on classification and leg alone, accepting a pair whose places overlap on
+*either* the UN/LOCODE or the name. Without it, a milestone that gains a UN/LOCODE between
+fetches — or whose place Vizion renames, the "Yantian versus Shenzhen" problem the Traqo
+benchmark hit — would be reported as one milestone removed and another added, mistaking
+provider enrichment for journey progress.
+
 ## Cost, and why it is the central Phase 2 input
 
 Traqo separates the two questions and charges differently for them: `/carriers/lookup` is
@@ -384,13 +435,23 @@ and exposes nothing.
 credential existed in this installation when the POC was written. So the tests prove the
 mapper reads the documented contract correctly and loses nothing — they do **not** prove a
 live response matches that contract. The acceptance cases exist for that, and the fixtures
-should be replaced with recorded responses as soon as a key is available.
+should be replaced with recorded responses as soon as a key is available:
 
-93 offline tests, no live access required:
+```bash
+make manage ARGS='vizion_test BBCU3273070 --resolve --track --observe \
+    --record apps/scm/integrations/tests/fixtures/vizion/live'
+```
+
+Nothing is written into the fixtures package automatically. Overwriting a checked-in
+fixture as a side effect of a live run would change what the test suite asserts without
+anybody deciding to, so `--record` takes an explicit directory.
+
+121 offline tests, no live access required:
 
 ```bash
 make test ARGS='apps.scm.integrations.tests.test_vizion_mapper'
 make test ARGS='apps.scm.integrations.tests.test_vizion_client'
 make test ARGS='apps.scm.integrations.tests.test_vizion_eta'
+make test ARGS='apps.scm.integrations.tests.test_vizion_observation'
 make test ARGS='apps.scm.tracking.tests.test_vizion_pipeline'
 ```

@@ -208,6 +208,28 @@ class VizionClient:
             )
         return payload
 
+    def deactivate_reference(self, reference_id: str) -> dict:
+        """Unsubscribe a reference so Vizion stops tracking it, and return the response.
+
+        A reference is Vizion's billable unit and stays active after ACI resolves, so a
+        POC that creates references and never releases them leaves them accruing. This is
+        how a run cleans up after itself.
+
+        Deliberately not called by any ingest or resolve path. Deactivating is a decision
+        about whether Container SCM still wants this container watched, and a fetch has no
+        business making it — the POC command asks for it explicitly.
+
+        Child references are unsubscribed with the parent, and any registered webhook
+        deliveries stop.
+        """
+        identifier = (reference_id or "").strip()
+        if not identifier:
+            raise CarrierUnsupportedReferenceError("A Vizion reference id is required.", provider_code=PROVIDER_CODE)
+
+        payload = self.http.delete(self.reference_url(identifier))
+        logger.info("Vizion reference %s unsubscribed.", identifier)
+        return payload if isinstance(payload, dict) else {}
+
     def list_updates(self, reference_id: str) -> list[dict]:
         """Return the update envelopes Vizion has built for one reference.
 

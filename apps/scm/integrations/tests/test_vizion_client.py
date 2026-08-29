@@ -52,9 +52,10 @@ class FakeResponse:
 class FakeSession:
     """Records every request and replays queued responses per verb."""
 
-    def __init__(self, *, post=None, get=None):
+    def __init__(self, *, post=None, get=None, delete=None):
         self.post_responses = list(post or [])
         self.get_responses = list(get or [])
+        self.delete_responses = list(delete or [])
         self.requests = []
 
     def post(self, url, headers=None, params=None, json=None, timeout=None):
@@ -64,6 +65,10 @@ class FakeSession:
     def get(self, url, headers=None, params=None, timeout=None):
         self.requests.append({"method": "GET", "url": url, "headers": headers or {}, "params": params or {}})
         return self.get_responses.pop(0) if self.get_responses else FakeResponse(200, {})
+
+    def delete(self, url, headers=None, params=None, timeout=None):
+        self.requests.append({"method": "DELETE", "url": url, "headers": headers or {}})
+        return self.delete_responses.pop(0) if self.delete_responses else FakeResponse(200, {})
 
 
 def client_with(session, **kwargs) -> VizionClient:
@@ -141,6 +146,57 @@ class VizionUpdatesRetrievalTest(SimpleTestCase):
         session = FakeSession(get=[FakeResponse(200, [])])
 
         self.assertEqual(client_with(session).list_updates("ref-1"), [])
+
+
+class VizionDeactivationTest(SimpleTestCase):
+    """Releasing the billable unit a POC run created."""
+
+    def test_deactivating_issues_a_delete_on_the_reference(self):
+        session = FakeSession(delete=[FakeResponse(200, {"message": "Reference unsubscribed successfully."})])
+
+        response = client_with(session).deactivate_reference("ref-1")
+
+        self.assertEqual(session.requests[0]["method"], "DELETE")
+        self.assertEqual(session.requests[0]["url"], f"{PRODUCTION_BASE_URL}/references/ref-1")
+        self.assertEqual(response["message"], "Reference unsubscribed successfully.")
+
+    def test_it_carries_the_api_key(self):
+        session = FakeSession(delete=[FakeResponse(200, {"message": "ok"})])
+
+        client_with(session).deactivate_reference("ref-1")
+
+        self.assertEqual(session.requests[0]["headers"]["X-API-Key"], "test-key")
+
+    def test_an_unknown_reference_is_no_data(self):
+        session = FakeSession(delete=[FakeResponse(404, {"message": "Not found"})])
+
+        with self.assertRaises(CarrierNoDataError):
+            client_with(session).deactivate_reference("gone")
+
+    def test_a_blank_reference_never_reaches_the_network(self):
+        session = FakeSession()
+
+        with self.assertRaises(CarrierUnsupportedReferenceError):
+            client_with(session).deactivate_reference("  ")
+
+        self.assertEqual(session.requests, [])
+
+    def test_neither_resolve_nor_ingest_deactivates_anything(self):
+        """Deactivating is a decision about whether we still want the container watched."""
+        session = FakeSession(
+            post=[FakeResponse(200, fixture("reference_create_aci_pending.json"))],
+            get=[FakeResponse(200, fixture("reference_aci_completed_oney.json"))],
+        )
+
+        resolve_carrier_via_aci(
+            container_number=CONTAINER_NUMBER,
+            client=client_with(session),
+            poll_attempts=2,
+            poll_interval_seconds=0,
+            sleep=lambda _: None,
+        )
+
+        self.assertNotIn("DELETE", [request["method"] for request in session.requests])
 
 
 class VizionErrorTest(SimpleTestCase):

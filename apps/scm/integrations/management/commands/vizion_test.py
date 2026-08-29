@@ -31,6 +31,22 @@ fetches nothing and calls nobody — it reads Container SCM's own rows::
 
     make manage ARGS='vizion_test BBCU3273070 --compare'
 
+Phase 1B adds the pieces a live validation needs.
+
+``--observe`` fetches and ingests **twice** and reports whether Vizion's milestone ids are
+stable — the one question Phase 1A could not answer from documentation, and the question
+the fingerprint strategy turns on. ``--record`` leaves the raw responses behind as
+sanitized fixtures, so the synthetic Phase 1A fixtures can be replaced by real ones.
+``--deactivate`` unsubscribes the reference afterwards, releasing Vizion's billable unit::
+
+    make manage ARGS='vizion_test BBCU3273070 --resolve --track --observe \
+        --record apps/scm/integrations/tests/fixtures/vizion/live --output BBCU3273070.json'
+
+The full acceptance run, cleaning up after itself::
+
+    make manage ARGS='vizion_test BBCU3273070 --resolve --track --observe --compare \
+        --verbose-events --record /tmp/vizion --output /tmp/BBCU3273070.json --deactivate'
+
 Costs, stated before they are incurred: resolving creates a Vizion reference, and a
 reference is Vizion's billable unit. Unlike Traqo's free carrier lookup, identification
 and tracking are the same purchase. ``--demo`` uses the demo host, which is metered
@@ -43,6 +59,7 @@ into carrier discovery.
 
 import json
 import pathlib
+import time
 
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
@@ -52,6 +69,8 @@ from apps.scm.integrations.vizion import PROVIDER_CODE
 from apps.scm.integrations.vizion.diagnostics import build_diagnostic, compare_stored_providers
 from apps.scm.integrations.vizion.eta import read_vizion_eta_observation
 from apps.scm.integrations.vizion.mapper import map_vizion_updates, read_latest_payload
+from apps.scm.integrations.vizion.observation import compare_fetches
+from apps.scm.integrations.vizion.recording import write_fixture
 from apps.scm.integrations.vizion.schemas import ACI_IDENTIFIED, ACI_NOT_FOUND, ACI_PENDING, read_reference
 from apps.scm.integrations.vizion.service import (
     DEFAULT_ACI_POLL_ATTEMPTS,
@@ -107,6 +126,28 @@ class Command(BaseCommand):
         tracking.add_argument("--track", action="store_true", help="Fetch and normalise the reference's updates.")
         tracking.add_argument("--dry-run", action="store_true", help="Fetch and map only; write nothing.")
 
+        observation = parser.add_argument_group("repeat observation (Phase 1B)")
+        observation.add_argument(
+            "--observe",
+            action="store_true",
+            help="Fetch and ingest twice, then report whether Vizion milestone ids are stable.",
+        )
+        observation.add_argument(
+            "--observe-interval",
+            type=float,
+            default=0.0,
+            help="Seconds to wait between the two --observe fetches (default: 0).",
+        )
+        observation.add_argument(
+            "--record",
+            help="Directory to write sanitized raw responses to, as committable fixtures.",
+        )
+        observation.add_argument(
+            "--deactivate",
+            action="store_true",
+            help="Unsubscribe the reference afterwards, releasing Vizion's billable unit.",
+        )
+
         output = parser.add_argument_group("output")
         output.add_argument(
             "--compare",
@@ -145,13 +186,19 @@ class Command(BaseCommand):
         elif options["reference"]:
             reference = self._read_existing_reference(options=options, container_number=container_number, result=result)
 
-        if options["track"]:
+        if options["track"] or options["observe"]:
             if reference is None or not reference.reference_id:
                 raise CommandError("There is no Vizion reference to track. Resolve one first, or pass --reference.")
             self._track(container_number=container_number, reference=reference, options=options, result=result)
 
+        if options["observe"]:
+            self._observe(container_number=container_number, reference=reference, options=options, result=result)
+
         if options["compare"]:
             self._compare(container_number=container_number, options=options, result=result)
+
+        if options["deactivate"]:
+            self._deactivate(reference=reference, options=options, result=result)
 
         self._emit(result, options)
 
@@ -173,8 +220,14 @@ class Command(BaseCommand):
             self.stdout.write("  Carrier hint:      none — the container number is the entire request body")
         if options["reference"]:
             self.stdout.write(f"  Existing reference:{options['reference']}")
-        if options["track"]:
+        if options["track"] or options["observe"]:
             self.stdout.write("  Tracking:          GET /references/{id}/updates")
+        if options["observe"]:
+            self.stdout.write("  Repeat fetch:      yes — a second GET, to test milestone id stability")
+        if options["record"]:
+            self.stdout.write(f"  Recording to:      {options['record']} (sanitized)")
+        if options["deactivate"]:
+            self.stdout.write("  Cleanup:           DELETE /references/{id} afterwards")
         if options["dry_run"]:
             self.stdout.write("  Database:          nothing will be written (--dry-run)")
         self.stdout.write("")
@@ -212,6 +265,11 @@ class Command(BaseCommand):
         result["raw_create_response"] = aci.create_payload
         if aci.reference_payload:
             result["raw_reference_response"] = aci.reference_payload
+
+        if options["record"]:
+            self._record(options["record"], f"{container_number}_reference_create", aci.create_payload)
+            if aci.reference_payload:
+                self._record(options["record"], f"{container_number}_reference_get", aci.reference_payload)
         return reference
 
     def _write_resolution_caveat(self, reference) -> None:
@@ -325,6 +383,9 @@ class Command(BaseCommand):
         result["diagnostic"] = diagnostic.as_dict()
         result["raw_updates"] = updates
 
+        if options["record"]:
+            self._record(options["record"], f"{container_number}_updates", updates)
+
         if options["dry_run"]:
             self.stdout.write("")
             self.stdout.write(self.style.WARNING("  Nothing was written (--dry-run)."))
@@ -371,6 +432,142 @@ class Command(BaseCommand):
             "raw_payloads_created": ingest.raw_payloads_created,
             "eta_observation_recorded": ingest.eta_observation_recorded,
         }
+
+    def _observe(self, *, container_number: str, reference, options: dict, result: dict) -> None:
+        """Fetch and ingest a second time, then report what moved between the two.
+
+        This is the Phase 1B identity experiment. Vizion reuses one milestone for the ETA
+        and the ATA, so whether its ``id`` survives that flip decides which fingerprint
+        strategy is correct — and the documentation does not say. Two fetches answer it
+        empirically, or report INCONCLUSIVE, which is the honest and expected result when
+        nothing has moved between them.
+        """
+        first_updates = result.get("raw_updates")
+        if first_updates is None:
+            raise CommandError("--observe needs a first fetch to compare against; it runs after --track.")
+
+        if options["observe_interval"]:
+            self.stdout.write("")
+            self.stdout.write(f"  Waiting {options['observe_interval']}s before the second fetch…")
+            time.sleep(options["observe_interval"])
+
+        second_updates = self._call(
+            lambda: fetch_vizion_updates(reference_id=reference.reference_id, demo=options["demo"]),
+            container_number,
+        )
+        if second_updates is None:
+            return
+
+        if not options["dry_run"]:
+            team = self._resolve_team(options.get("team"))
+            container = self._resolve_container(team, container_number)
+            second = self._call(
+                lambda: ingest_vizion_container(
+                    team=team,
+                    container=container,
+                    reference_id=reference.reference_id,
+                    demo=options["demo"],
+                    updates=second_updates,
+                    reference=reference,
+                ),
+                container_number,
+            )
+            if second is not None:
+                self.stdout.write("")
+                self.stdout.write(self.style.MIGRATE_HEADING("  Second ingest — idempotency"))
+                self.stdout.write(f"    events mapped:  {second.events_mapped}")
+                self.stdout.write(f"    events created: {second.events_created}")
+                self.stdout.write(f"    events updated: {second.events_updated}")
+                self.stdout.write(f"    events failed:  {second.events_failed}")
+                if second.events_created:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            "    The second ingest CREATED rows. Inspect the comparison below: either the "
+                            "journey genuinely moved, or the fingerprint is not stable for this provider."
+                        )
+                    )
+                else:
+                    self.stdout.write(self.style.SUCCESS("    No new rows — the refetch was idempotent."))
+                result["second_ingest"] = {
+                    "events_mapped": second.events_mapped,
+                    "events_created": second.events_created,
+                    "events_updated": second.events_updated,
+                    "events_failed": second.events_failed,
+                }
+
+        comparison = compare_fetches(first_updates, second_updates, container_number=container_number)
+        self._write_comparison(comparison)
+        result["refetch_comparison"] = comparison.as_dict()
+
+        if options["record"]:
+            self._record(options["record"], f"{container_number}_updates_refetch", second_updates)
+
+    def _write_comparison(self, comparison) -> None:
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING("  Refetch comparison — milestone identity"))
+        self.stdout.write(f"    updates:            {comparison.first_update_count} → {comparison.second_update_count}")
+        self.stdout.write(
+            f"    milestones:         {comparison.first_milestone_count} → {comparison.second_milestone_count}"
+        )
+        self.stdout.write(f"    carrying an id:     {comparison.ids_present_first} → {comparison.ids_present_second}")
+        self.stdout.write(f"    matched milestones: {comparison.common_milestones}")
+        self.stdout.write(f"    added:              {len(comparison.added)}")
+        self.stdout.write(f"    removed:            {len(comparison.removed)}")
+        self.stdout.write(f"    order changed:      {'yes' if comparison.order_changed else 'no'}")
+        self.stdout.write(f"    new update ids:     {len(comparison.new_update_ids)}")
+        self.stdout.write(f"    ids stable:         {_tristate(comparison.ids_stable)}")
+
+        realisations = comparison.forecast_realisations
+        self.stdout.write(f"    forecasts realised: {len(realisations)}")
+        for change in realisations:
+            self.stdout.write(
+                f"      {' / '.join(part or '—' for part in change.key)}: "
+                f"{change.first_classifier}→{change.second_classifier}, "
+                f"id {change.first_id or '—'}→{change.second_id or '—'} "
+                f"({'REPLACED' if change.id_changed else 'reused'})"
+            )
+
+        enriched = [change for change in comparison.changes if change.enriched_fields]
+        self.stdout.write(f"    enriched later:     {len(enriched)}")
+        for change in enriched:
+            self.stdout.write(
+                f"      {' / '.join(part or '—' for part in change.key)}: +{', '.join(change.enriched_fields)}"
+            )
+
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING(f"    Verdict: {comparison.identity_verdict}"))
+        self.stdout.write(f"      {comparison.recommendation}")
+
+    def _deactivate(self, *, reference, options: dict, result: dict) -> None:
+        """Release the Vizion reference this run created."""
+        from apps.scm.integrations.vizion.client import VizionClient
+
+        if reference is None or not reference.reference_id:
+            self.stdout.write(self.style.WARNING("  Nothing to deactivate — no reference was established."))
+            return
+
+        client = VizionClient.from_settings(demo=options["demo"])
+        response = self._call(lambda: client.deactivate_reference(reference.reference_id), reference.reference_id)
+        if response is None:
+            return
+
+        self.stdout.write("")
+        self.stdout.write(
+            self.style.SUCCESS(f"  Reference {reference.reference_id} unsubscribed: {response.get('message') or 'ok'}")
+        )
+        self.stdout.write(
+            "  Vizion will generate no further updates for it. Note that unsubscribing is not the same "
+            "as never having created it — the reference was billable when created."
+        )
+        result["deactivated"] = {"reference_id": reference.reference_id, "response": response}
+
+    def _record(self, directory: str, name: str, payload) -> None:
+        """Write a sanitized copy of a live response, so it can become a fixture."""
+        path = write_fixture(directory, name, payload)
+        self.stdout.write(
+            f"  Recorded {path} (organization_id, callback_url and any secret-shaped keys removed; "
+            "reference and milestone ids kept, because they are the evidence)."
+        )
 
     def _compare(self, *, container_number: str, options: dict, result: dict) -> None:
         """Print stored canonical coverage per provider. Reads rows; calls nobody."""

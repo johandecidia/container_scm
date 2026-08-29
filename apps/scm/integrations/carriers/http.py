@@ -239,6 +239,17 @@ class CarrierHttpClient:
         """
         return self._request("POST", url, params=params, json_body=json_body).payload
 
+    def delete(self, url: str, *, params: dict | None = None) -> dict:
+        """DELETE ``url`` and return parsed JSON, raising a typed CarrierError on failure.
+
+        Exists so a provider that bills per active subscription can be told to stop —
+        Vizion unsubscribes a reference with DELETE /references/{id}. Releasing a
+        resource we created is part of using the provider responsibly, and doing it
+        through the shared transport keeps its error classification and sanitised
+        logging rather than growing a second HTTP path for one verb.
+        """
+        return self._request("DELETE", url, params=params).payload
+
     def _request(
         self,
         method: str,
@@ -273,6 +284,10 @@ class CarrierHttpClient:
                             params=params,
                             json=json_body,
                             timeout=self.config.timeout_seconds,
+                        )
+                    elif method == "DELETE":
+                        response = self._session.delete(
+                            url, headers=headers, params=params, timeout=self.config.timeout_seconds
                         )
                     else:
                         response = self._session.get(
