@@ -389,6 +389,28 @@ def _tracking_status_for(subscription: TrackingSubscription, outcome: SyncOutcom
     return statuses.NO_DATA
 
 
+def tracking_status_from_run(subscription: TrackingSubscription, run: TrackingSyncRun) -> str:
+    """Return the tracking status a run that *already happened* implies.
+
+    The same decision :func:`apply_sync_outcome` makes, reached by reading a stored
+    ``TrackingSyncRun`` back into a :class:`SyncOutcome` instead of by performing a new
+    sync. Exists so state repair can ask "what should this subscription say, given what
+    is already on record" without inventing a sync result to ask it with — see
+    :mod:`apps.scm.tracking.repair`. Nothing is written, and the run is not modified.
+    """
+    return _tracking_status_for(
+        subscription,
+        SyncOutcome(
+            status=run.status,
+            error_type=run.error_type,
+            error_message=run.error_message,
+            events_created=run.events_created,
+            events_updated=run.events_updated,
+            raw_payloads_created=run.raw_payloads_created,
+        ),
+    )
+
+
 def apply_sync_outcome(
     subscription: TrackingSubscription,
     sync_run: TrackingSyncRun,
