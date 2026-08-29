@@ -13,6 +13,18 @@ There is no database model, no schedule and no UI. A run produces a printed repo
 optionally, a JSON file. Deleting this package leaves the tracking domain untouched.
 """
 
+from .candidates import (
+    CandidateAssessment,
+    assess_candidate,
+    assess_reference_candidates,
+    choose_candidate,
+)
+from .eta_target import (
+    EtaTargetReading,
+    compare_etas,
+    read_carrier_eta_target,
+    read_traqo_eta_target,
+)
 from .matching import (
     AMBIGUOUS,
     CANDIDATE_ONLY,
@@ -24,6 +36,7 @@ from .matching import (
 )
 from .report import render_json, render_text
 from .runner import REFERENCE_PROVIDER_CODE, ComparisonResult, compare_providers
+from .snapshot import SNAPSHOT_SCHEMA, build_snapshot
 
 __all__ = [
     "AMBIGUOUS",
@@ -32,10 +45,20 @@ __all__ = [
     "MATCHED",
     "REFERENCE_ONLY",
     "REFERENCE_PROVIDER_CODE",
+    "SNAPSHOT_SCHEMA",
+    "CandidateAssessment",
     "ComparisonResult",
+    "EtaTargetReading",
     "EventComparison",
+    "assess_candidate",
+    "assess_reference_candidates",
+    "build_snapshot",
+    "choose_candidate",
+    "compare_etas",
     "compare_providers",
     "match_events",
+    "read_carrier_eta_target",
+    "read_traqo_eta_target",
     "render_json",
     "render_text",
 ]

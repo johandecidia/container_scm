@@ -252,12 +252,48 @@ def _eta_section(result: ComparisonResult) -> list[str]:
         )
         lines.append(f"{'':4}learned at {_when(provider_eta.received_at)}, from {provider_eta.source_event_code}")
 
-    difference = eta.difference_hours
-    lines.append(f"difference: {_ABSENT if difference is None else f'{difference:+.2f} h'}")
+    lines.extend(_eta_target_lines(result))
+
     if eta.eta_history:
         lines.append(f"canonical ETA history rows retained for drift analysis: {len(eta.eta_history)}")
     else:
         lines.append("no canonical ETA history for this container (none recorded, or not on a shipment)")
+    return lines
+
+
+def _eta_target_lines(result: ComparisonResult) -> list[str]:
+    """State what each ETA is an ETA *for*, before stating any difference between them.
+
+    The event-derived difference on ``EtaMetrics`` is deliberately not printed here. Two
+    ETAs are only subtractable once they are known to forecast the same milestone, and
+    that verdict lives on the snapshot — printing a number above it would be read first
+    and remembered instead.
+    """
+    snapshot = result.snapshot or {}
+    comparison = snapshot.get("eta_comparison") or {}
+    if not comparison:
+        return ["ETA target: not established (no snapshot for this run)"]
+
+    lines = [""]
+    for side, provider_eta in (("reference", result.eta.reference), ("candidate", result.eta.candidate)):
+        target = ((snapshot.get(side) or {}).get("eta_target")) or {}
+        lines.append(f"{provider_eta.provider_code} ETA target: {target.get('target') or _ABSENT}")
+        if target.get("reason"):
+            lines.append(f"{'':4}{target['reason']}")
+
+    provider_eta_at = (snapshot.get("candidate") or {}).get("provider_eta_at")
+    if provider_eta_at:
+        lines.append(f"{result.candidate_provider_code} top-level data.eta: {provider_eta_at}")
+
+    lines.append("")
+    lines.append(f"comparability: {comparison.get('verdict') or _ABSENT}")
+    difference = comparison.get("difference_hours")
+    if comparison.get("comparable") and difference is not None:
+        lines.append(
+            f"{'':4}{result.candidate_provider_code} ETA - {result.reference_provider_code} ETA = {difference:+.2f} h"
+        )
+    else:
+        lines.append(f"{'':4}no numerical difference is reported — it would not mean what it appeared to mean")
     return lines
 
 
@@ -335,7 +371,13 @@ def _snapshot_section(result: ComparisonResult) -> list[str]:
     lines.append("ETA")
     lines.append(f"{reference}: {_when(result.eta.reference.eta_at, with_time=False)}")
     lines.append(f"{candidate}: {_when(result.eta.candidate.eta_at, with_time=False)}")
-    lines.append(f"Difference: {_hours_label(result.eta.difference_hours)}")
+    comparison = (result.snapshot or {}).get("eta_comparison") or {}
+    if comparison.get("comparable"):
+        lines.append(f"Difference: {_hours_label(comparison.get('difference_hours'))}")
+    else:
+        # The two forecasts are not for the same milestone, so their difference is a
+        # category error rather than a disagreement. Naming the reason beats a dash.
+        lines.append(f"Difference: {comparison.get('verdict') or 'not established'}")
     lines.append("")
     lines.append("FRESHNESS")
     lines.append(f"Observed {candidate} observation lag: {_hours_label(result.freshness.median_observation_lag_hours)}")
@@ -432,4 +474,7 @@ def render_json(result: ComparisonResult) -> dict:
             "events_updated": result.candidate_ingest_updated,
         },
         "notes": result.notes,
+        # The T0 observation. Kept as its own object so a later run can be compared
+        # against this file without depending on the surrounding metrics' shape.
+        "snapshot": result.snapshot,
     }

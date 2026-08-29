@@ -43,6 +43,7 @@ from .metrics import (
     summarise_provider_events,
     vessel_metrics,
 )
+from .snapshot import build_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,9 @@ class ComparisonResult:
     candidate_ingest_created: int = 0
     candidate_ingest_updated: int = 0
     notes: list[str] = field(default_factory=list)
+    # The Phase 2.2 T0 observation: everything a later run needs to be subtracted from
+    # this one. Empty when the snapshot could not be built — see ``build_snapshot``.
+    snapshot: dict = field(default_factory=dict)
 
     @property
     def is_sandbox(self) -> bool:
@@ -114,14 +118,25 @@ def compare_providers(
     ingest_created = 0
     ingest_updated = 0
     payload_last_updated_at = ""
+    candidate_payload: dict | None = None
 
     if ingest_candidate:
         result = _ingest_candidate(team=team, container=container, sealine=sealine, sandbox=sandbox, client=client)
         ingest_created = result.events_created
         ingest_updated = result.events_updated
+        candidate_payload = result.payload
         payload_last_updated_at = str((result.payload.get("data") or {}).get("last_updated_at") or "")
     else:
         notes.append("Candidate was not refetched; comparing what is already stored.")
+        # The last response actually received, so a --no-fetch run can still report the
+        # provider's ETA framing. It is labelled with its own received_at in the
+        # snapshot; nothing here pretends it is current.
+        candidate_payload = _stored_candidate_payload(team, container, candidate_provider_code)
+        if candidate_payload is None:
+            notes.append(
+                f"No stored {candidate_provider_code} payload for this container, so the provider's own "
+                "ETA framing cannot be reported."
+            )
 
     reference_events, candidate_events = _read_events(
         team=team,
@@ -134,7 +149,7 @@ def compare_providers(
     reference_provider = _provider(reference_provider_code)
     candidate_provider = _provider(candidate_provider_code)
 
-    return ComparisonResult(
+    result = ComparisonResult(
         container_number=container.container_id,
         team_slug=team.slug,
         run_at=timezone.now(),
@@ -180,6 +195,21 @@ def compare_providers(
         candidate_ingest_updated=ingest_updated,
         notes=notes,
     )
+
+    # Built last, from the finished result: the snapshot's ETA and its ETA target must
+    # describe the same event the rest of the report describes, and the only way to
+    # guarantee that is to derive both from the same computed values.
+    result.snapshot = build_snapshot(
+        result=result,
+        candidate_payload=candidate_payload,
+        reference_events=reference_events,
+        candidate_events=candidate_events,
+        journey_state=_journey_state(team, container),
+        reference_subscription=_subscription(team, container, reference_provider_code),
+        candidate_subscription=_subscription(team, container, candidate_provider_code),
+        eta_history_rows=result.eta.eta_history,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +285,53 @@ def _read_events(
 
 def _provider_event_count(team, container, provider_code: str) -> int:
     return TrackingEvent.objects.filter(team=team, container=container, provider__code=provider_code).count()
+
+
+def _stored_candidate_payload(team, container, provider_code: str) -> dict | None:
+    """Return the last response this provider actually sent for this container, if any.
+
+    Read through the subscription rather than the container, because a raw payload is
+    stored against the watch that fetched it. Used only by ``--no-fetch``; a run that
+    fetches has the live response in hand and never consults this.
+    """
+    from apps.scm.tracking.models import TrackingRawPayload
+
+    payload = (
+        TrackingRawPayload.objects.filter(
+            team=team,
+            provider__code=provider_code,
+            subscription__container=container,
+        )
+        .order_by("-received_at", "-pk")
+        .first()
+    )
+    return payload.payload_json if payload and isinstance(payload.payload_json, dict) else None
+
+
+def _journey_state(team, container) -> str:
+    """Return the canonical journey state, so the snapshot cannot invent its own."""
+    from apps.scm.visibility.read_models import journey_state_from_observed
+
+    observed = set(
+        TrackingEvent.objects.filter(
+            team=team,
+            container=container,
+            event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        )
+        .exclude(event_type=TrackingEvent.EventType.UNKNOWN)
+        .values_list("event_type", flat=True)
+    )
+    return journey_state_from_observed(observed)
+
+
+def _subscription(team, container, provider_code: str):
+    from apps.scm.tracking.models import TrackingSubscription
+
+    return (
+        TrackingSubscription.objects.filter(team=team, container=container, provider__code=provider_code)
+        .order_by("-created_at")
+        .first()
+    )
 
 
 def _provider(provider_code: str):

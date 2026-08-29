@@ -23,6 +23,11 @@ integration already stored for the same real container::
 ``--compare`` requires an explicit ``--live`` or ``--sandbox``: sandbox returns fixed
 demo data for one container whatever you ask about, so comparing real carrier events
 against it would measure nothing, and silently choosing it would hide that.
+
+Phase 2.2 adds two things to that. ``--candidates`` reports which containers are worth
+spending a live request on, and refuses to name one when none is in transit::
+
+    make manage ARGS='traqo_test --candidates'
 """
 
 import json
@@ -35,6 +40,8 @@ from apps.scm.integrations.traqo import PROVIDER_CODE
 from apps.scm.integrations.traqo.benchmark import (
     DEFAULT_TOLERANCE_HOURS,
     REFERENCE_PROVIDER_CODE,
+    assess_reference_candidates,
+    choose_candidate,
     compare_providers,
     render_json,
     render_text,
@@ -49,10 +56,13 @@ class Command(BaseCommand):
     help = "Fetch one container from Traqo, ingest it, and optionally benchmark it against a direct carrier."
 
     def add_arguments(self, parser):
-        parser.add_argument("container_number", help="Container number, e.g. MRSU6859427")
+        parser.add_argument(
+            "container_number",
+            nargs="?",
+            help="Container number, e.g. MRSU6859427. Omitted only with --candidates.",
+        )
         parser.add_argument(
             "--sealine",
-            required=True,
             help="Carrier for the container: a SCAC (MAEU) or a Container SCM carrier code (maersk).",
         )
         parser.add_argument("--team", help="Team slug. Optional when the installation has exactly one team.")
@@ -96,7 +106,23 @@ class Command(BaseCommand):
         benchmark.add_argument("--output", help="Write the benchmark JSON to this path.")
         benchmark.add_argument("--verbose-events", action="store_true", help="Show every field difference per event.")
 
+        observation = parser.add_argument_group("repeat observation (Phase 2.2)")
+        observation.add_argument(
+            "--candidates",
+            action="store_true",
+            help="Report which containers are worth a live request, and exit. Fetches nothing.",
+        )
+
     def handle(self, *args, **options):
+        if options["candidates"]:
+            self._candidates(options)
+            return
+
+        if not options["container_number"]:
+            raise CommandError("A container number is required unless --candidates is passed.")
+        if not options["sealine"]:
+            raise CommandError("--sealine is required unless --candidates is passed.")
+
         container_number = options["container_number"].strip().upper()
         try:
             sealine = resolve_sealine(options["sealine"])
@@ -192,6 +218,61 @@ class Command(BaseCommand):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, indent=2))
             self.stdout.write(self.style.SUCCESS(f"Benchmark JSON written to {path}"))
+
+    def _candidates(self, options: dict) -> None:
+        """Report which containers could carry a live benchmark, and name one or none."""
+        team = self._resolve_team(options.get("team"))
+        reference_provider = options["reference_provider"].strip().lower()
+
+        assessments = assess_reference_candidates(team=team, reference_provider_code=reference_provider)
+        if not assessments:
+            raise CommandError(f"Team '{team.slug}' has no container with a {reference_provider} subscription.")
+
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING(f"Live benchmark candidates — reference {reference_provider}"))
+        self.stdout.write("Nothing was fetched to produce this; it reads canonical rows only.")
+
+        for assessment in assessments:
+            self.stdout.write("")
+            self.stdout.write(f"{assessment.container_number}  [{assessment.journey_state_label}]")
+            self.stdout.write(
+                f"    latest actual:      {assessment.latest_actual_milestone or '—'} at "
+                f"{assessment.latest_actual_event_at or '—'} "
+                f"({assessment.latest_actual_provider or 'no provider'})"
+            )
+            forecast = (
+                f" ({assessment.eta_event_type} @ {assessment.eta_location_name})" if assessment.current_eta_at else ""
+            )
+            self.stdout.write(f"    canonical ETA:      {assessment.current_eta_at or '—'}{forecast}")
+            self.stdout.write(f"    ETA source:         {assessment.eta_source or '—'}")
+            self.stdout.write(
+                f"    subscription:       {assessment.subscription_status or '—'} / {assessment.tracking_status or '—'}"
+            )
+            self.stdout.write(f"    last {reference_provider} sync: {assessment.last_synced_at or '—'}")
+            self.stdout.write(f"    {reference_provider} events:     {assessment.reference_event_count}")
+            self.stdout.write(f"    arrived/completed:  {'yes' if assessment.has_arrived else 'no'}")
+            if assessment.qualifies:
+                self.stdout.write(self.style.SUCCESS("    QUALIFIES as a live benchmark candidate"))
+            else:
+                for rejection in assessment.rejections:
+                    self.stdout.write(f"    rejected: {rejection}")
+
+        chosen = choose_candidate(assessments)
+        self.stdout.write("")
+        self.stdout.write("=" * 78)
+        if chosen is None:
+            self.stdout.write(
+                self.style.WARNING(
+                    "No container qualifies. Do NOT spend a live Traqo request: a finished journey has "
+                    "no arrival left to forecast, so it can produce no evidence about what a provider's "
+                    "ETA means during one."
+                )
+            )
+            return
+        self.stdout.write(self.style.SUCCESS(f"Strongest candidate: {chosen.container_number}"))
+        self.stdout.write(
+            f"  Run: traqo_test {chosen.container_number} --sealine <SCAC> --compare --live --output T0.json"
+        )
 
     def _announce_comparison(self, *, container_number, sealine, sandbox, reference_provider, options) -> None:
         """State the side effects before causing any of them."""
