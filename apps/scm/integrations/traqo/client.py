@@ -47,6 +47,11 @@ SANDBOX_SEGMENT = "sandbox"
 
 _CONTAINER_NUMBER_RE = re.compile(r"^[A-Z]{4}\d{7}$")
 
+# Traqo's carrier-lookup endpoint. Kept apart from ``container`` because the two spend
+# different budgets: a lookup draws on its own daily quota and creates no shipment,
+# while ``container`` may consume one of the account's shipment slots.
+CARRIER_LOOKUP_PATH = "carriers/lookup"
+
 
 class TraqoClient:
     """Reads container tracking from Traqo, in sandbox or production mode."""
@@ -140,6 +145,14 @@ class TraqoClient:
         segments.append(container_number)
         return "/".join(segments)
 
+    def carrier_lookup_url(self) -> str:
+        """Return the carrier-lookup endpoint URL, sandbox or production."""
+        segments = [self.base_url]
+        if self.sandbox:
+            segments.append(SANDBOX_SEGMENT)
+        segments.append(CARRIER_LOOKUP_PATH)
+        return "/".join(segments)
+
     # ------------------------------------------------------------------
     # Traqo contract
     # ------------------------------------------------------------------
@@ -169,6 +182,43 @@ class TraqoClient:
         scac = resolve_sealine(sealine)
         payload = self.http.get(self.container_url(number), params={"sealine": scac})
         return self._as_shipment_payload(payload, container_number=number)
+
+    def lookup_carrier(self, reference: str) -> dict:
+        """Return Traqo's carrier-lookup envelope for one reference.
+
+        Asks "which carrier is likely to know this number" **without** starting
+        tracking: no shipment is created and no shipment slot is spent. That is the
+        whole reason it is a separate call from :meth:`get_container` — the two draw on
+        different budgets, and conflating them would spend a scarce slot to answer a
+        question the free endpoint answers.
+
+        The full envelope is returned unparsed. What the answer *means* — how much
+        confidence it deserves, whether it agrees with what Container SCM already
+        believes — is decided in :mod:`.carrier_lookup`, not here, because a transport
+        must not also be a policy.
+
+        Raises the same typed carrier errors as any other Traqo call.
+        """
+        number = (reference or "").strip().upper()
+        if not number:
+            raise CarrierUnsupportedReferenceError(
+                "A reference is required to look a carrier up.",
+                provider_code=PROVIDER_CODE,
+            )
+
+        payload = self.http.get(self.carrier_lookup_url(), params={"number": number})
+        if not isinstance(payload, dict):
+            raise CarrierInvalidResponseError(
+                "Traqo carrier lookup did not return a JSON object.",
+                provider_code=PROVIDER_CODE,
+                status_code=200,
+            )
+        if payload.get("success") is False:
+            message = str(payload.get("message") or "").strip() or "Traqo reported the lookup unsuccessful."
+            raise CarrierInvalidResponseError(message, provider_code=PROVIDER_CODE, status_code=200)
+
+        logger.info("Traqo carrier lookup for %s returned.", number)
+        return payload
 
     def _as_shipment_payload(self, payload, *, container_number: str) -> dict:
         """Check the envelope is one the mapper can read, and return it unchanged.

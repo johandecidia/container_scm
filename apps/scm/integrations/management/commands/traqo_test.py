@@ -59,10 +59,22 @@ from apps.scm.integrations.traqo.benchmark import (
     render_json,
     render_text,
 )
+from apps.scm.integrations.traqo.carrier_lookup import assess_lookup
 from apps.scm.integrations.traqo.mapper import map_traqo_container_payload
 from apps.scm.integrations.traqo.sealines import resolve_sealine
-from apps.scm.integrations.traqo.service import fetch_traqo_container, ingest_traqo_container
+from apps.scm.integrations.traqo.service import (
+    fetch_traqo_container,
+    ingest_traqo_container,
+    lookup_traqo_carrier,
+)
 from apps.teams.models import Team
+
+
+def _tristate(value: bool | None) -> str:
+    """Render a tri-state flag without collapsing "not stated" into "false"."""
+    if value is None:
+        return "not stated by Traqo"
+    return "true" if value else "false"
 
 
 class Command(BaseCommand):
@@ -129,6 +141,11 @@ class Command(BaseCommand):
             "--previous",
             help="A benchmark JSON from an earlier run; report what changed since it was taken.",
         )
+        observation.add_argument(
+            "--lookup",
+            action="store_true",
+            help="Ask Traqo which carrier knows this reference, and exit. Consumes no shipment slot.",
+        )
 
     def handle(self, *args, **options):
         if options["candidates"]:
@@ -137,8 +154,13 @@ class Command(BaseCommand):
 
         if not options["container_number"]:
             raise CommandError("A container number is required unless --candidates is passed.")
+
+        if options["lookup"]:
+            self._lookup(container_number=options["container_number"].strip().upper(), options=options)
+            return
+
         if not options["sealine"]:
-            raise CommandError("--sealine is required unless --candidates is passed.")
+            raise CommandError("--sealine is required unless --candidates or --lookup is passed.")
 
         container_number = options["container_number"].strip().upper()
         try:
@@ -270,6 +292,128 @@ class Command(BaseCommand):
 
         self.stdout.write(render_drift_text(diff))
         current["comparison_with_previous"] = {"previous_file": str(path), **diff}
+
+    def _lookup(self, *, container_number: str, options: dict) -> None:
+        """Ask Traqo which carrier knows this reference, and compare it with what we know.
+
+        Deliberately does not register anything, does not pick a winner, and does not
+        feed the answer into carrier discovery. It prints the lookup beside Container
+        SCM's own evidence so a disagreement is visible rather than resolved.
+        """
+        sandbox = not options["live"]
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING(f"Traqo carrier lookup — {container_number}"))
+        self.stdout.write(f"  Mode:          {'sandbox' if sandbox else 'PRODUCTION'}")
+        self.stdout.write("  Shipment slot: none expected — verified against the response below")
+
+        lookup = self._fetch(
+            lambda: lookup_traqo_carrier(reference=container_number, sandbox=sandbox),
+            container_number,
+        )
+        if lookup is None:
+            return
+
+        prefix_hint, known = self._existing_carrier_evidence(options, container_number)
+        assessment = assess_lookup(lookup, prefix_suggestion=prefix_hint, known_carrier_codes=known)
+
+        self.stdout.write("")
+        self.stdout.write(f"  Detected carrier:  {lookup.carrier_name or '—'}")
+        self.stdout.write(f"  SCAC:              {lookup.scac or '—'}")
+        self.stdout.write(
+            f"  Confidence:        {lookup.confidence}"
+            + (f" (Traqo said {lookup.stated_confidence!r})" if lookup.stated_confidence else "")
+        )
+        self.stdout.write(f"  Source:            {lookup.source or '—'}")
+        self.stdout.write(f"  Reason:            {lookup.reason or '—'}")
+        self.stdout.write(
+            "  Candidates:        "
+            + (
+                ", ".join(f"{c.scac} ({c.confidence})" for c in lookup.candidates)
+                if lookup.candidates
+                else "none listed"
+            )
+        )
+        self.stdout.write(
+            f"  Sources unavailable: {', '.join(lookup.unavailable_sources) if lookup.unavailable_sources else 'none'}"
+        )
+        self.stdout.write(f"  Cached:            {_tristate(lookup.cached)}")
+        self.stdout.write(f"  slot_consumed:     {_tristate(lookup.slot_consumed)}")
+        self.stdout.write(f"  Traqo-trackable:   {_tristate(lookup.carrier_supported_by_traqo)}")
+        self.stdout.write(f"  Container SCM code:{lookup.carrier_code or ' (no direct adapter)'}")
+
+        self.stdout.write("")
+        self.stdout.write("  Container SCM's own evidence, for comparison — not merged:")
+        self.stdout.write(f"    ISO 6346 prefix hint: {prefix_hint or 'none (prefix not in the registry)'}")
+        self.stdout.write(f"    already evidenced:    {', '.join(known) if known else 'none'}")
+
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING(f"  Verdict: {assessment.action}"))
+        self.stdout.write(f"    {assessment.rationale}")
+        for line in assessment.corroborated_by:
+            self.stdout.write(f"    corroborated: {line}")
+        for line in assessment.contradicted_by:
+            self.stdout.write(self.style.WARNING(f"    CONTRADICTED: {line}"))
+
+        if lookup.slot_consumed is True:
+            self.stdout.write("")
+            self.stdout.write(self.style.ERROR("  WARNING: Traqo reported slot_consumed=true for a lookup."))
+        elif lookup.slot_consumed is None:
+            self.stdout.write("")
+            self.stdout.write(
+                self.style.WARNING(
+                    "  Traqo did not state slot_consumed. That is not the same as stating false — "
+                    "verify the account's shipment count independently before trusting the budget."
+                )
+            )
+
+        if options["output"]:
+            path = pathlib.Path(options["output"]).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "lookup": lookup.as_dict(),
+                        "assessment": assessment.as_dict(),
+                        # The envelope verbatim. A lookup carries no credential and no
+                        # shipment data, and keeping it is what lets a field this
+                        # reader did not recognise be found later instead of re-asked.
+                        "raw_response": lookup.raw,
+                    },
+                    indent=2,
+                )
+            )
+            self.stdout.write(self.style.SUCCESS(f"  Lookup JSON written to {path}"))
+
+    def _existing_carrier_evidence(self, options: dict, container_number: str) -> tuple[str, tuple[str, ...]]:
+        """Return (prefix hint, carriers already evidenced) for this container.
+
+        Read through the existing registry and tracking rows. Returns empty values
+        rather than failing when the container is not in Container SCM at all — which
+        is the normal case for a reference somebody is asking about for the first time.
+        """
+        from apps.scm.integrations.carriers.registry import suggest_carrier_for_owner_code
+        from apps.scm.tracking.models import TrackingSubscription
+
+        hint = suggest_carrier_for_owner_code(container_number[:4]) or ""
+
+        try:
+            team = self._resolve_team(options.get("team"))
+        except CommandError:
+            return hint, ()
+
+        codes = tuple(
+            sorted(
+                {
+                    subscription.provider.code
+                    for subscription in TrackingSubscription.objects.filter(
+                        team=team, container__isnull=False
+                    ).select_related("provider", "container")
+                    if subscription.container.container_id == container_number
+                    and subscription.provider.code != PROVIDER_CODE
+                }
+            )
+        )
+        return hint, codes
 
     def _candidates(self, options: dict) -> None:
         """Report which containers could carry a live benchmark, and name one or none."""

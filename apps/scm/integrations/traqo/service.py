@@ -87,6 +87,25 @@ def fetch_traqo_container(*, container_number: str, sealine: str, sandbox: bool 
     return client.get_container(container_number, sealine)
 
 
+def lookup_traqo_carrier(*, reference: str, sandbox: bool = True, client=None):
+    """Ask Traqo which carrier is likely to know a reference, and read the answer.
+
+    Writes nothing. No subscription, no sync run, no raw payload, no shipment — and,
+    per Traqo, no shipment slot. That is why it is separate from
+    :func:`ingest_traqo_container` rather than a step inside it: discovering who moves
+    a box and tracking the box are different questions with different budgets, and the
+    answer to the first is evidence for Container SCM's own carrier discovery rather
+    than a decision in its own right.
+
+    Returns a :class:`~.carrier_lookup.TraqoCarrierLookup`.
+    """
+    from .carrier_lookup import read_carrier_lookup
+
+    client = client or TraqoClient.from_settings(sandbox=sandbox)
+    payload = client.lookup_carrier(reference)
+    return read_carrier_lookup(payload, reference=(reference or "").strip().upper())
+
+
 def ingest_traqo_container(
     *,
     team,
