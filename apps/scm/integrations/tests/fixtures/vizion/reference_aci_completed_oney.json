@@ -1,0 +1,39 @@
+{
+  "id": "e8991c95-5db2-4c0c-8a02-119611f769df",
+  "container_id": "BBCU3273070",
+  "bill_of_lading": null,
+  "booking_number": null,
+  "carrier_code": "ONEY",
+  "carrier_scac": "ONEY",
+  "carrier_id": "1f0a6a2e-2b0e-4a7c-9f2f-6b0b3f0f9a11",
+  "carrier": {
+    "id": "1f0a6a2e-2b0e-4a7c-9f2f-6b0b3f0f9a11",
+    "name": "Ocean Network Express",
+    "code": "ONEY",
+    "enabled": true,
+    "created_at": "2020-04-01T00:00:00.000Z",
+    "updated_at": "2026-01-05T00:00:00.000Z"
+  },
+  "callback_url": null,
+  "organization_id": "3670867f-3634-4dd2-9b27-3531b5affe64",
+  "parent_reference_id": null,
+  "latest_update_id": "b274e1f6-1426-4d50-9eda-18e325fbe269",
+  "active": true,
+  "auto_carrier": true,
+  "auto_unsubscribed": false,
+  "deactivate_reason": null,
+  "last_update_status": "auto_carrier_completed",
+  "last_update_attempted_at": "2026-08-29T09:12:00.000Z",
+  "retry_count": 0,
+  "created_at": "2026-08-29T09:00:00.000Z",
+  "updated_at": "2026-08-29T09:12:00.000Z",
+  "organization": {
+    "id": "3670867f-3634-4dd2-9b27-3531b5affe64",
+    "name": "Container SCM",
+    "active": true,
+    "process_frequency_minutes": 720,
+    "created_at": "2026-01-01T00:00:00.000Z",
+    "updated_at": "2026-08-01T00:00:00.000Z"
+  },
+  "tags": []
+}

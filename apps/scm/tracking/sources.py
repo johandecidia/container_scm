@@ -28,6 +28,9 @@ from apps.scm.integrations.carriers.dcsa.schemas import NormalisedTrackingEvent
 from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
 from apps.scm.integrations.traqo import PROVIDER_NAME as TRAQO_PROVIDER_NAME
 from apps.scm.integrations.traqo.mapper import map_traqo_container_payload
+from apps.scm.integrations.vizion import PROVIDER_CODE as VIZION_PROVIDER_CODE
+from apps.scm.integrations.vizion import PROVIDER_NAME as VIZION_PROVIDER_NAME
+from apps.scm.integrations.vizion.mapper import read_stored_payload as read_vizion_payload
 
 
 @dataclass(frozen=True)
@@ -47,12 +50,26 @@ def _read_traqo_payload(payload_json: dict, reference: str) -> list[NormalisedTr
     return map_traqo_container_payload(payload_json, container_number=reference)
 
 
+def _read_vizion_payload(payload_json: dict, reference: str) -> list[NormalisedTrackingEvent]:
+    return read_vizion_payload(payload_json, reference)
+
+
 _NON_CARRIER_SOURCES: dict[str, NonCarrierSource] = {
     TRAQO_PROVIDER_CODE: NonCarrierSource(
         code=TRAQO_PROVIDER_CODE,
         name=TRAQO_PROVIDER_NAME,
         read_payload=_read_traqo_payload,
         refresh_hint="run the traqo_test management command",
+    ),
+    # Vizion, like Traqo, is an aggregator the carrier poller does not drive. Registering
+    # it here is what stops the scheduled sync queueing a Vizion subscription and then
+    # marking the container NOT_CONFIGURED — its events are stored and correct, and the
+    # only thing the poller cannot do is fetch them.
+    VIZION_PROVIDER_CODE: NonCarrierSource(
+        code=VIZION_PROVIDER_CODE,
+        name=VIZION_PROVIDER_NAME,
+        read_payload=_read_vizion_payload,
+        refresh_hint="run the vizion_test management command",
     ),
 }
 

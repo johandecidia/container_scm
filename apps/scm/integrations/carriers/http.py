@@ -220,6 +220,34 @@ class CarrierHttpClient:
         only difference is that the headers survive, for carriers that paginate
         through them.
         """
+        return self._request("GET", url, params=params)
+
+    def post(self, url: str, *, json_body: dict | None = None, params: dict | None = None) -> dict:
+        """POST ``url`` and return parsed JSON, raising a typed CarrierError on failure.
+
+        Exists because a provider can require a write to *start* tracking rather than a
+        read to fetch it — Vizion creates a reference with POST /references before any
+        update can be retrieved. It shares the whole of :meth:`get`'s behaviour: same
+        retries, same backoff, same Retry-After handling, same error classification and
+        the same sanitised logging, so there is one transport in the codebase rather
+        than one per HTTP verb.
+
+        Retries are the same as for GET, which is safe for the creates this is used for:
+        Vizion's POST /references is idempotent per (organisation, reference) and returns
+        the existing reference rather than a second one. A provider whose POST is not
+        idempotent must configure ``max_retries=0`` rather than rely on this.
+        """
+        return self._request("POST", url, params=params, json_body=json_body).payload
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+    ) -> CarrierResponse:
+        """Perform one logical request, retries and typed-error classification included."""
         request_id = uuid.uuid4().hex
         started = time.monotonic()
         endpoint = log_path(url)
@@ -238,9 +266,18 @@ class CarrierHttpClient:
                     headers.update(self.auth.auth_headers())
 
                 try:
-                    response = self._session.get(
-                        url, headers=headers, params=params, timeout=self.config.timeout_seconds
-                    )
+                    if method == "POST":
+                        response = self._session.post(
+                            url,
+                            headers=headers,
+                            params=params,
+                            json=json_body,
+                            timeout=self.config.timeout_seconds,
+                        )
+                    else:
+                        response = self._session.get(
+                            url, headers=headers, params=params, timeout=self.config.timeout_seconds
+                        )
                 except (requests.Timeout, requests.ConnectionError) as exc:
                     if attempt <= self.config.max_retries:
                         self._backoff(attempt)
@@ -250,7 +287,10 @@ class CarrierHttpClient:
 
                 status_code = response.status_code
 
-                if status_code == 200:
+                # 201 is accepted for POST only, so a GET's handling is bit-for-bit
+                # unchanged: a create that answers "201 Created" is a success, and no
+                # existing carrier read can reach this branch.
+                if status_code == 200 or (method == "POST" and status_code == 201):
                     try:
                         payload = response.json()
                     except ValueError as exc:
@@ -318,6 +358,7 @@ class CarrierHttpClient:
                 started,
                 success=succeeded,
                 error_message="" if succeeded else error_message,
+                method=method,
             )
 
     def _backoff(self, attempt: int, *, retry_after: int | None = None) -> None:
@@ -333,6 +374,7 @@ class CarrierHttpClient:
         *,
         success: bool,
         error_message: str,
+        method: str = "GET",
     ) -> None:
         """Write a sanitised IntegrationRequestLog entry; never secrets, never bodies."""
         if self.integration is None:
@@ -343,7 +385,7 @@ class CarrierHttpClient:
             log_integration_request(
                 team=self.integration.team,
                 provider_code=self.provider_code,
-                method="GET",
+                method=method,
                 endpoint=endpoint[:500],
                 integration=self.integration,
                 status_code=status_code,
