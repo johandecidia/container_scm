@@ -1,39 +1,56 @@
 {% load i18n %}
+
+{% comment %}
+  Primary navigation for Container SCM.
+
+  Grouped by the work a supply chain user does, not by Django app: Control,
+  Supply Chain, Network, Insights. Pegasus owns the shell — the team selector
+  above this list, the account and admin groups below it — and this file only
+  decides what the SCM experience puts inside it.
+
+  Exceptions and Arrivals are not separate pages. They are the Control Tower with
+  a filter already applied, using the query parameters the visibility layer
+  already parses (`exceptions=1`, `eta=7`), so the navigation works before work
+  queues exist.
+
+  Tracking, Discovery, Imports, Integrations, Supplier Deliveries and AI Chat are
+  deliberately absent from the primary groups. Every one of those routes still
+  works; the technical capabilities are reached from the objects they belong to,
+  and the administrative ones from Settings below.
+{% endcomment %}
+
 <li class="menu-title">
-  <span>{% translate "Application" %}</span>
+  <span>{% translate "Control" %}</span>
 </li>
 <li>
-  <a href="{% url 'web:home' %}" {% if active_tab == 'dashboard' %}class="menu-active"{% endif %}>
-    <i class="fa fa-home h-4 w-4"></i>
-    {% translate "Dashboard" %}
+  <a href="{% url 'visibility:overview' %}"
+     {% if '/scm/visibility/' in request.path and not request.GET.exceptions and not request.GET.eta %}class="menu-active"{% endif %}>
+    <i class="fa fa-satellite-dish h-4 w-4"></i>
+    {% translate "Control Tower" %}
   </a>
 </li>
-{% include "web/components/team_nav.html" %}
+<li>
+  <a href="{% url 'visibility:overview' %}?exceptions=1"
+     {% if '/scm/visibility/' in request.path and request.GET.exceptions %}class="menu-active"{% endif %}>
+    <i class="fa fa-triangle-exclamation h-4 w-4"></i>
+    {% translate "Exceptions" %}
+  </a>
+</li>
+<li>
+  <a href="{% url 'visibility:overview' %}?eta=7"
+     {% if '/scm/visibility/' in request.path and request.GET.eta %}class="menu-active"{% endif %}>
+    <i class="fa fa-anchor h-4 w-4"></i>
+    {% translate "Arrivals" %}
+  </a>
+</li>
+
 <li class="menu-title">
   <span>{% translate "Supply Chain" %}</span>
 </li>
 <li>
-  <a href="{% url 'analytics:dashboard' %}" {% if '/scm/analytics/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-gauge h-4 w-4"></i>
-    {% translate "Overview" %}
-  </a>
-</li>
-<li>
-  <a href="{% url 'procurement:purchase_order_list' %}" {% if '/scm/procurement/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-file-invoice h-4 w-4"></i>
-    {% translate "Purchase Orders" %}
-  </a>
-</li>
-<li>
-  <a href="{% url 'supplier_deliveries:list' %}" {% if '/scm/supplier-deliveries/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-truck h-4 w-4"></i>
-    {% translate "Supplier Deliveries" %}
-  </a>
-</li>
-<li>
-  <a href="{% url 'visibility:overview' %}" {% if '/scm/visibility/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-earth-americas h-4 w-4"></i>
-    {% translate "Visibility" %}
+  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path and '/discovery/' not in request.path and '/locations/' not in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-box h-4 w-4"></i>
+    {% translate "Containers" %}
   </a>
 </li>
 <li>
@@ -43,28 +60,38 @@
   </a>
 </li>
 <li>
-  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path and '/discovery/' not in request.path and '/locations/' not in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-box h-4 w-4"></i>
-    {% translate "Containers" %}
+  <a href="{% url 'procurement:purchase_order_list' %}" {% if '/scm/procurement/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-file-invoice h-4 w-4"></i>
+    {% translate "Purchase Orders" %}
   </a>
+</li>
+
+<li class="menu-title">
+  <span>{% translate "Network" %}</span>
 </li>
 <li>
   <a href="{% url 'containers:location_list' %}" {% if '/scm/containers/locations/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-map-marker-alt h-4 w-4"></i>
-    {% translate "Container Locations" %}
+    {% translate "Locations" %}
   </a>
 </li>
-<li>
-  <a href="{% url 'containers:discovery_dashboard' %}" {% if '/scm/containers/discovery/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-magnifying-glass h-4 w-4"></i>
-    {% translate "Discovery" %}
-  </a>
+
+<li class="menu-title">
+  <span>{% translate "Insights" %}</span>
 </li>
 <li>
-  <a href="{% url 'tracking:list' %}" {% if '/scm/tracking/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-map-marker-alt h-4 w-4"></i>
-    {% translate "Tracking" %}
+  <a href="{% url 'analytics:dashboard' %}" {% if '/scm/analytics/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-chart-line h-4 w-4"></i>
+    {% translate "Analytics" %}
   </a>
+</li>
+
+{% comment %}
+  Settings: data plumbing and the Pegasus team-level pages. Administrative rather
+  than operational, so it sits below the work.
+{% endcomment %}
+<li class="menu-title">
+  <span>{% translate "Settings" %}</span>
 </li>
 <li>
   <a href="{% url 'imports:list' %}" {% if '/scm/imports/' in request.path %}class="menu-active"{% endif %}>
@@ -78,12 +105,8 @@
     {% translate "Integrations" %}
   </a>
 </li>
-<li>
-  <a href="{% url 'chat:chat_home' %}" {% if active_tab == 'ai-chat' %}class="menu-active"{% endif %}>
-    <i class="fa-solid fa-robot h-4 w-4"></i>
-    {% translate "AI Chat" %}
-  </a>
-</li>
+{% include "web/components/team_nav.html" %}
+
 {% if not user.is_anonymous %}
 <li class="menu-title">
   <span>{% translate "My Account" %}</span>
