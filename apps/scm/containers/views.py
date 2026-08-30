@@ -13,6 +13,7 @@ from apps.scm.decorators import scm_login_required
 from apps.scm.tracking.manual_refresh import refresh_container_tracking
 from apps.scm.visibility.context import get_container_map_context
 
+from .activity import get_container_activity
 from .discovery import (
     add_planned_container,
     cancel_planned_container,
@@ -82,6 +83,12 @@ def container_list(request):
 
 @scm_login_required
 def container_detail(request, container_id):
+    """The Container Workspace: overview, journey, activity and related objects.
+
+    Kept on the `containers:detail` route and template name it has always had, so
+    every existing link and redirect still resolves. All four sections are rendered
+    in one response and switched client-side — see the template.
+    """
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
     workspace = get_container_workspace(team=team, container=container)
@@ -91,6 +98,9 @@ def container_detail(request, container_id):
         {
             "container": container,
             "workspace": workspace,
+            # Derived from what the workspace already loaded, plus one query for the
+            # ETA history. Team-scoped throughout.
+            "activity": get_container_activity(team=team, container=container, workspace=workspace),
             # The map and the journey summary read the same workspace, so the page
             # loads this container's tracking once.
             **get_container_map_context(team=team, container=container, workspace=workspace),
