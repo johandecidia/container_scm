@@ -1,0 +1,29 @@
+{% load i18n %}
+
+{% comment %}
+  A heading for one section of a dense operational page.
+
+  Usage: {% include "scm/components/section_header.html" with title=_("Upcoming arrivals") count=8 %}
+  Optional: subtitle, count, action_url, action_label
+
+  Smaller and quieter than a page title on purpose: on the Control Tower four of
+  these appear on one screen, and four large headings would compete with the data
+  they introduce.
+{% endcomment %}
+
+<div class="flex items-baseline justify-between gap-3 mb-3">
+  <div class="flex items-baseline gap-2 min-w-0">
+    <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">{{ title }}</h2>
+    {% if count %}
+      <span class="badge badge-xs badge-ghost font-medium">{{ count }}</span>
+    {% endif %}
+    {% if subtitle %}
+      <span class="text-xs text-base-content/40 truncate">{{ subtitle }}</span>
+    {% endif %}
+  </div>
+  {% if action_url %}
+    <a href="{{ action_url }}" class="text-xs link link-hover shrink-0">
+      {{ action_label|default:_("View all") }}
+    </a>
+  {% endif %}
+</div>

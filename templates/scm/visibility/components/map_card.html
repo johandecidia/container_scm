@@ -10,14 +10,15 @@
        map_title=_("Supply Chain Map") map_height="h-[28rem]" %}
 
   Reads from context: mapbox, map_mode, map_data_url.
-  Optional: map_title, map_height, map_panel_target, map_note.
+  Optional: map_title, map_height, map_panel_target, map_note, map_card_class
+  (the surrounding panel style, so a dense page can ask for a tighter one).
 
   Without a Mapbox token the card renders a configuration notice and the rest of
   the page — timeline, ETA, tracking state — carries on working. The map is an
   enhancement, and a missing token must never take a page down with it.
 {% endcomment %}
 
-<section class="app-card">
+<section class="{{ map_card_class|default:'app-card' }}">
   <div class="flex items-start justify-between gap-4 mb-3">
     <div>
       <h2 class="text-lg font-semibold">{{ map_title|default:_("Map") }}</h2>
