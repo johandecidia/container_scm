@@ -4,6 +4,7 @@ from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 from apps.teams.models import Team
 
 from .models import Container, ContainerLocation, EquipmentType
+from .utils import container_number_query
 from .workspace import ContainerWorkspace, get_container_workspace
 
 _SORT_MAP = {
@@ -110,13 +111,23 @@ def filter_containers(
     if missing_location:
         qs = qs.filter(current_location__isnull=True)
     if search:
-        qs = qs.filter(
+        # A container's ISO number is composed on read from four columns, so
+        # `icontains` over them can never match a number typed whole — the string
+        # "MCUU2009300" exists in no column. `container_number_query` decomposes it
+        # the same way the model composes it; it is the helper global search uses,
+        # imported rather than restated so the two cannot disagree about what a
+        # container number is.
+        matches = (
             Q(owner_code__icontains=search)
             | Q(serial_number__icontains=search)
             | Q(current_location__name__icontains=search)
             | Q(location_text__icontains=search)
             | Q(manufacturer__icontains=search)
         )
+        number_query = container_number_query(search)
+        if number_query is not None:
+            matches |= number_query.filters
+        qs = qs.filter(matches)
 
     order_by = _SORT_MAP.get(sort or "newest", "-created_at")
     return qs.order_by(order_by)
