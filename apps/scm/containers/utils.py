@@ -11,14 +11,26 @@ Example: MSCU1234567
 """
 
 import re
+from dataclasses import dataclass
 
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 from .choices import ContainerCategory
 
 _CATEGORY_IDS = "".join(ContainerCategory.values)
 _CONTAINER_ID_RE = re.compile(rf"^([A-Z]{{3}})([{_CATEGORY_IDS}])(\d{{6}})(\d)$")
+
+# The same identity, typed as much of it as somebody has: an owner code and a
+# category, optionally followed by any part of the serial number and the check
+# digit. Anchored at the start because a container number is read left to right —
+# nobody searches by the tail of a serial.
+_CONTAINER_PREFIX_RE = re.compile(rf"^([A-Z]{{3}})([{_CATEGORY_IDS}])(\d{{0,7}})$")
+
+# Typed off a container door or pasted out of a spreadsheet, a number picks up
+# spaces and hyphens. They are not part of the identity.
+_NOISE_RE = re.compile(r"[\s\-_./]")
 
 # ISO 6346 assigns numeric values to letters A–Z.
 # Starts at 10 for A and increments by 1, skipping any value that is a multiple of 11.
@@ -71,6 +83,54 @@ def parse_container_id(container_id_string: str) -> dict:
         "serial_number": m.group(3),
         "check_digit": int(m.group(4)),
     }
+
+
+@dataclass(frozen=True)
+class ContainerNumberQuery:
+    """How to find containers from a container number somebody typed.
+
+    ``filters`` is a Q over Container's four identity columns. ``is_whole_number``
+    is True only when the full eleven characters were given, which is the one case
+    where the answer is a single container and the caller may treat it as exact.
+    """
+
+    filters: Q
+    is_whole_number: bool
+
+
+def container_number_query(text: str) -> ContainerNumberQuery | None:
+    """Return how to match *text* as a container number, or None if it is not one.
+
+    A container's ISO number is not stored: it is composed on read from
+    ``owner_code``, ``category_id``, ``serial_number`` and ``check_digit``. So a
+    substring match over those columns can never find a number typed whole — the
+    string "MCUU2009300" appears in no column. This decomposes the query the same
+    way the model composes the number, which is what lets a search for the number
+    printed on the box find the box.
+
+    Handles every length somebody reasonably types: "MCUU", "MCUU2009",
+    "MCUU200930" and the full "MCUU2009300". Returns None for anything that is not
+    shaped like the start of a container number, leaving the caller's own
+    substring matching to answer.
+    """
+    candidate = _NOISE_RE.sub("", text).upper()
+    match = _CONTAINER_PREFIX_RE.match(candidate)
+    if match is None:
+        return None
+
+    owner_code, category_id, digits = match.groups()
+    filters = Q(owner_code=owner_code, category_id=category_id)
+
+    if len(digits) == 7:
+        # Serial and check digit, whole. An invalid check digit is left to match
+        # nothing rather than corrected: the number as typed is what was asked for.
+        return ContainerNumberQuery(
+            filters=filters & Q(serial_number=digits[:6], check_digit=int(digits[6])),
+            is_whole_number=True,
+        )
+    if digits:
+        return ContainerNumberQuery(filters=filters & Q(serial_number__startswith=digits), is_whole_number=False)
+    return ContainerNumberQuery(filters=filters, is_whole_number=False)
 
 
 def container_from_string(container_id_string: str):

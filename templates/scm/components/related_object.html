@@ -3,10 +3,11 @@
 {% comment %}
   One object related to the one being viewed — a row in a Related panel.
 
-  Usage:
-    {% include "scm/components/related_object.html" with
-       icon="fa-ship" title=shipment.shipment_number subtitle=route
-       meta=status url=shipment_url %}
+  Usage — on one line. Django's template lexer does not match a newline inside
+  {% templatetag openblock %} … {% templatetag closeblock %}, so a wrapped include
+  is not a tag at all: it renders as its own source text.
+
+    {% templatetag openblock %} include "scm/components/related_object.html" with icon="fa-ship" title=shipment subtitle=shipment.route_label url=shipment_url {% templatetag closeblock %}
 
   Optional: subtitle, meta, url, icon, note.
 

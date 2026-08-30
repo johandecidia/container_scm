@@ -29,7 +29,7 @@ then this view shows what is true and the template says what it cannot show.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from django.utils.translation import gettext_lazy as _
@@ -44,6 +44,14 @@ if TYPE_CHECKING:
 
 # One screen of history. A display cap, not a claim about how much happened.
 _ACTIVITY_LIMIT = 40
+
+# How far apart `created_at` and `updated_at` must be before the row counts as
+# having been edited. `auto_now_add` and `auto_now` are evaluated separately during
+# the same insert, so a container that has never been touched still has an
+# `updated_at` a few microseconds after its `created_at`. Without a threshold every
+# container would report an edit it never had — which is exactly the kind of
+# invented history this module exists to avoid.
+_EDIT_THRESHOLD = timedelta(seconds=1)
 
 
 @dataclass(frozen=True)
@@ -263,9 +271,7 @@ def _record_entries(container: Container) -> list[ActivityEntry]:
             actor=str(container.created_by) if container.created_by_id else "",
         )
     ]
-    # Django sets updated_at on creation too, so an untouched container would
-    # otherwise report an edit it never had.
-    if container.updated_at and container.updated_at > container.created_at:
+    if container.updated_at and container.updated_at - container.created_at > _EDIT_THRESHOLD:
         entries.append(
             ActivityEntry(
                 occurred_at=container.updated_at,

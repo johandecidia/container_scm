@@ -22,12 +22,7 @@
         {% for link in workspace.shipment_containers %}
           {% with shipment=link.shipment %}
             {% url 'shipments:detail' shipment.pk as shipment_url %}
-            {% include "scm/components/related_object.html" with
-               icon="fa-ship"
-               title=shipment
-               subtitle=shipment.route_label
-               meta=shipment.get_status_display
-               url=shipment_url %}
+            {% include "scm/components/related_object.html" with icon="fa-ship" title=shipment subtitle=shipment.route_label meta=shipment.get_status_display url=shipment_url %}
           {% endwith %}
         {% endfor %}
       </div>
@@ -40,12 +35,7 @@
       <div class="divide-y divide-base-200">
         {% for order in workspace.purchase_orders %}
           {% url 'procurement:purchase_order_detail' order.pk as order_url %}
-          {% include "scm/components/related_object.html" with
-             icon="fa-file-invoice"
-             title=order.po_number
-             subtitle=order.supplier_name
-             meta=order.get_status_display
-             url=order_url %}
+          {% include "scm/components/related_object.html" with icon="fa-file-invoice" title=order.po_number subtitle=order.supplier_name meta=order.get_status_display url=order_url %}
         {% endfor %}
       </div>
 
@@ -88,12 +78,7 @@
         {% for line in workspace.supplier_delivery_lines %}
           {% with delivery=line.delivery %}
             {% url 'supplier_deliveries:detail' delivery.pk as delivery_url %}
-            {% include "scm/components/related_object.html" with
-               icon="fa-truck"
-               title=delivery.delivery_reference
-               subtitle=delivery.supplier
-               meta=delivery.get_status_display
-               url=delivery_url %}
+            {% include "scm/components/related_object.html" with icon="fa-truck" title=delivery.delivery_reference subtitle=delivery.supplier meta=delivery.get_status_display url=delivery_url %}
           {% endwith %}
         {% endfor %}
       </div>
@@ -112,13 +97,7 @@
           strings, and would silently produce an empty href otherwise.
         {% endcomment %}
         {% with location_pk=location.pk|stringformat:"s" %}
-          {% include "scm/components/related_object.html" with
-             icon="fa-warehouse"
-             title=location.name
-             subtitle=place
-             meta=location.get_location_type_display
-             url=list_url|add:"?location_id="|add:location_pk
-             note=_("Opens every container recorded at this location.") %}
+          {% include "scm/components/related_object.html" with icon="fa-warehouse" title=location.name subtitle=place meta=location.get_location_type_display url=list_url|add:"?location_id="|add:location_pk note=_("Opens every container recorded at this location.") %}
         {% endwith %}
       {% endwith %}
     </section>
@@ -130,21 +109,13 @@
       <div class="divide-y divide-base-200">
         {% for subscription in workspace.tracking_subscriptions %}
           {% url 'tracking:detail' subscription.pk as subscription_url %}
-          {% include "scm/components/related_object.html" with
-             icon="fa-satellite-dish"
-             title=subscription.provider
-             subtitle=subscription.tracking_reference
-             meta=subscription.get_status_display
-             url=subscription_url %}
+          {% include "scm/components/related_object.html" with icon="fa-satellite-dish" title=subscription.provider subtitle=subscription.tracking_reference meta=subscription.get_status_display url=subscription_url %}
         {% endfor %}
       </div>
     </section>
   {% endif %}
 
   {% if not workspace.shipment_containers and not workspace.purchase_orders and not workspace.supplier_delivery_lines and not container.current_location and not workspace.tracking_subscriptions %}
-    {% include "scm/components/empty_state.html" with
-       icon="fa-circle-nodes"
-       title=_("Nothing linked to this container yet")
-       message=_("Shipments, purchase orders, deliveries and locations appear here once this container is linked to them.") %}
+    {% include "scm/components/empty_state.html" with icon="fa-circle-nodes" title=_("Nothing linked to this container yet") message=_("Shipments, purchase orders, deliveries and locations appear here once this container is linked to them.") %}
   {% endif %}
 </div>
