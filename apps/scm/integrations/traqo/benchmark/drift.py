@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from .eta_target import UNKNOWN
 from .snapshot import SNAPSHOT_SCHEMA
@@ -129,7 +130,9 @@ def _eta_drift(*, provider: str, previous: dict, current: dict, eta_key: str, ta
     previous_target = ((previous.get(target_key) or {}).get("target")) or UNKNOWN
     current_target = ((current.get(target_key) or {}).get("target")) or UNKNOWN
 
-    common = {
+    # dict[str, Any] for the same reason as in eta_target.compare_etas: the values
+    # have several types and this is unpacked into EtaDrift's distinct fields.
+    common: dict[str, Any] = {
         "provider": provider,
         "previous_eta_at": previous.get(eta_key),
         "current_eta_at": current.get(eta_key),

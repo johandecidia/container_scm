@@ -45,6 +45,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 # The vocabulary Phase 2.2 asks for. Deliberately coarse: a finer scheme would imply
 # the providers make finer statements than they do.
@@ -318,7 +319,10 @@ def compare_etas(
     reads as provider disagreement, when the two providers were forecasting different
     milestones all along, is worse than no number: it would be quoted.
     """
-    common = {
+    # dict[str, Any] because the values have four different types and this is
+    # splatted into EtaComparison: inferred, the value type collapses to a union
+    # that matches none of the fields it is being unpacked into.
+    common: dict[str, Any] = {
         "reference_provider": reference_provider,
         "candidate_provider": candidate_provider,
         "reference_target": reference_target,

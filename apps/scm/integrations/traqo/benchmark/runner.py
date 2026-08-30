@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from django.utils import timezone
 
@@ -56,7 +57,7 @@ class ComparisonResult:
 
     container_number: str
     team_slug: str
-    run_at: object
+    run_at: datetime
     reference_provider_code: str
     candidate_provider_code: str
     mode: str
@@ -362,8 +363,9 @@ def _eta_history(team, container) -> list[dict]:
     history = []
     for row in rows:
         provider = ""
-        if row.tracking_event_id and row.tracking_event.provider_id:
-            provider = row.tracking_event.provider.code
+        event = row.tracking_event
+        if event is not None and event.provider_id:
+            provider = event.provider.code
         history.append(
             {
                 "changed_at": row.changed_at.isoformat() if row.changed_at else None,

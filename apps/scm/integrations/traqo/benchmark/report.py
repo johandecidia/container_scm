@@ -440,7 +440,7 @@ def render_json(result: ComparisonResult) -> dict:
     provider payloads — those already live in TrackingRawPayload, and a benchmark file is
     not a place for them.
     """
-    by_verdict = {MATCHED: [], REFERENCE_ONLY: [], CANDIDATE_ONLY: [], AMBIGUOUS: []}
+    by_verdict: dict[str, list[dict]] = {MATCHED: [], REFERENCE_ONLY: [], CANDIDATE_ONLY: [], AMBIGUOUS: []}
     for comparison in result.comparisons:
         by_verdict[comparison.verdict].append(_comparison_as_dict(comparison))
 

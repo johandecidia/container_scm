@@ -115,8 +115,10 @@ def _provider_events(events: list[TrackingEvent]) -> dict:
     """Split one provider's events into what it observed and what it forecasts."""
     actual = [event for event in events if event.event_time_type == TrackingEvent.EventTimeType.ACTUAL]
     forecast = [event for event in events if event.event_time_type != TrackingEvent.EventTimeType.ACTUAL]
-    dated_actual = [event for event in actual if event.event_datetime is not None]
-    latest_actual = max(dated_actual, key=lambda event: event.event_datetime) if dated_actual else None
+    # Paired with its timestamp so the sort key cannot be None — the filter above
+    # already guarantees that, but only the pairing says so.
+    dated_actual = [(event.event_datetime, event) for event in actual if event.event_datetime is not None]
+    latest_actual = max(dated_actual, key=lambda pair: pair[0])[1] if dated_actual else None
 
     return {
         "total": len(events),

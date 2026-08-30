@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 
 from apps.scm.tracking.models import TrackingEvent
 
@@ -163,7 +164,8 @@ def summarise_matches(
             summary.matched += 1
             if comparison.is_tight:
                 summary.matched_within_tolerance_minutes += 1
-            if comparison.reference_event.event_type != TrackingEvent.EventType.UNKNOWN:
+            reference_event = comparison.reference_event
+            if reference_event is not None and reference_event.event_type != TrackingEvent.EventType.UNKNOWN:
                 summary.matched_comparable_reference_events += 1
             if any(
                 difference.field == "location_name" and difference.reference and difference.candidate
@@ -285,11 +287,11 @@ class ProviderEta:
     """One provider's current arrival forecast for this container, if it has one."""
 
     provider_code: str
-    eta_at: object | None = None
+    eta_at: datetime | None = None
     event_time_type: str = ""
     location_name: str = ""
     location_unlocode: str = ""
-    received_at: object | None = None
+    received_at: datetime | None = None
     source_event_code: str = ""
 
     @property
@@ -319,9 +321,14 @@ class EtaMetrics:
 
     @property
     def difference_hours(self) -> float | None:
-        if not (self.reference.has_eta and self.candidate.has_eta):
+        # Checked on the two timestamps rather than through `has_eta`: the property
+        # asks the same question, but only a direct check establishes for a reader —
+        # or a type checker — that the subtraction below has two operands.
+        reference_eta = self.reference.eta_at
+        candidate_eta = self.candidate.eta_at
+        if reference_eta is None or candidate_eta is None:
             return None
-        return round((self.candidate.eta_at - self.reference.eta_at).total_seconds() / 3600.0, 2)
+        return round((candidate_eta - reference_eta).total_seconds() / 3600.0, 2)
 
     def as_dict(self) -> dict:
         return {
@@ -371,8 +378,8 @@ class FreshnessMetrics:
     candidate_median_reporting_lag_hours: float | None = None
     median_observation_lag_hours: float | None = None
     first_observation: bool = False
-    reference_latest_actual_event_at: object | None = None
-    candidate_latest_actual_event_at: object | None = None
+    reference_latest_actual_event_at: datetime | None = None
+    candidate_latest_actual_event_at: datetime | None = None
     candidate_payload_last_updated_at: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -415,7 +422,13 @@ def _hours(later, earlier) -> float | None:
     return (later - earlier).total_seconds() / 3600.0
 
 
-def _median(values: list[float]) -> float | None:
+def _median(values: list[float | None]) -> float | None:
+    """The median of the values that exist. None where an event lacked a timestamp.
+
+    The list is allowed to carry None because ``_hours`` returns None for an event
+    with no received_at or no event_datetime, and dropping those rows is the point:
+    a missing timestamp is not a lag of zero.
+    """
     usable = [value for value in values if value is not None]
     return round(statistics.median(usable), 2) if usable else None
 
@@ -449,15 +462,19 @@ def freshness_metrics(
         candidate_payload_last_updated_at=candidate_payload_last_updated_at,
     )
 
-    reference_lags: list[float] = []
-    candidate_lags: list[float] = []
-    observation_lags: list[float] = []
+    reference_lags: list[float | None] = []
+    candidate_lags: list[float | None] = []
+    observation_lags: list[float | None] = []
 
     for comparison in comparisons:
         if comparison.verdict != MATCHED:
             continue
         reference = comparison.reference_event
         candidate = comparison.candidate_event
+        # A MATCHED verdict is a pairing, so both sides are present. Skipping rather
+        # than raising keeps a long benchmark run alive if that ever stops holding.
+        if reference is None or candidate is None:
+            continue
         if reference.event_time_type != _TimeType.ACTUAL:
             continue
         metrics.matched_actual_events += 1

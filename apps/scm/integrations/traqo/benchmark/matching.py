@@ -125,7 +125,10 @@ class EventComparison:
     @property
     def event(self) -> TrackingEvent:
         """Whichever side exists — every comparison has at least one."""
-        return self.reference_event or self.candidate_event
+        event = self.reference_event or self.candidate_event
+        if event is None:
+            raise ValueError("An EventComparison must carry a reference event, a candidate event, or both.")
+        return event
 
     @property
     def delta_minutes(self) -> float | None:
