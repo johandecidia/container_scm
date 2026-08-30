@@ -13,9 +13,10 @@ top of the same read layer. Three things are worth a test rather than a comment:
   board would look fine and break panning, so the partial is asserted to contain the
   source URL and no map element.
 
-* **The KPI cards are filters.** Delayed and Exceptions are the two numbers an
-  operator acts on, and clicking them has to reach the same filtered board a URL
-  would.
+* **Every KPI card is an action.** Arriving, Delayed and Exceptions are the numbers
+  an operator acts on, and clicking them has to reach the same filtered board a URL
+  would. The two totals — active shipments and containers — lead out to the lists
+  they count, by route name rather than by a written-out path.
 """
 
 from __future__ import annotations
@@ -148,12 +149,36 @@ class ControlTowerPageTest(TestCase):
 
     # -- KPI strip ---------------------------------------------------------
 
+    def _kpi_card(self, url: str) -> str:
+        """The opening tag metric_card renders for a linked card.
+
+        The anchor is matched along with the href on purpose: both list URLs are
+        also in the sidebar, so a bare href assertion would pass whether or not
+        the card itself is a link.
+        """
+        return f'<a href="{url}" class="stat bg-base-200'
+
     def test_the_kpi_cards_apply_the_filter_they_count(self):
         response = self.get()
         overview_url = reverse("visibility:overview")
         for query in ("?eta=7", "?delayed=1", "?exceptions=1"):
             with self.subTest(query=query):
-                self.assertContains(response, f'href="{overview_url}{query}"')
+                self.assertContains(response, self._kpi_card(f"{overview_url}{query}"))
+
+    def test_the_active_shipments_kpi_leads_to_the_shipment_list(self):
+        """A total is not a filter — it links to the list it counts."""
+        self.assertContains(self.get(), self._kpi_card(reverse("shipments:list")))
+
+    def test_the_containers_kpi_leads_to_the_container_list(self):
+        self.assertContains(self.get(), self._kpi_card(reverse("containers:list")))
+
+    def test_no_kpi_card_is_a_dead_total(self):
+        """metric_card falls back to a bare `div.stat` without an href. None should.
+
+        Asserting the absence of the unlinked branch is what keeps a card from
+        quietly losing its href: a missing `{% url %}` would render one of these.
+        """
+        self.assertNotContains(self.get(), '<div class="stat bg-base-200')
 
     def test_the_exceptions_kpi_link_actually_filters(self):
         response = self.get(exceptions="1")

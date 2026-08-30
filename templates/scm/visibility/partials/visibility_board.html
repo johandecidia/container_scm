@@ -18,14 +18,19 @@
 {% endcomment %}
 
 {% url 'visibility:overview' as overview_url %}
+{% url 'shipments:list' as shipments_url %}
+{% url 'containers:list' as containers_url %}
 
 <div id="visibility-board" class="contents" data-scm-map-source="{{ map_data_url }}">
 
-  {# 1. Status. Delayed, Exceptions and Arriving apply their own filter. #}
+  {% comment %}
+    1. Status. Every card is an action: Arriving, Delayed and Exceptions apply their
+    own filter to this board, while the two totals lead out to the lists they count.
+  {% endcomment %}
   <div class="order-1 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-1 lg:grid-cols-5">
-    {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" %}
+    {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" href=shipments_url %}
     {# Short label on purpose: a longer one pushes the card's icon past its edge at phone width. #}
-    {% include "scm/components/metric_card.html" with label=_("Containers") value=overview.tracked_containers icon="fa-box" %}
+    {% include "scm/components/metric_card.html" with label=_("Containers") value=overview.tracked_containers icon="fa-box" href=containers_url %}
     {% include "scm/components/metric_card.html" with label=_("Arriving ≤7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" href=overview_url|add:"?eta=7" %}
     {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed|length icon="fa-clock" color="warning" href=overview_url|add:"?delayed=1" %}
     {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exceptions|length icon="fa-triangle-exclamation" color="error" href=overview_url|add:"?exceptions=1" %}
@@ -140,7 +145,6 @@
     {% elif filters.is_active %}
       {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("Nothing matches these filters") message=_("Clear a filter to widen the search.") %}
     {% else %}
-      {% url 'containers:list' as containers_url %}
       {% include "scm/components/empty_state.html" with icon="fa-ship" title=_("Nothing is being tracked yet") message=_("Book a shipment or start tracking a container and it will appear here.") action_url=containers_url action_label=_("Go to containers") %}
     {% endif %}
   </section>
