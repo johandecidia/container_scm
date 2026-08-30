@@ -124,10 +124,13 @@ def read_vizion_eta_observation(payload: dict, *, observed_at: datetime) -> Prov
     # ETA. Milestones with an unreadable timestamp cannot be ordered and are dropped here
     # rather than sorted to an arbitrary end.
     dated = [(milestone, _parse_timestamp(milestone.get("timestamp"))) for milestone in chosen]
-    dated = [(milestone, when) for milestone, when in dated if when is not None]
-    if not dated:
+    # A second name rather than reassigning `dated`: the filtered list is the one that
+    # is known to hold a timestamp on every row, and rebinding would leave that fact
+    # invisible to both a reader and a type checker.
+    usable = [(milestone, when) for milestone, when in dated if when is not None]
+    if not usable:
         return None
-    milestone, eta_at = max(dated, key=lambda pair: pair[1])
+    milestone, eta_at = max(usable, key=lambda pair: pair[1])
 
     location = _dict(milestone, "location")
     if target == ETA_TARGET_PROVIDER_DEFINED:

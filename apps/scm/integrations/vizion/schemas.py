@@ -198,8 +198,14 @@ def read_reference(payload: dict, *, container_number: str = "") -> VizionRefere
     if not isinstance(payload, dict):
         return VizionReference(container_number=(container_number or "").strip().upper())
 
-    reference = payload.get("reference") if isinstance(payload.get("reference"), dict) else payload
-    carrier = reference.get("carrier") if isinstance(reference.get("carrier"), dict) else {}
+    # Bound to a local before the isinstance check: narrowing a `.get()` result in
+    # place tells the type checker nothing about what was assigned, because it is a
+    # second call as far as the checker knows.
+    nested = payload.get("reference")
+    reference: dict = nested if isinstance(nested, dict) else payload
+
+    nested_carrier = reference.get("carrier")
+    carrier: dict = nested_carrier if isinstance(nested_carrier, dict) else {}
 
     status = _text(reference, "last_update_status")
     active = reference.get("active")

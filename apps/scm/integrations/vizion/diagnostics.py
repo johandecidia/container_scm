@@ -191,8 +191,10 @@ def build_diagnostic(
     milestones = [item for item in (payload.get("milestones") or []) if isinstance(item, dict)]
 
     actual = [event for event in events if event.event_classifier == DcsaEventClassifier.ACTUAL]
-    dated_actual = [event for event in actual if event.event_datetime is not None]
-    latest = max(dated_actual, key=lambda event: event.event_datetime) if dated_actual else None
+    # Paired with its timestamp so the sort key cannot be None — the filter above
+    # already guarantees that, but only the pairing says so.
+    dated_actual = [(event.event_datetime, event) for event in actual if event.event_datetime is not None]
+    latest = max(dated_actual, key=lambda pair: pair[0])[1] if dated_actual else None
 
     diagnostic = VizionDiagnostic(
         container_number=container_number,
