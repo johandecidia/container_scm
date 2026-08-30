@@ -22,7 +22,7 @@ from django.utils.translation import gettext_lazy as _
 from apps.scm.containers.workspace import ContainerWorkspace
 from apps.scm.shipments.models import Shipment
 from apps.scm.tracking.delay_detection import DelayReport
-from apps.scm.tracking.exception_detection import ExceptionReport
+from apps.scm.tracking.exception_detection import ExceptionIssue, ExceptionReport
 
 
 class ObjectKind(TextChoices):
@@ -345,6 +345,15 @@ class VisibilityObject:
     @property
     def exception_details(self) -> list[str]:
         return self.exceptions.details if self.exceptions else []
+
+    @property
+    def exception_issues(self) -> list[ExceptionIssue]:
+        """Each exception paired with the engine's reason for raising it.
+
+        What a work queue row needs: the flat type and detail lists de-duplicate
+        differently across a shipment's containers, so they cannot be zipped.
+        """
+        return self.exceptions.issues if self.exceptions else []
 
     @property
     def exception_count(self) -> int:
