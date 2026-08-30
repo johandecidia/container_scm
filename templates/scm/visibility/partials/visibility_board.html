@@ -24,15 +24,18 @@
   {# 1. Status. Delayed, Exceptions and Arriving apply their own filter. #}
   <div class="order-1 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-1 lg:grid-cols-5">
     {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" %}
-    {% include "scm/components/metric_card.html" with label=_("Containers tracked") value=overview.tracked_containers icon="fa-box" %}
+    {# Short label on purpose: a longer one pushes the card's icon past its edge at phone width. #}
+    {% include "scm/components/metric_card.html" with label=_("Containers") value=overview.tracked_containers icon="fa-box" %}
     {% include "scm/components/metric_card.html" with label=_("Arriving ≤7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" href=overview_url|add:"?eta=7" %}
     {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed|length icon="fa-clock" color="warning" href=overview_url|add:"?delayed=1" %}
     {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exceptions|length icon="fa-triangle-exclamation" color="error" href=overview_url|add:"?exceptions=1" %}
   </div>
 
-  {# 2. Filters. Local to this board: they narrow what is shown, they do not search
-       the platform. `hx-push-url` keeps the filter state in the address bar so a
-       selection can be linked and bookmarked. #}
+  {% comment %}
+    2. Filters. Local to this board: they narrow what is shown, they do not search
+    the platform. `hx-push-url` keeps the filter state in the address bar so a
+    selection can be linked and bookmarked.
+  {% endcomment %}
   <div class="order-2 lg:col-span-3 lg:row-start-2">
     <form
       class="scm-panel flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5"
@@ -91,8 +94,10 @@
     </form>
   </div>
 
-  {# 3. What needs attention. The exception engine's findings first, then the delay
-       engine's — see VisibilityOverview.needs_attention. #}
+  {% comment %}
+    3. What needs attention. The exception engine's findings first, then the delay
+    engine's — see VisibilityOverview.needs_attention.
+  {% endcomment %}
   <section class="order-3 scm-panel flex flex-col lg:col-start-3 lg:row-start-3">
     {% include "scm/components/section_header.html" with title=_("Needs attention") count=overview.needs_attention|length %}
     {% if overview.needs_attention %}

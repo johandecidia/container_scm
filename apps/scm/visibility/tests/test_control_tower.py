@@ -214,6 +214,21 @@ class ControlTowerPageTest(TestCase):
     def test_the_local_search_is_a_filter_and_says_so(self):
         self.assertContains(self.get(), "Filter by container, shipment, vessel")
 
+    # -- rendering ---------------------------------------------------------
+
+    def test_no_template_syntax_reaches_the_browser(self):
+        """Django's ``{# #}`` is single-line only.
+
+        A multi-line one is not a comment: the first line disappears and the rest
+        is printed on the page. It happened while this layout was being built, it
+        renders as plausible-looking prose, and no assertion about content would
+        have noticed.
+        """
+        html = self.get().content.decode()
+        for token in ("{#", "#}", "{%", "%}"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, html)
+
 
 @override_settings(STORAGES=TEST_STORAGES)
 class ControlTowerIsolationTest(TestCase):
