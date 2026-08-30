@@ -3,21 +3,38 @@
 {% load django_vite %}
 
 {% comment %}
-  Supply Chain Visibility.
+  The Control Tower — the visibility overview under the name the user thinks in.
+  The app, the URL and the read models stay `visibility`: this is a change of
+  presentation, not a rename of a layer that works.
 
-  The map sits outside #visibility-board on purpose: filters swap the board and
-  leave the map instance alone, so panning and zoom survive a filter change and
-  the browser does not rebuild a WebGL context on every keystroke.
+  Why this page is one grid rather than a stack of sections:
+
+  The map has to stay outside #visibility-board. A filter change swaps the board
+  and points the existing Mapbox source at a new GeoJSON URL, so the WebGL context
+  is never recreated and the view the user panned to survives. But the layout needs
+  the KPI strip above the map and the arrivals below it, which the map's position in
+  the document cannot give on its own.
+
+  So the page owns one grid, #visibility-board is `display: contents`, and the
+  board's blocks are grid items beside the map card. Desktop placement is explicit —
+  every block names its row — and on one column the blocks fall back to `order-*`,
+  which follows the Control Tower's priority: status, what needs attention, where
+  things are, what is arriving, everything else.
 {% endcomment %}
 
 {% block app %}
-  {% include "scm/components/page_header.html" with title=_("Supply Chain Visibility") subtitle=_("Where every tracked shipment and container is, and how fresh that information is.") %}
+  {% include "scm/components/page_header.html" with title=_("Control Tower") subtitle=_("Supply chain status and what needs your attention.") %}
 
-  {% include "scm/visibility/components/map_card.html" with map_title=_("Supply Chain Map") map_height="h-[30rem]" map_panel_target="#visibility-object-panel" map_note=_("One point per place a carrier last confirmed. Click a point for details.") %}
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
-  <div id="visibility-object-panel" class="mt-6 empty:mt-0"></div>
+    {# Where things are. Outside the swap, and two thirds of the operational row. #}
+    <div class="order-4 lg:col-start-1 lg:col-span-2 lg:row-start-3">
+      {% include "scm/visibility/components/map_card.html" with map_mode="overview" map_card_class="scm-panel h-full" map_title=_("Where things are") map_height="h-[26rem]" map_panel_target="#visibility-object-panel" map_note=_("One point per place a carrier last confirmed. Click a point for details.") %}
+    </div>
 
-  <div class="mt-6">
+    {# Filled by the map module when a point is clicked; collapsed until then. #}
+    <div id="visibility-object-panel" class="order-5 empty:hidden lg:col-span-3 lg:row-start-4"></div>
+
     {% include "scm/visibility/partials/visibility_board.html" %}
   </div>
 {% endblock %}

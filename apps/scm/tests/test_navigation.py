@@ -80,9 +80,16 @@ class PrimaryNavigationTest(NavigationFixture):
         self.assertIn(reverse("integrations:list"), html)
 
     def test_the_navigation_renders_on_mobile_too(self):
-        """The same include feeds the drawer, so a broken tag would take both down."""
+        """One include feeds both the desktop sidebar and the mobile drawer.
+
+        Counted on a group label rather than a URL: the Control Tower's own KPI
+        cards link to the same filtered URLs the menu does, so a URL count would
+        measure the page as well as the shell.
+        """
         html = self.nav_html()
-        self.assertEqual(html.count(reverse("visibility:overview") + "?exceptions=1"), 2)
+        for group in ("Control", "Supply Chain", "Network", "Insights", "Settings"):
+            with self.subTest(group=group):
+                self.assertEqual(html.count(f"<span>{group}</span>"), 2)
 
 
 class HomeRoutingTest(NavigationFixture):
