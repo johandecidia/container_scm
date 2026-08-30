@@ -285,15 +285,20 @@ def persist_normalised_events(
 ) -> dict:
     """Store a batch of normalised events.
 
-    Returns {"created": int, "updated": int}. One malformed event does not stop the
-    rest of the batch — it is logged and counted as failed.
+    Returns {"created": int, "updated": int, "failed": int, "fingerprints": list[str]}.
+    One malformed event does not stop the rest of the batch — it is logged and counted
+    as failed.
+
+    ``fingerprints`` are the events this batch actually wrote. A re-parse needs them to
+    tell an event it replaced from one it merely left alone; nothing else reads them.
     """
     created = 0
     updated = 0
     failed = 0
+    fingerprints: list[str] = []
     for normalised in events:
         try:
-            _event, was_created = persist_normalised_event(
+            event, was_created = persist_normalised_event(
                 team=team,
                 provider=provider,
                 normalised=normalised,
@@ -311,8 +316,9 @@ def persist_normalised_events(
                 exc_info=True,
             )
             continue
+        fingerprints.append(event.event_fingerprint)
         if was_created:
             created += 1
         else:
             updated += 1
-    return {"created": created, "updated": updated, "failed": failed}
+    return {"created": created, "updated": updated, "failed": failed, "fingerprints": fingerprints}

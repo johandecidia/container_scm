@@ -76,7 +76,7 @@ class ContainerFormInvalidTest(TestCase):
         self.assertIn("container_id_input", form.errors)
 
     def test_wrong_category_gives_error(self):
-        # A is not a valid category identifier (only U, J, Z)
-        form = ContainerForm(_base_data(container_id=f"CSQA{VALID_SERIAL}{VALID_CHECK}"))
+        # X is not a valid category identifier (only U, A, J, Z)
+        form = ContainerForm(_base_data(container_id=f"CSQX{VALID_SERIAL}{VALID_CHECK}"))
         self.assertFalse(form.is_valid())
         self.assertIn("container_id_input", form.errors)

@@ -109,7 +109,9 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 supports_schedules=False,
                 supports_booking=False,
                 requires_customer_approval=True,
-                requires_account_number=True,
+                # The public Track & Trace events endpoint answers on the keyId API
+                # key alone — see carriers/cma_cgm/client.py.
+                requires_account_number=False,
             ),
             owner_prefixes=("CMAU", "CGMU", "ECMU"),
         ),

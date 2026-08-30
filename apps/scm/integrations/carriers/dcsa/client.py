@@ -2,8 +2,9 @@
 
 Carriers that follow the DCSA standard differ in host, path, parameter names and
 authentication, but not in the shape of the conversation: ask by one reference,
-receive a list of events. That shared shape lives here, so adding a DCSA carrier is
-a subclass with its capabilities and name rather than another copy of the transport.
+receive a list of events, optionally page through the rest with a cursor. That shared
+shape lives here, so adding a DCSA carrier is a subclass with its capabilities and
+name rather than another copy of the transport.
 
 Nothing endpoint-specific is hardcoded. Every such value comes from the team's
 ``Integration.config``, and a missing one raises CarrierConfigurationError, which
@@ -47,6 +48,35 @@ SUPPORTED_REFERENCE_KINDS = frozenset(
     }
 )
 
+# Ceiling on how many pages one tracking call will follow. A cursor loop that never
+# terminates — because a carrier keeps advertising a next page — must stop somewhere
+# rather than hold a worker and its sync lock indefinitely.
+DEFAULT_MAX_PAGES = 20
+
+
+@dataclass(frozen=True)
+class DcsaPaginationConfig:
+    """How a carrier advertises and accepts its next page, from Integration.config.
+
+    DCSA Track & Trace carriers page through a cursor: the response carries the next
+    one in a header, and it is sent back as a query parameter. The names differ per
+    carrier, so they are configuration rather than constants.
+
+    Pagination stays off unless both ``cursor_param`` and ``next_page_header`` are
+    configured — following a cursor a carrier never advertised would be guesswork,
+    and a carrier that answers in one page must keep making exactly one request.
+    """
+
+    cursor_param: str = ""
+    next_page_header: str = ""
+    limit_param: str = ""
+    page_size: int = 0
+    max_pages: int = DEFAULT_MAX_PAGES
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.cursor_param and self.next_page_header)
+
 
 @dataclass(frozen=True)
 class DcsaClientConfig:
@@ -66,10 +96,50 @@ class DcsaClientConfig:
     token_url: str = ""
     scope: str = ""
     extra_headers: dict | None = None
+    pagination: DcsaPaginationConfig = DcsaPaginationConfig()
 
     @property
     def tracking_url(self) -> str:
         return f"{self.base_url.rstrip('/')}/{self.tracking_path.lstrip('/')}"
+
+
+def resolve_pagination_config(config: dict, *, provider_code: str) -> DcsaPaginationConfig:
+    """Build the pagination settings from ``config["pagination"]``.
+
+    Absent means "this carrier answers in one page". Half-configured is refused: a
+    cursor parameter with no header to read it from (or the reverse) would silently
+    fetch only the first page and look like a complete tracking history.
+    """
+    raw = config.get("pagination") or {}
+    if not isinstance(raw, dict):
+        raise CarrierConfigurationError(
+            "pagination must be a mapping of cursor_param, next_page_header, limit_param, page_size and max_pages.",
+            provider_code=provider_code,
+        )
+
+    cursor_param = str(raw.get("cursor_param") or "").strip()
+    next_page_header = str(raw.get("next_page_header") or "").strip()
+    if bool(cursor_param) != bool(next_page_header):
+        missing = "next_page_header" if cursor_param else "cursor_param"
+        raise CarrierConfigurationError(
+            f"pagination is missing required configuration: {missing}. Cursor pagination needs "
+            "both the query parameter to send and the response header to read it from.",
+            provider_code=provider_code,
+        )
+
+    def _int(key: str, default: int) -> int:
+        try:
+            return int(raw.get(key) or default)
+        except TypeError, ValueError:
+            return default
+
+    return DcsaPaginationConfig(
+        cursor_param=cursor_param,
+        next_page_header=next_page_header,
+        limit_param=str(raw.get("limit_param") or "").strip(),
+        page_size=max(_int("page_size", 0), 0),
+        max_pages=max(_int("max_pages", DEFAULT_MAX_PAGES), 1),
+    )
 
 
 def resolve_dcsa_config(
@@ -140,6 +210,7 @@ def resolve_dcsa_config(
         token_url=str(config.get("token_url") or "").strip(),
         scope=str(config.get("scope") or "").strip(),
         extra_headers=config.get("extra_headers") or {},
+        pagination=resolve_pagination_config(config, provider_code=provider_code),
     )
 
 
@@ -265,7 +336,19 @@ class DcsaCarrierClient(BaseCarrierClient):
                 provider_code=self.provider_code,
             )
 
-        payload = self.http.get(config.tracking_url, params={param: reference.value})
+        return self._fetch_pages(config.tracking_url, {param: reference.value})
+
+    # ------------------------------------------------------------------
+    # Transport
+    # ------------------------------------------------------------------
+
+    def _as_event_payload(self, payload) -> dict:
+        """Return the response as a dict the parser can read.
+
+        DCSA endpoints answer with either an event array or an object wrapping one;
+        anything else cannot be interpreted at all and is rejected rather than
+        quietly becoming an empty tracking history.
+        """
         if isinstance(payload, dict):
             return payload
         if isinstance(payload, list):
@@ -274,6 +357,77 @@ class DcsaCarrierClient(BaseCarrierClient):
             f"{self.carrier_name or self.provider_code} response was not a JSON object or array.",
             provider_code=self.provider_code,
         )
+
+    @staticmethod
+    def _page_events(payload: dict) -> list:
+        """Return one page's event list, under either key the DCSA parser accepts.
+
+        Reading only ``events`` would merge a ``trackingData`` response into an empty
+        list — a silent loss dressed up as a carrier with nothing to report.
+        """
+        for key in ("events", "trackingData"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        return []
+
+    def _fetch_pages(self, url: str, params: dict) -> dict:
+        """GET ``url``, following the carrier's cursor pagination when it is configured.
+
+        Returns a single payload in the shape the parser expects: the first page's
+        object with every page's events appended, in the order the carrier listed
+        them. A carrier without pagination configured makes exactly one request.
+        """
+        pagination = self.dcsa_config.pagination
+        base_params = dict(params)
+        if pagination.limit_param and pagination.page_size:
+            base_params[pagination.limit_param] = pagination.page_size
+
+        if not pagination.enabled:
+            return self._as_event_payload(self.http.get(url, params=base_params))
+
+        first_page: dict | None = None
+        events: list = []
+        cursor = ""
+        seen_cursors: set[str] = set()
+
+        for _page in range(pagination.max_pages):
+            page_params = dict(base_params)
+            if cursor:
+                page_params[pagination.cursor_param] = cursor
+
+            response = self.http.get_with_headers(url, params=page_params)
+            payload = self._as_event_payload(response.payload)
+            if first_page is None:
+                first_page = payload
+            events.extend(self._page_events(payload))
+
+            cursor = response.header(pagination.next_page_header)
+            if not cursor:
+                break
+            if cursor in seen_cursors:
+                # A repeated cursor would page over the same events forever.
+                logger.warning(
+                    "%s repeated pagination cursor; stopping after %s page(s).",
+                    self.provider_code,
+                    len(seen_cursors) + 1,
+                )
+                break
+            seen_cursors.add(cursor)
+        else:
+            logger.warning(
+                "%s tracking response has more pages than the configured max_pages=%s; returning the first %s page(s).",
+                self.provider_code,
+                pagination.max_pages,
+                pagination.max_pages,
+            )
+
+        merged = dict(first_page or {})
+        # One list, under one key: leaving the first page's own key behind would give
+        # the parser two competing event lists to choose between.
+        merged.pop("trackingData", None)
+        merged["events"] = events
+        return merged
 
     def discover_containers(
         self,

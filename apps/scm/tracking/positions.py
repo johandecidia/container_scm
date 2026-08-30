@@ -128,6 +128,17 @@ HAS_A_PLACE = (
 )
 
 
+def event_has_a_place(event: TrackingEvent) -> bool:
+    """True when the event says where it happened — the in-Python form of HAS_A_PLACE.
+
+    Stated next to the Q object so the two cannot drift: a caller that has already
+    loaded events (the container journey) must apply the same rule as one that is
+    still narrowing a queryset, or the same container would be reported at two
+    different places depending on which path asked.
+    """
+    return bool(event.location_unlocode or event.location_name or event.location_latitude is not None)
+
+
 def get_latest_container_position(team, container) -> ContainerPosition | None:
     """Return the container's last reported position, or None if never reported.
 

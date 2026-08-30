@@ -5,8 +5,13 @@
   Optional: color (primary, secondary, success, warning, error, info), icon, href, trend, trend_label
 {% endcomment %}
 
+{% comment %}
+  No `block` on the link: DaisyUI's `.stat` lays its parts out with a grid, and a
+  display utility would override that — leaving a linked card sitting a line lower
+  than the plain cards beside it.
+{% endcomment %}
 {% if href %}
-  <a href="{{ href }}" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors block">
+  <a href="{{ href }}" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
 {% else %}
   <div class="stat bg-base-200 rounded-box p-4">
 {% endif %}

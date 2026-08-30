@@ -2,17 +2,30 @@
 {% load i18n %}
 
 {% block app %}
-  <div class="mb-6">
-    <a class="link link-neutral text-sm" href="{% url 'procurement:purchase_order_list' %}">
-      &larr; {% translate "Purchase Orders" %}
-    </a>
-    <h1 class="text-2xl font-bold mt-2">{{ purchase_order.po_number }}</h1>
-    <p class="text-sm text-base-content/60 mt-1">{{ purchase_order.supplier_name }}</p>
-    {% if purchase_order.is_business_central %}
-      <span class="badge badge-info badge-sm mt-2" title="{% translate 'This purchase order is read-only in SCM.' %}">
-        {% translate "Managed by Business Central" %}
-      </span>
-    {% endif %}
+  <div class="mb-6 flex items-start justify-between gap-4">
+    <div>
+      <a class="link link-neutral text-sm" href="{% url 'procurement:purchase_order_list' %}">
+        &larr; {% translate "Purchase Orders" %}
+      </a>
+      <h1 class="text-2xl font-bold mt-2">{{ purchase_order.po_number }}</h1>
+      <p class="text-sm text-base-content/60 mt-1">{{ purchase_order.supplier_name }}</p>
+      {% if purchase_order.is_business_central %}
+        <span class="badge badge-info badge-sm mt-2" title="{% translate 'This purchase order is read-only in SCM.' %}">
+          {% translate "Managed by Business Central" %}
+        </span>
+      {% endif %}
+    </div>
+
+    {# Opens the shared container intake modal, which books what it creates onto this PO. #}
+    <button
+      class="btn btn-primary btn-sm shrink-0"
+      hx-get="{% url 'containers:create' %}?purchase_order={{ purchase_order.pk }}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      <i class="fa fa-plus"></i>
+      {% translate "Add containers" %}
+    </button>
   </div>
 
   {# Header info + fulfillment summary #}
@@ -111,6 +124,26 @@
     {% endif %}
   </section>
 
+  {# Containers, reached through this PO's supplier delivery lines #}
+  <section class="app-card mb-6">
+    <h2 class="font-semibold mb-3">{% translate "Containers" %}</h2>
+    {% if linked_containers %}
+      <ul class="flex flex-wrap gap-2">
+        {% for container in linked_containers %}
+          <li>
+            <a class="badge badge-outline badge-lg font-mono" href="{% url 'containers:detail' container_id=container.pk %}">
+              {{ container.container_id }}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-base-content/60 text-sm">
+        {% translate "No containers linked yet. Use “Add containers” to book container numbers onto this order." %}
+      </p>
+    {% endif %}
+  </section>
+
   {# Timeline #}
   <section class="app-card">
     <h2 class="font-semibold mb-3">{% translate "Timeline" %}</h2>
@@ -138,4 +171,6 @@
       <p class="text-base-content/60 text-sm">{% translate "No timeline events yet." %}</p>
     {% endif %}
   </section>
+
+  <div id="modal-container"></div>
 {% endblock %}

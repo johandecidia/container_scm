@@ -3,8 +3,12 @@
 Business logic belongs in services.py; queries belong in selectors.py.
 """
 
+from django.contrib import messages
 from django.core.paginator import Paginator
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.translation import gettext_lazy as _
+from django.views.decorators.http import require_http_methods
 
 from apps.scm.decorators import scm_login_required
 
@@ -14,7 +18,7 @@ from .selectors import (
     get_purchase_order_lines,
     get_team_purchase_orders,
 )
-from .services import calculate_purchase_order_fulfillment, create_purchase_order
+from .services import calculate_purchase_order_fulfillment, create_purchase_order, delete_purchase_order
 
 PURCHASE_ORDERS_PER_PAGE = 50
 
@@ -45,12 +49,28 @@ def purchase_order_create(request):
 
 
 @scm_login_required
+@require_http_methods(["POST", "DELETE"])
+def purchase_order_delete(request, purchase_order_id: int):
+    """Permanently delete a purchase order and its related records."""
+    team = request.default_team
+    purchase_order = get_object_or_404(get_team_purchase_orders(team=team), pk=purchase_order_id)
+    delete_purchase_order(purchase_order=purchase_order)
+    if request.htmx:
+        # The row targets itself with hx-swap="outerHTML", so an empty body removes it.
+        return HttpResponse(status=200)
+    messages.success(request, _("Purchase order deleted."))
+    return redirect("procurement:purchase_order_list")
+
+
+@scm_login_required
 def purchase_order_detail(request, purchase_order_id: int):
     team = request.default_team
     purchase_order = get_object_or_404(
         get_team_purchase_orders(team=team),
         pk=purchase_order_id,
     )
+    from apps.scm.supplier_deliveries.selectors import get_containers_for_purchase_order
+
     lines = list(get_purchase_order_lines(purchase_order=purchase_order))
     events = get_purchase_order_events(purchase_order=purchase_order)
     fulfillment = calculate_purchase_order_fulfillment(purchase_order=purchase_order)
@@ -62,6 +82,7 @@ def purchase_order_detail(request, purchase_order_id: int):
         "events": events,
         "fulfillment": fulfillment,
         "total_order_amount": total_order_amount,
+        "linked_containers": get_containers_for_purchase_order(team=team, purchase_order=purchase_order),
         "team_slug": team.slug,
     }
     return render(request, "scm/procurement/pages/purchase_order_detail.html", context)

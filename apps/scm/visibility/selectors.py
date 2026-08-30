@@ -111,6 +111,22 @@ class VisibilityOverview:
         return [obj for obj in self.objects if obj.has_exception]
 
     @property
+    def needs_attention(self) -> list[VisibilityObject]:
+        """The Control Tower's attention queue: exceptions first, then delays.
+
+        A composition of the two lists above rather than a new idea of what is
+        wrong — the exception engine and the delay engine remain the only things
+        that decide that. Order is severity: an exception is a thing that has
+        happened, a delay is a date that moved.
+
+        An object that is both appears once, under its exception, because a
+        customs hold that has pushed the ETA is one problem to work, not two.
+        """
+        exceptions = self.exceptions
+        already_listed = {obj.key for obj in exceptions}
+        return exceptions + [obj for obj in self.delayed if obj.key not in already_listed]
+
+    @property
     def status_choices(self):
         return JourneyState.choices
 

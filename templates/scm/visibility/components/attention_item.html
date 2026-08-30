@@ -1,0 +1,53 @@
+{% load i18n %}
+
+{% comment %}
+  One row of the Control Tower's attention queue.
+
+  Usage: {% include "scm/visibility/components/attention_item.html" with object=object %}
+
+  The reason line is the domain's own words — the exception engine's detail text or
+  the delay engine's verdict. Nothing here decides that something is wrong, and
+  nothing is invented to fill the line: an object without a reason to be here does
+  not reach this template.
+
+  There is no acknowledge, assign or resolve. Exceptions have no ownership model
+  yet, and a button that only looked like it did would be a lie about the state of
+  the platform. The row's one action is to open the object.
+{% endcomment %}
+
+{% if object.kind == "shipment" %}
+  {% url 'shipments:detail' object.shipment.pk as attention_url %}
+{% else %}
+  {% url 'containers:detail' object.container.pk as attention_url %}
+{% endif %}
+
+<li>
+  <a href="{{ attention_url }}"
+     class="group -mx-2 flex items-start gap-2.5 rounded-box px-2 py-2.5 transition-colors hover:bg-base-200">
+    <span class="mt-1.5 size-2 shrink-0 rounded-full {% if object.has_exception %}bg-error{% else %}bg-warning{% endif %}"></span>
+
+    <span class="min-w-0 flex-1">
+      <span class="block truncate text-sm font-medium {% if object.kind == 'container' %}font-mono{% endif %}">
+        {{ object.label }}
+      </span>
+
+      <span class="block text-xs {% if object.has_exception %}text-error{% else %}text-warning{% endif %}">
+        {% if object.has_exception %}
+          {{ object.exception_details|first|default:object.health_label }}
+        {% else %}
+          {{ object.delay_reason|default:object.health_label }}{% if object.delay_days > 0 %} · +{{ object.delay_days }}d{% endif %}
+        {% endif %}
+      </span>
+
+      <span class="block truncate text-xs text-base-content/50">
+        {% if object.carrier_name %}{{ object.carrier_name }}{% endif %}
+        {% if object.position.label %}{% if object.carrier_name %} · {% endif %}{{ object.position.label }}{% endif %}
+        {% if object.last_event_at %}
+          · {% blocktranslate trimmed with ago=object.last_event_at|timesince %}{{ ago }} ago{% endblocktranslate %}
+        {% endif %}
+      </span>
+    </span>
+
+    <i class="fa fa-angle-right mt-1 text-xs text-base-content/30 group-hover:text-base-content/60"></i>
+  </a>
+</li>

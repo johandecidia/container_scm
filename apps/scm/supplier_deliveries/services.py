@@ -8,16 +8,25 @@ from __future__ import annotations
 
 import datetime
 import logging
-from decimal import Decimal
-from typing import Any
+from dataclasses import dataclass
+from decimal import ROUND_DOWN, Decimal
+from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Sum
 
 from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine
 from apps.teams.models import Team
 
 from .models import SupplierDelivery, SupplierDeliveryLine, SupplierDeliveryStatus
+
+if TYPE_CHECKING:
+    from apps.scm.containers.models import Container
+
+# SupplierDeliveryLine.delivery_qty is decimal_places=3; split quantities are
+# quantized to match so a prefill never fails on the model's own rounding.
+QTY_STEP = Decimal("0.001")
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +167,93 @@ def create_supplier_delivery_line(
         container=container,
         notes=notes,
     )
+
+
+def split_qty_evenly(total: Decimal, count: int) -> list[Decimal]:
+    """Split ``total`` across ``count`` containers, putting any remainder on the last.
+
+    Used to prefill the link-containers form: three containers against 100 ordered
+    is almost always 33.333 / 33.333 / 33.334, and the parts always add back up to
+    ``total`` so the prefill cannot overshoot the PO line.
+    """
+    if count <= 0:
+        return []
+    step = (total / count).quantize(QTY_STEP, rounding=ROUND_DOWN)
+    parts = [step] * count
+    parts[-1] = total - step * (count - 1)
+    return parts
+
+
+def build_delivery_reference(team: Team, purchase_order: PurchaseOrder) -> str:
+    """Suggest an unused delivery reference for a PO — ``<po_number>-D1``, ``-D2``, …
+
+    References are unique per team, so the suggestion is checked against the team's
+    existing ones rather than just this PO's.
+    """
+    taken = set(
+        SupplierDelivery.objects.filter(
+            team=team,
+            delivery_reference__startswith=f"{purchase_order.po_number}-D",
+        ).values_list("delivery_reference", flat=True)
+    )
+    counter = 1
+    while f"{purchase_order.po_number}-D{counter}" in taken:
+        counter += 1
+    return f"{purchase_order.po_number}-D{counter}"
+
+
+@dataclass(frozen=True)
+class ContainerAssignment:
+    """One container booked onto one PO line for a given quantity."""
+
+    container: Container
+    purchase_order_line: PurchaseOrderLine
+    delivery_qty: Decimal
+
+
+def link_containers_to_delivery(
+    *,
+    team: Team,
+    delivery: SupplierDelivery,
+    assignments: list[ContainerAssignment],
+) -> list[SupplierDeliveryLine]:
+    """Book containers onto a delivery, one delivery line per container.
+
+    This is what makes a container number visible on a purchase order: the delivery
+    line is the only link between the two, so nothing is written here that the
+    delivery detail page cannot already show and edit.
+
+    Already-booked containers are skipped rather than booked twice, so re-running
+    the same intake is harmless. The whole batch is one transaction: a quantity that
+    overflows its PO line rejects the batch instead of linking half of it.
+    """
+    created: list[SupplierDeliveryLine] = []
+    with transaction.atomic():
+        for assignment in assignments:
+            already_booked = SupplierDeliveryLine.objects.filter(
+                delivery=delivery,
+                container=assignment.container,
+                purchase_order_line=assignment.purchase_order_line,
+            ).exists()
+            if already_booked:
+                continue
+            created.append(
+                create_supplier_delivery_line(
+                    team=team,
+                    delivery=delivery,
+                    purchase_order_line=assignment.purchase_order_line,
+                    delivery_qty=assignment.delivery_qty,
+                    article=assignment.purchase_order_line.item_no,
+                    container=assignment.container,
+                )
+            )
+    logger.info(
+        "Linked %s container(s) to SupplierDelivery %s (%s skipped as already booked)",
+        len(created),
+        delivery.delivery_reference,
+        len(assignments) - len(created),
+    )
+    return created
 
 
 def update_supplier_delivery_line(

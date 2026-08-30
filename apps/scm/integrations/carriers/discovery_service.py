@@ -9,10 +9,13 @@ match at the wrong carrier is worse than no match at all. A shipment whose carri
 cannot be resolved is reported as skipped, so the gap is visible instead of hidden
 behind a broad sweep.
 
-This is one of two discovery use cases; planned-container discovery (starting from
-a container number rather than a booking) lives in
-``apps.scm.containers.discovery``. Both share this package's registry, factory,
-error model and auto-link service.
+A booking reference is also what makes fanning out unnecessary here: it only means
+anything at the carrier that issued it. A *container* number is different — it is
+globally unique and any carrier can be asked about it — so when the carrier is
+unknown there, ``carrier_discovery`` sweeps the team's configured carriers instead.
+Planned-container discovery (starting from a container number rather than a
+booking) lives in ``apps.scm.containers.discovery`` and uses that sweep. All three
+share this package's registry, factory, error model and auto-link service.
 """
 
 from __future__ import annotations

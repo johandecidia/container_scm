@@ -3,6 +3,12 @@
 All three render the same modal shell with the same tabs and all three write
 through :mod:`apps.scm.containers.intake`, so the only difference between them is
 where the numbers come from.
+
+The modal can also be opened from a purchase order, with ``?purchase_order=<pk>``.
+That only changes where the flow ends: instead of the import summary, the containers
+are handed to the supplier-delivery app to be booked onto the order. The PO travels
+through every tab, form and preview as a plain hidden field, because the modal is
+several requests long and each one has to know it is still working for that order.
 """
 
 import json
@@ -50,8 +56,31 @@ def _modal(request, team, *, tab: str, body_template: str, **extra):
     return render(request, MODAL_TEMPLATE, context)
 
 
-def _refreshed_table_context(team) -> dict:
-    """Context for re-rendering the container table out of band after a write."""
+def _purchase_order(request):
+    """The purchase order this intake is linking to, or None for a plain add.
+
+    Read from either method so it survives both a tab switch (GET) and a submit
+    (POST), and looked up through the team's own orders so a pasted pk cannot reach
+    another team's data.
+    """
+    raw = request.POST.get("purchase_order") or request.GET.get("purchase_order")
+    if not raw:
+        return None
+
+    from apps.scm.procurement.selectors import get_team_purchase_orders
+
+    return get_team_purchase_orders(team=request.default_team).filter(pk=raw).first()
+
+
+def _refreshed_table_context(team, purchase_order=None) -> dict:
+    """Context for re-rendering the container table out of band after a write.
+
+    Skipped when the modal was opened from a purchase order: there is no container
+    table on that page to swap into.
+    """
+    if purchase_order is not None:
+        return {}
+
     from .selectors import get_active_equipment_types
 
     paginator = Paginator(filter_containers(team=team), CONTAINERS_PER_PAGE)
@@ -65,10 +94,18 @@ def _refreshed_table_context(team) -> dict:
     }
 
 
+def _link_step(request, team, purchase_order, containers):
+    """Hand the containers over to the supplier-delivery app to be booked on the PO."""
+    from apps.scm.supplier_deliveries.views import render_link_containers_step
+
+    return render_link_containers_step(request, team=team, purchase_order=purchase_order, containers=containers)
+
+
 @scm_login_required
 def container_create(request):
     """Add one container from its number alone."""
     team = request.default_team
+    purchase_order = _purchase_order(request)
     if request.method == "POST":
         form = QuickContainerForm(request.POST)
         if form.is_valid():
@@ -82,6 +119,8 @@ def container_create(request):
             except ValidationError as exc:
                 form.add_error("container_number", exc)
             else:
+                if purchase_order is not None:
+                    return _link_step(request, team, purchase_order, [container])
                 context = {
                     "container": container,
                     "created": created,
@@ -89,9 +128,18 @@ def container_create(request):
                     **_refreshed_table_context(team),
                 }
                 return render(request, "scm/containers/partials/container_intake_created.html", context)
-        return _modal(request, team, tab="single", body_template=SINGLE_TEMPLATE, form=form)
+        return _modal(
+            request, team, tab="single", body_template=SINGLE_TEMPLATE, form=form, purchase_order=purchase_order
+        )
 
-    return _modal(request, team, tab="single", body_template=SINGLE_TEMPLATE, form=QuickContainerForm())
+    return _modal(
+        request,
+        team,
+        tab="single",
+        body_template=SINGLE_TEMPLATE,
+        form=QuickContainerForm(),
+        purchase_order=purchase_order,
+    )
 
 
 @scm_login_required
@@ -116,20 +164,31 @@ def container_number_check(request):
 def container_import_paste(request):
     """Paste a list of container numbers and preview what would be imported."""
     team = request.default_team
+    purchase_order = _purchase_order(request)
     if request.method == "POST":
         form = ContainerPasteForm(request.POST)
         if form.is_valid():
             entries = entries_from_text(form.cleaned_data["numbers"], form.cleaned_data.get("carrier", ""))
-            return _preview_response(request, team, entries=entries, tab="paste")
-        return _modal(request, team, tab="paste", body_template=PASTE_TEMPLATE, form=form)
+            return _preview_response(request, team, entries=entries, tab="paste", purchase_order=purchase_order)
+        return _modal(
+            request, team, tab="paste", body_template=PASTE_TEMPLATE, form=form, purchase_order=purchase_order
+        )
 
-    return _modal(request, team, tab="paste", body_template=PASTE_TEMPLATE, form=ContainerPasteForm())
+    return _modal(
+        request,
+        team,
+        tab="paste",
+        body_template=PASTE_TEMPLATE,
+        form=ContainerPasteForm(),
+        purchase_order=purchase_order,
+    )
 
 
 @scm_login_required
 def container_import_csv(request):
     """Upload a small CSV of container numbers and preview what would be imported."""
     team = request.default_team
+    purchase_order = _purchase_order(request)
     if request.method == "POST":
         form = ContainerCsvImportForm(request.POST, request.FILES)
         if form.is_valid():
@@ -141,10 +200,17 @@ def container_import_csv(request):
                 if not entries:
                     form.add_error("file", _("No container numbers were found in the file."))
                 else:
-                    return _preview_response(request, team, entries=entries, tab="csv")
-        return _modal(request, team, tab="csv", body_template=CSV_TEMPLATE, form=form)
+                    return _preview_response(request, team, entries=entries, tab="csv", purchase_order=purchase_order)
+        return _modal(request, team, tab="csv", body_template=CSV_TEMPLATE, form=form, purchase_order=purchase_order)
 
-    return _modal(request, team, tab="csv", body_template=CSV_TEMPLATE, form=ContainerCsvImportForm())
+    return _modal(
+        request,
+        team,
+        tab="csv",
+        body_template=CSV_TEMPLATE,
+        form=ContainerCsvImportForm(),
+        purchase_order=purchase_order,
+    )
 
 
 @scm_login_required
@@ -152,6 +218,7 @@ def container_import_csv(request):
 def container_import_confirm(request):
     """Create the valid, new containers from a previewed list."""
     team = request.default_team
+    purchase_order = _purchase_order(request)
     entries = _entries_from_payload(request.POST.get("entries", ""))
     tab = request.POST.get("tab") or "paste"
     if not entries:
@@ -162,14 +229,17 @@ def container_import_confirm(request):
             body_template=PASTE_TEMPLATE if tab != "csv" else CSV_TEMPLATE,
             form=ContainerPasteForm() if tab != "csv" else ContainerCsvImportForm(),
             intake_error=_("That import could not be read. Paste the numbers again."),
+            purchase_order=purchase_order,
         )
 
     result = bulk_create_containers(team=team, user=request.user, entries=entries)
-    context = {"result": result, "tab": tab, **_refreshed_table_context(team)}
+    if purchase_order is not None and result.containers:
+        return _link_step(request, team, purchase_order, result.containers)
+    context = {"result": result, "tab": tab, **_refreshed_table_context(team, purchase_order)}
     return render(request, RESULT_TEMPLATE, context)
 
 
-def _preview_response(request, team, *, entries: list[tuple[str, str]], tab: str):
+def _preview_response(request, team, *, entries: list[tuple[str, str]], tab: str, purchase_order=None):
     preview = preview_containers(team=team, entries=entries)
     return _modal(
         request,
@@ -178,6 +248,7 @@ def _preview_response(request, team, *, entries: list[tuple[str, str]], tab: str
         body_template=PREVIEW_TEMPLATE,
         preview=preview,
         payload=json.dumps([[row.number, row.carrier] for row in preview.rows]),
+        purchase_order=purchase_order,
     )
 
 

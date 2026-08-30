@@ -8,6 +8,7 @@ from django.utils import timezone
 from apps.teams.models import Team
 
 from .models import TrackingEvent, TrackingProvider, TrackingSubscription, TrackingSyncRun
+from .sources import non_carrier_provider_codes
 
 
 def get_team_tracking_providers(team: Team):  # noqa: ARG001 — providers are global, team arg kept for API consistency
@@ -50,11 +51,36 @@ def get_tracking_events_for_shipment(team: Team, shipment):
 
 
 def get_tracking_events_for_container(team: Team, container):
-    """Return all tracking events for a specific container, scoped to the team."""
+    """Return all tracking events for a specific container, scoped to the team.
+
+    Every provider's events, not the current one's. A container can be tracked by
+    several carriers over one physical journey — an ocean carrier for the sea leg, a
+    second for the onward move — and each of them describes a part of the same trip.
+    Filtering to one provider would delete the rest of the journey from the screen.
+    """
     return (
         TrackingEvent.objects.filter(team=team, container=container)
         .select_related("provider", "subscription", "shipment")
         .order_by("-event_datetime", "-created_at")
+    )
+
+
+def get_verified_container_subscriptions(team: Team, container) -> list[TrackingSubscription]:
+    """Return every tracking source this container has proved, oldest first.
+
+    A subscription is only ever created once a carrier has answered with data, so
+    each one is a verified source — and there can be more than one, because a box
+    changes hands. Cancelled watches are excluded: someone stopped that source
+    deliberately. Everything else is kept, including COMPLETED sources whose leg is
+    over, because their events are still part of the journey.
+
+    Oldest first, so the list reads in the order the sources took over the box.
+    """
+    return list(
+        TrackingSubscription.objects.filter(team=team, container=container)
+        .exclude(status=TrackingSubscription.Status.CANCELLED)
+        .select_related("provider", "shipment")
+        .order_by("created_at")
     )
 
 
@@ -113,15 +139,48 @@ def get_latest_meaningful_actual_event(team: Team, container) -> TrackingEvent |
     )
 
 
-def get_container_tracking_eta_event(team: Team, container) -> TrackingEvent | None:
+# The *actual* events that answer an arrival forecast. One tuple, because "has this
+# journey arrived" has to mean the same thing to the polling cadence, the container ETA
+# derivation and the ETA observation intake.
+ARRIVAL_ACTUAL_EVENT_TYPES = (TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED)
+
+
+def has_journey_arrived(team: Team, *, shipment=None, container=None) -> bool:
+    """True when arrival has actually been reported for this journey.
+
+    The shipment's own milestone is the cheaper and more authoritative answer where
+    there is a shipment. A container tracked on its own has no shipment to carry that
+    milestone, so its events are asked directly — otherwise a standalone container
+    would look permanently in transit.
+    """
+    if shipment is not None:
+        return shipment.actual_arrival_at is not None
+    if container is None:
+        return False
+    return TrackingEvent.objects.filter(
+        team=team,
+        container=container,
+        event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        event_type__in=ARRIVAL_ACTUAL_EVENT_TYPES,
+    ).exists()
+
+
+def get_container_tracking_eta_event(team: Team, container, *, provider=None) -> TrackingEvent | None:
     """Return the carrier's current arrival forecast for a container, or None.
 
     The latest ESTIMATED or PLANNED arrival event — but only while it is still a
     forecast. Once the carrier reports an *actual* arrival at or after it, the
     forecast has been answered and showing it as an ETA would contradict what
     happened, which is the same rule the shipment ETA already follows.
+
+    ``provider`` narrows both halves of that rule to one source, answering "what would
+    this container's ETA be if only this provider existed". Left None — as every
+    production caller does — every provider's events count, because a container tracked
+    by several sources has one arrival, not one per source.
     """
     events = TrackingEvent.objects.filter(team=team, container=container).exclude(event_datetime__isnull=True)
+    if provider is not None:
+        events = events.filter(provider=provider)
 
     forecast = (
         events.filter(
@@ -137,7 +196,7 @@ def get_container_tracking_eta_event(team: Team, container) -> TrackingEvent | N
 
     has_arrived = events.filter(
         event_time_type=TrackingEvent.EventTimeType.ACTUAL,
-        event_type__in=(TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED),
+        event_type__in=ARRIVAL_ACTUAL_EVENT_TYPES,
     ).exists()
     return None if has_arrived else forecast
 
@@ -151,10 +210,15 @@ def get_due_tracking_subscriptions(team: Team | None = None):
     """Return subscriptions that are due for syncing.
 
     A subscription is due when:
+    - its provider is one the carrier sync actually drives, and
     - status is ACTIVE or FAILED, or it has been stuck in SYNCING long enough that
       the worker holding it is presumed dead (otherwise a crashed sync would
       starve the subscription forever), and
     - next_sync_at is in the past or null.
+
+    A non-carrier provider is excluded here rather than skipped later, because a skip
+    per cycle forever is noise: the run would be correct and useless. Calling
+    ``sync_tracking_subscription`` for one directly still skips safely.
 
     Concurrency is prevented by the sync lock, not by the SYNCING status.
     """
@@ -164,8 +228,10 @@ def get_due_tracking_subscriptions(team: Team | None = None):
         status=TrackingSubscription.Status.SYNCING, updated_at__lte=stale_cutoff
     )
 
-    qs = TrackingSubscription.objects.filter(runnable).filter(
-        models.Q(next_sync_at__isnull=True) | models.Q(next_sync_at__lte=now)
+    qs = (
+        TrackingSubscription.objects.filter(runnable)
+        .exclude(provider__code__in=non_carrier_provider_codes())
+        .filter(models.Q(next_sync_at__isnull=True) | models.Q(next_sync_at__lte=now))
     )
     if team is not None:
         qs = qs.filter(team=team)

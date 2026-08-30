@@ -7,10 +7,27 @@
       <h1 class="text-2xl font-bold">{% translate "Purchase Orders" %}</h1>
       <p class="text-sm text-base-content/60 mt-1">{% translate "Purchase order visibility from Business Central." %}</p>
     </div>
-    <a href="{% url 'procurement:purchase_order_create' %}" class="btn btn-primary btn-sm">
-      <i class="fa fa-plus"></i>
-      {% translate "Lägg till Purchase Order" %}
-    </a>
+    <div class="dropdown dropdown-end">
+      <div tabindex="0" role="button" class="btn btn-primary btn-sm">
+        <i class="fa fa-plus"></i>
+        {% translate "Purchase Order" %}
+        <i class="fa fa-chevron-down w-3 h-3"></i>
+      </div>
+      <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-10 w-64 p-2 shadow">
+        <li>
+          <a href="{% url 'procurement:purchase_order_create' %}">
+            <i class="fa fa-pen-to-square w-4 h-4"></i>
+            {% translate "Create" %}
+          </a>
+        </li>
+        <li>
+          <a href="{% url 'imports:upload' %}?import_type=purchase_orders">
+            <i class="fa fa-upload w-4 h-4"></i>
+            {% translate "New Import" %}
+          </a>
+        </li>
+      </ul>
+    </div>
   </div>
 
   <section class="app-card">
@@ -26,11 +43,12 @@
               <th class="text-right">{% translate "Shipped" %}</th>
               <th class="text-right">{% translate "Received" %}</th>
               <th class="text-right">{% translate "Remaining" %}</th>
+              <th class="text-right">{% translate "Actions" %}</th>
             </tr>
           </thead>
           <tbody>
             {% for po, f in po_rows %}
-              <tr>
+              <tr id="po-row-{{ po.pk }}">
                 <td>
                   <a class="link link-primary font-medium" href="{% url 'procurement:purchase_order_detail' po.pk %}">
                     {{ po.po_number }}
@@ -47,6 +65,20 @@
                 <td class="text-right tabular-nums">{{ f.shipped_qty }}</td>
                 <td class="text-right tabular-nums">{{ f.received_qty }}</td>
                 <td class="text-right tabular-nums">{{ f.remaining_qty }}</td>
+                <td class="text-right">
+                  <div class="flex justify-end gap-1">
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      title="{% translate 'Delete purchase order' %}"
+                      hx-delete="{% url 'procurement:purchase_order_delete' po.pk %}"
+                      hx-confirm="{% blocktranslate trimmed with po_number=po.po_number %}Permanently delete purchase order {{ po_number }}? Its lines, events and supplier deliveries are deleted too. This cannot be undone.{% endblocktranslate %}"
+                      hx-target="#po-row-{{ po.pk }}"
+                      hx-swap="outerHTML"
+                    >
+                      <i class="fa fa-trash"></i>
+                    </button>
+                  </div>
+                </td>
               </tr>
             {% endfor %}
           </tbody>

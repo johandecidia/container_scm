@@ -10,3 +10,15 @@
 .app-card {
   @apply lg:shadow-md p-4 mb-2 mt-2 lg:mt-0 lg:p-8;
 }
+
+/*
+  A panel on a dense SCM operational page.
+
+  Tighter than .app-card, which is sized for one column of content at a
+  comfortable reading width. The Control Tower puts five panels on one screen and
+  is read at a glance, so it trades .app-card's lg:p-8 for a border that separates
+  the panels without pushing their contents apart.
+*/
+.scm-panel {
+  @apply rounded-box border border-base-300 p-4;
+}

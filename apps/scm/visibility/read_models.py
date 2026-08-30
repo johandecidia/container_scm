@@ -45,6 +45,39 @@ class JourneyState(TextChoices):
     UNKNOWN = "unknown", _("Unknown")
 
 
+def journey_state_from_observed(observed: set[str]) -> str:
+    """Return the furthest milestone a set of *observed* event types proves.
+
+    Milestones, not the most recent code, because carriers reuse codes at both ends of
+    a journey: a box gated in at Gothenburg after discharge would otherwise bucket as
+    "not departed". The milestone tuples are the shipment transport rules, imported
+    rather than restated.
+
+    A function rather than only a read-model property because the same question is
+    asked outside the visibility read models — the Traqo benchmark has to decide
+    whether a container is genuinely in transit before spending a provider request on
+    it, and a second copy of this ordering would eventually disagree about what
+    "arrived" means.
+    """
+    from apps.scm.shipments.transport_status import (
+        ARRIVAL_EVENT_TYPES,
+        DELIVERY_EVENT_TYPES,
+        DEPARTURE_EVENT_TYPES,
+    )
+
+    if observed.intersection(DELIVERY_EVENT_TYPES):
+        return JourneyState.DELIVERED
+    if observed.intersection(ARRIVAL_EVENT_TYPES):
+        return JourneyState.ARRIVED
+    if observed.intersection(DEPARTURE_EVENT_TYPES):
+        return JourneyState.IN_TRANSIT
+    if observed:
+        # Something has happened — a booking, an empty release, a gate move — but
+        # nothing that proves the box has left.
+        return JourneyState.NOT_DEPARTED
+    return JourneyState.UNKNOWN
+
+
 class Health(TextChoices):
     """How the arrival is going, where the domain can honestly say.
 
@@ -187,33 +220,13 @@ class VisibilityObject:
     def journey_state(self) -> str:
         """The furthest milestone the carrier has confirmed, not the latest event.
 
-        Milestones, not the most recent code, because carriers reuse codes at both
-        ends of a journey: a box gated in at Gothenburg after discharge would
-        otherwise bucket as "not departed". The milestone tuples are the shipment
-        transport rules, imported rather than restated.
-
-        Only observed events count. A forecast arrival is a forecast.
+        Only observed events count. A forecast arrival is a forecast. Where nothing
+        has been observed at all, the shipment's own status is the fallback.
         """
-        from apps.scm.shipments.transport_status import (
-            ARRIVAL_EVENT_TYPES,
-            DELIVERY_EVENT_TYPES,
-            DEPARTURE_EVENT_TYPES,
-        )
-
-        observed = self.observed_event_types
-        if observed.intersection(DELIVERY_EVENT_TYPES):
-            return JourneyState.DELIVERED
-        if observed.intersection(ARRIVAL_EVENT_TYPES):
-            return JourneyState.ARRIVED
-        if observed.intersection(DEPARTURE_EVENT_TYPES):
-            return JourneyState.IN_TRANSIT
-        if observed:
-            # Something has happened — a booking, an empty release, a gate move —
-            # but nothing that proves the box has left.
-            return JourneyState.NOT_DEPARTED
-        if self.shipment is not None:
+        state = journey_state_from_observed(self.observed_event_types)
+        if state == JourneyState.UNKNOWN and self.shipment is not None:
             return _STATE_BY_SHIPMENT_STATUS.get(self.shipment.status, JourneyState.UNKNOWN)
-        return JourneyState.UNKNOWN
+        return state
 
     @property
     def journey_state_label(self) -> str:

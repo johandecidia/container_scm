@@ -1,0 +1,155 @@
+[
+  {
+    "eventID": "CMA-EVT-LOAD-1",
+    "eventType": "EQUIPMENT",
+    "eventClassifierCode": "ACT",
+    "equipmentEventTypeCode": "LOAD",
+    "eventDateTime": "2026-03-11T10:00:00Z",
+    "eventCreatedDateTime": "2026-03-11T10:05:00Z",
+    "equipmentReference": "CMAU1234564",
+    "ISOEquipmentCode": "42G1",
+    "emptyIndicatorCode": "LADEN",
+    "carrierBookingReference": "CMA-BKG-987654",
+    "transportDocumentReference": "CMA-BL-987654",
+    "eventLocation": {
+      "locationName": "Port of Shanghai",
+      "UNLocationCode": "CNSHA",
+      "latitude": "31.2304",
+      "longitude": "121.4737",
+      "facilityCode": "SHAPORT",
+      "facilityCodeListProvider": "SMDG",
+      "facilityTypeCode": "POTE",
+      "facilityName": "Shanghai Yangshan Terminal"
+    },
+    "transportCall": {
+      "transportCallID": "CMA-TC-1",
+      "UNLocationCode": "CNSHA",
+      "modeOfTransport": "VESSEL",
+      "exportVoyageNumber": "0FE5ME1MA",
+      "vessel": {
+        "vesselIMONumber": "9776418",
+        "vesselName": "CMA CGM ANTOINE DE SAINT EXUPERY",
+        "vesselFlag": "FR",
+        "vesselCallSignNumber": "FLSU",
+        "vesselOperatorCarrierCode": "CMA"
+      }
+    },
+    "carrierSpecificData": {
+      "internalEventCode": "LOA",
+      "internalEventLabel": "Loaded on board",
+      "internalLocationCode": "CNSHA01",
+      "internalFacilityCode": "SGH-YS",
+      "bookingExportVoyageReference": "0FE5ME1MA",
+      "transportationPhase": "MAIN_CARRIAGE",
+      "shipmentLocationType": "POL",
+      "numberOfUnits": 1
+    }
+  },
+  {
+    "eventID": "CMA-EVT-DEPA-1",
+    "eventType": "TRANSPORT",
+    "eventClassifierCode": "ACT",
+    "transportEventTypeCode": "DEPA",
+    "eventDateTime": "2026-03-11T18:30:00Z",
+    "references": [
+      { "referenceType": "EQ", "referenceValue": "CMAU1234564" }
+    ],
+    "documentReferences": [
+      { "documentReferenceType": "BKG", "documentReferenceValue": "CMA-BKG-987654" },
+      { "documentReferenceType": "TRD", "documentReferenceValue": "CMA-BL-987654" }
+    ],
+    "transportCall": {
+      "transportCallID": "CMA-TC-1",
+      "UNLocationCode": "CNSHA",
+      "modeOfTransport": "VESSEL",
+      "exportVoyageNumber": "0FE5ME1MA",
+      "location": {
+        "locationName": "Port of Shanghai",
+        "UNLocationCode": "CNSHA",
+        "latitude": "31.2304",
+        "longitude": "121.4737"
+      },
+      "vessel": {
+        "vesselIMONumber": "9776418",
+        "vesselName": "CMA CGM ANTOINE DE SAINT EXUPERY",
+        "vesselFlag": "FR"
+      }
+    },
+    "carrierSpecificData": {
+      "internalEventCode": "VDL",
+      "internalEventLabel": "Vessel departure",
+      "transportationPhase": "MAIN_CARRIAGE",
+      "shipmentLocationType": "POL"
+    }
+  },
+  {
+    "eventID": "CMA-EVT-DISC-1",
+    "eventType": "EQUIPMENT",
+    "eventClassifierCode": "ACT",
+    "equipmentEventTypeCode": "DISC",
+    "eventDateTime": "2026-03-20T16:00:00Z",
+    "equipmentReference": "CMAU1234564",
+    "carrierBookingReference": "CMA-BKG-987654",
+    "transportDocumentReference": "CMA-BL-987654",
+    "eventLocation": {
+      "locationName": "Port of Le Havre",
+      "UNLocationCode": "FRLEH",
+      "latitude": "49.4944",
+      "longitude": "0.1079",
+      "facilityCode": "LEHTNMSC",
+      "facilityTypeCode": "POTE",
+      "facilityName": "Terminal de France"
+    },
+    "transportCall": {
+      "transportCallID": "CMA-TC-2",
+      "UNLocationCode": "FRLEH",
+      "modeOfTransport": "VESSEL",
+      "importVoyageNumber": "0FE5ME1MA",
+      "vessel": {
+        "vesselIMONumber": "9776418",
+        "vesselName": "CMA CGM ANTOINE DE SAINT EXUPERY"
+      }
+    },
+    "carrierSpecificData": {
+      "internalEventCode": "DIS",
+      "internalEventLabel": "Discharged from vessel",
+      "transportationPhase": "MAIN_CARRIAGE",
+      "shipmentLocationType": "POD"
+    }
+  },
+  {
+    "eventID": "CMA-EVT-ARRI-1",
+    "eventType": "TRANSPORT",
+    "eventClassifierCode": "EST",
+    "transportEventTypeCode": "ARRI",
+    "eventDateTime": "2026-03-24T07:00:00Z",
+    "references": [
+      { "referenceType": "EQ", "referenceValue": "CMAU1234564" }
+    ],
+    "documentReferences": [
+      { "documentReferenceType": "BKG", "documentReferenceValue": "CMA-BKG-987654" }
+    ],
+    "transportCall": {
+      "transportCallID": "CMA-TC-3",
+      "UNLocationCode": "GBSOU",
+      "modeOfTransport": "VESSEL",
+      "importVoyageNumber": "0FE5ME1MA",
+      "location": {
+        "locationName": "Port of Southampton",
+        "UNLocationCode": "GBSOU",
+        "latitude": "50.8996",
+        "longitude": "-1.4045"
+      },
+      "vessel": {
+        "vesselIMONumber": "9776418",
+        "vesselName": "CMA CGM ANTOINE DE SAINT EXUPERY"
+      }
+    },
+    "carrierSpecificData": {
+      "internalEventCode": "ETA",
+      "internalEventLabel": "Estimated time of arrival",
+      "transportationPhase": "MAIN_CARRIAGE",
+      "shipmentLocationType": "POD"
+    }
+  }
+]

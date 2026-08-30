@@ -12,6 +12,11 @@ never re-implements a domain rule to decide what to draw.
 **A line between two ports is not a route.** We know where events happened, not
 what path the vessel took. Connections are labelled as event connections, and the
 forecast continuation is marked as forecast, so the map cannot be read as a track.
+
+**Every source, and which one.** A container's journey is drawn from all of its
+tracking sources, not the newest one, and each point says who reported it. A gap
+between two sources is deliberately *not* drawn as a line: there is nothing to
+draw, and joining the two ends would assert a movement nobody observed.
 """
 
 from __future__ import annotations
@@ -85,6 +90,44 @@ def journey_feature_collection(events: list[TrackingEvent], *, container_number:
     # continues the solid one instead of floating off on its own.
     continuation = ([actual[-1]] if actual else []) + forecast
     forecast_line = _line(continuation, LINE_FORECAST)
+    if forecast_line is not None:
+        features.append(forecast_line)
+
+    return feature_collection(features)
+
+
+def container_journey_feature_collection(journey, *, container_number: str = "") -> dict:
+    """Return one container's journey as reported by every one of its sources.
+
+    Built from the derived journey rather than from one provider's events, so a box
+    that changed hands mid-voyage draws as one trip. Each point carries the source
+    that reported it, and the point matching the derived current location is flagged
+    so the map can mark it without deciding for itself which point that is.
+
+    A point with no coordinates is absent from the map and present on the timeline,
+    which is the authoritative chronology. Our own physical observations are always
+    in that position: a container location records which yard holds the box, not
+    where on earth the yard is.
+    """
+    number = container_number or (journey.container.container_id if journey.container is not None else "")
+    current = journey.current_location
+    current_point = current.point if current is not None else None
+
+    features: list[dict] = []
+    located = [point for point in journey.points if point.has_coordinates]
+    for point in located:
+        features.append(_journey_point_feature(point, container_number=number, is_current=point is current_point))
+
+    actual = [point.event for point in located if point.is_actual and point.event is not None]
+    forecast = [point.event for point in located if point.is_estimated and point.event is not None]
+
+    actual_line = _line(actual, LINE_ACTUAL)
+    if actual_line is not None:
+        features.append(actual_line)
+
+    # The forecast leg starts where the box actually got to, so the dashed line
+    # continues the solid one instead of floating off on its own.
+    forecast_line = _line(([actual[-1]] if actual else []) + forecast, LINE_FORECAST)
     if forecast_line is not None:
         features.append(forecast_line)
 
@@ -174,6 +217,40 @@ def _event_point(event: TrackingEvent, *, container_number: str = "") -> dict | 
         **_event_properties(event),
     }
     return _point(event.location_longitude, event.location_latitude, properties)
+
+
+def _journey_point_feature(point, *, container_number: str, is_current: bool) -> dict:
+    """One journey point as a map point, with the source that reported it.
+
+    ``source_label`` is pre-joined rather than a list: feature properties travel
+    through Mapbox as data, and a string survives that trip unambiguously.
+    """
+    properties = {
+        "object_type": "event",
+        "event_id": point.event_id,
+        "container_number": container_number,
+        "position_type": point.position_type,
+        "position_type_label": str(PositionType(point.position_type).label),
+        "position_label": point.place_label,
+        "is_realtime": point.position_type == PositionType.GPS,
+        "source_kind": point.source.kind,
+        "source_name": point.source.name,
+        "source_label": " · ".join(point.source_names),
+        # True for the one point the domain says the container is at now — which is
+        # not always the newest point, and is never decided in the browser.
+        "is_current": is_current,
+        **_event_properties(point.event),
+    }
+    # A point built from an event keeps the event's own wording; a physical
+    # observation has no event, so its own title and place stand in.
+    if point.event is None:
+        properties["event_title"] = str(point.title)
+        properties["location_name"] = point.location_name
+        properties["event_unlocode"] = point.location_unlocode
+        properties["is_actual"] = point.is_actual
+        properties["occurred_at"] = _datetime(point.occurred_at)
+        properties["occurred_at_display"] = _datetime_display(point.occurred_at)
+    return cast(dict, _point(point.longitude, point.latitude, properties))
 
 
 def _point(longitude, latitude, properties: dict) -> dict | None:

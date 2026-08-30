@@ -16,6 +16,7 @@ class EquipmentCategory(TextChoices):
 
 class ContainerCategory(TextChoices):
     U = "U", _("Freight Container (U)")
+    A = "A", _("Freight Container (A)")
     J = "J", _("Detachable Freight Container Unit (J)")
     Z = "Z", _("Trailer and Chassis (Z)")
 

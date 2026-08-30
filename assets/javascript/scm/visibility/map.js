@@ -173,6 +173,22 @@ class VisibilityMap {
         'line-dasharray': [1.5, 1.5],
       },
     });
+    // A halo on the point the domain says the container is at now. Which point that
+    // is comes from the server as is_current — it is not always the newest one, and
+    // deciding it here would give the platform two answers to the same question.
+    this.map.addLayer({
+      id: 'scm-event-current',
+      type: 'circle',
+      source: SOURCE_ID,
+      filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'is_current'], true]],
+      paint: {
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-radius': 13,
+        'circle-stroke-width': 2,
+        'circle-stroke-color': COLOR.actual,
+        'circle-stroke-opacity': 0.5,
+      },
+    });
     this.map.addLayer({
       id: 'scm-events',
       type: 'circle',
@@ -286,6 +302,9 @@ class VisibilityMap {
     if (p.position_type_label) node.appendChild(line(p.position_type_label, 'text-xs opacity-60'));
     if (p.event_vessel_name) node.appendChild(line(p.event_vessel_name, 'text-xs opacity-70'));
     if (p.occurred_at_display) node.appendChild(line(p.occurred_at_display, 'text-xs opacity-60'));
+    // Who reported this, including any second source that reported the same event.
+    // Already joined and localised server-side; this only prints it.
+    if (p.source_label) node.appendChild(line(p.source_label, 'text-xs opacity-60'));
 
     new mapboxgl.Popup({ closeButton: true, maxWidth: '260px' })
       .setLngLat(feature.geometry.coordinates)

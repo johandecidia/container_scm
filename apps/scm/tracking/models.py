@@ -416,13 +416,20 @@ class ETAHistory(BaseTeamModel):
     forecast to the hour, so ``previous_eta_at`` / ``new_eta_at`` keep that precision
     and are what ``delta_minutes`` is computed from; without them a six-hour slip
     would round away to zero.
+
+    ``source`` names where the forecast came from — a provider code, or whatever the
+    caller used. Two providers watching one journey therefore leave two attributable
+    trails here rather than one merged number.
     """
 
     shipment = models.ForeignKey(
         "scm_shipments.Shipment",
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name="eta_history",
         verbose_name=_("shipment"),
+        help_text=_("The shipment this forecast is for, when the journey is on one."),
     )
     container = models.ForeignKey(
         "scm_containers.Container",
@@ -479,7 +486,8 @@ class ETAHistory(BaseTeamModel):
         verbose_name_plural = _("ETA History")
 
     def __str__(self) -> str:
-        return f"ETA change for {self.shipment}: {self.previous_eta} → {self.new_eta} at {self.changed_at}"
+        subject = self.shipment or self.container or "unassigned"
+        return f"ETA change for {subject}: {self.previous_eta} → {self.new_eta} at {self.changed_at}"
 
     @property
     def is_delay(self) -> bool:
@@ -508,6 +516,9 @@ class TrackingSyncRun(BaseTeamModel):
         NONE = "", _("None")
         NOT_IMPLEMENTED = "not_implemented", _("Adapter not implemented")
         NOT_CONFIGURED = "not_configured", _("Integration not configured")
+        # A working provider that this poller is simply not the one to call. Distinct
+        # from NOT_CONFIGURED because nothing is wrong and nobody needs to fix it.
+        NOT_CARRIER_POLLED = "not_carrier_polled", _("Not polled by the carrier sync")
         ALREADY_RUNNING = "already_running", _("Sync already running")
         UNSUPPORTED_REFERENCE = "unsupported_reference", _("Unsupported reference")
         AUTHENTICATION = "authentication", _("Authentication failed")

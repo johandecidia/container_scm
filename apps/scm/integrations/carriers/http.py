@@ -11,6 +11,14 @@ way:
     5xx / timeout  CarrierServerError / CarrierTimeoutError, after retries
     other 4xx      CarrierInvalidResponseError
 
+A provider whose API gives a status a meaning of its own can supply an
+``error_classifier`` to name it, in the same spirit as ``no_data_statuses``: it sees
+the status and the response before the rules above run, and returns either a typed
+error to raise or None to fall through to them. That keeps status-to-outcome
+classification in this one module instead of growing a second transport beside it.
+A classifier that returns None for 429 and 5xx keeps their retry and Retry-After
+behaviour, which is the point of having them here.
+
 Every request is logged to IntegrationRequestLog with the path only — never the
 query string, never headers, never the body — so a credential in a query
 parameter or an Authorization header cannot end up in the log table.
@@ -24,7 +32,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 import requests
@@ -125,6 +133,33 @@ class HttpConfig:
         )
 
 
+@dataclass(frozen=True)
+class CarrierResponse:
+    """A successful carrier response: the parsed JSON and the headers that came with it.
+
+    Headers are exposed because some carriers paginate through them rather than
+    through the body — DCSA Track & Trace advertises the next cursor in a
+    ``Next-Page`` header. Lookup is case-insensitive, so a plain dict from a test
+    double behaves like the ``CaseInsensitiveDict`` requests returns.
+    """
+
+    payload: dict | list
+    headers: dict = field(default_factory=dict)
+
+    def header(self, name: str) -> str:
+        """Return the named header's value, stripped, or "" when it is absent."""
+        if not name or not self.headers:
+            return ""
+        value = self.headers.get(name)
+        if value is None:
+            lowered = name.lower()
+            for key, candidate in self.headers.items():
+                if str(key).lower() == lowered:
+                    value = candidate
+                    break
+        return str(value or "").strip()
+
+
 def _retry_after_seconds(response) -> int | None:
     value = response.headers.get("Retry-After")
     if not value:
@@ -145,7 +180,14 @@ def log_path(url: str) -> str:
 
 
 class CarrierHttpClient:
-    """A small GET client with carrier-typed errors and sanitised request logging."""
+    """A small GET client with carrier-typed errors and sanitised request logging.
+
+    ``error_classifier`` is an optional ``(status_code, response) -> CarrierError |
+    None`` hook for a provider that gives a status a meaning the defaults do not
+    cover. It is consulted after a 200 and after ``no_data_statuses``, and before the
+    401/429/5xx rules, so it can name a status those would otherwise generalise. None
+    means "not mine" and the default handling applies.
+    """
 
     def __init__(
         self,
@@ -156,17 +198,72 @@ class CarrierHttpClient:
         integration: Integration | None = None,
         extra_headers: dict | None = None,
         session=None,
+        error_classifier=None,
     ) -> None:
         self.provider_code = provider_code
         self.config = config or HttpConfig()
         self.auth = auth
         self.integration = integration
         self.extra_headers = extra_headers or {}
+        self.error_classifier = error_classifier
         # Injectable for tests; defaults to the requests module's functional API.
         self._session = session or requests
 
     def get(self, url: str, *, params: dict | None = None) -> dict:
-        """GET ``url`` and return parsed JSON, raising a typed CarrierError on failure."""
+        """GET ``url`` and return parsed JSON, raising a typed CarrierError on failure.
+
+        For endpoints that answer with a JSON object. A carrier that returns a
+        top-level array — DCSA's event feeds do — must use :meth:`get_with_headers`
+        and read ``payload`` itself, because that is where the list survives.
+        """
+        return cast(dict, self.get_with_headers(url, params=params).payload)
+
+    def get_with_headers(self, url: str, *, params: dict | None = None) -> CarrierResponse:
+        """GET ``url`` and return the parsed JSON together with the response headers.
+
+        Same request handling, retries and error classification as :meth:`get` — the
+        only difference is that the headers survive, for carriers that paginate
+        through them.
+        """
+        return self._request("GET", url, params=params)
+
+    def post(self, url: str, *, json_body: dict | None = None, params: dict | None = None) -> dict:
+        """POST ``url`` and return parsed JSON, raising a typed CarrierError on failure.
+
+        Exists because a provider can require a write to *start* tracking rather than a
+        read to fetch it — Vizion creates a reference with POST /references before any
+        update can be retrieved. It shares the whole of :meth:`get`'s behaviour: same
+        retries, same backoff, same Retry-After handling, same error classification and
+        the same sanitised logging, so there is one transport in the codebase rather
+        than one per HTTP verb.
+
+        Retries are the same as for GET, which is safe for the creates this is used for:
+        Vizion's POST /references is idempotent per (organisation, reference) and returns
+        the existing reference rather than a second one. A provider whose POST is not
+        idempotent must configure ``max_retries=0`` rather than rely on this.
+        """
+        return cast(dict, self._request("POST", url, params=params, json_body=json_body).payload)
+
+    def delete(self, url: str, *, params: dict | None = None) -> dict:
+        """DELETE ``url`` and return parsed JSON, raising a typed CarrierError on failure.
+
+        Exists so a provider that bills per active subscription can be told to stop —
+        Vizion unsubscribes a reference with DELETE /references/{id}. Releasing a
+        resource we created is part of using the provider responsibly, and doing it
+        through the shared transport keeps its error classification and sanitised
+        logging rather than growing a second HTTP path for one verb.
+        """
+        return cast(dict, self._request("DELETE", url, params=params).payload)
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+    ) -> CarrierResponse:
+        """Perform one logical request, retries and typed-error classification included."""
         request_id = uuid.uuid4().hex
         started = time.monotonic()
         endpoint = log_path(url)
@@ -185,9 +282,22 @@ class CarrierHttpClient:
                     headers.update(self.auth.auth_headers())
 
                 try:
-                    response = self._session.get(
-                        url, headers=headers, params=params, timeout=self.config.timeout_seconds
-                    )
+                    if method == "POST":
+                        response = self._session.post(
+                            url,
+                            headers=headers,
+                            params=params,
+                            json=json_body,
+                            timeout=self.config.timeout_seconds,
+                        )
+                    elif method == "DELETE":
+                        response = self._session.delete(
+                            url, headers=headers, params=params, timeout=self.config.timeout_seconds
+                        )
+                    else:
+                        response = self._session.get(
+                            url, headers=headers, params=params, timeout=self.config.timeout_seconds
+                        )
                 except (requests.Timeout, requests.ConnectionError) as exc:
                     if attempt <= self.config.max_retries:
                         self._backoff(attempt)
@@ -197,7 +307,10 @@ class CarrierHttpClient:
 
                 status_code = response.status_code
 
-                if status_code == 200:
+                # 201 is accepted for POST only, so a GET's handling is bit-for-bit
+                # unchanged: a create that answers "201 Created" is a success, and no
+                # existing carrier read can reach this branch.
+                if status_code == 200 or (method == "POST" and status_code == 201):
                     try:
                         payload = response.json()
                     except ValueError as exc:
@@ -206,7 +319,7 @@ class CarrierHttpClient:
                             error_message, provider_code=self.provider_code, status_code=status_code
                         ) from exc
                     succeeded = True
-                    return payload
+                    return CarrierResponse(payload=payload, headers=response.headers or {})
 
                 if status_code in self.config.no_data_statuses:
                     # Not an error: the carrier simply does not know this reference.
@@ -215,6 +328,12 @@ class CarrierHttpClient:
                         f"{self.provider_code} has no data for this reference (HTTP {status_code}).",
                         provider_code=self.provider_code,
                     )
+
+                if self.error_classifier is not None:
+                    classified = self.error_classifier(status_code, response)
+                    if classified is not None:
+                        error_message = str(classified)
+                        raise classified
 
                 if status_code == 401 and not refreshed and self.auth is not None:
                     # One token refresh, then retry immediately.
@@ -259,6 +378,7 @@ class CarrierHttpClient:
                 started,
                 success=succeeded,
                 error_message="" if succeeded else error_message,
+                method=method,
             )
 
     def _backoff(self, attempt: int, *, retry_after: int | None = None) -> None:
@@ -274,6 +394,7 @@ class CarrierHttpClient:
         *,
         success: bool,
         error_message: str,
+        method: str = "GET",
     ) -> None:
         """Write a sanitised IntegrationRequestLog entry; never secrets, never bodies."""
         if self.integration is None:
@@ -284,7 +405,7 @@ class CarrierHttpClient:
             log_integration_request(
                 team=self.integration.team,
                 provider_code=self.provider_code,
-                method="GET",
+                method=method,
                 endpoint=endpoint[:500],
                 integration=self.integration,
                 status_code=status_code,

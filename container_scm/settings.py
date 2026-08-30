@@ -639,6 +639,31 @@ SCM_TRACKING_DISPATCH_LIMIT = env.int("SCM_TRACKING_DISPATCH_LIMIT", default=500
 SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS", default=90)
 SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS", default=0)
 
+# SCM Traqo Ocean (external ocean tracking aggregator, evaluated alongside the direct
+# carrier integrations). Unlike a carrier, a Traqo account is one subscription for the
+# whole installation rather than an agreement each team holds, so its credential lives
+# here instead of in a per-team Integration record.
+#
+# TRAQO_ENABLED gates live calls only. The Traqo sandbox is fixed demo data behind no
+# credential, so it is always reachable — that is what the traqo_test command uses.
+# Never commit a real key.
+TRAQO_ENABLED = env.bool("TRAQO_ENABLED", default=False)
+TRAQO_BASE_URL = env.str("TRAQO_BASE_URL", default="https://traqocontainer.com/api/v1")
+TRAQO_API_KEY = env.str("TRAQO_API_KEY", default="")
+
+# SCM Vizion (container visibility aggregator, evaluated for Auto Carrier Identification
+# on containers whose carrier is unknown). Installation-wide credential for the same
+# reason Traqo's is.
+#
+# VIZION_ENABLED gates *both* environments, unlike TRAQO_ENABLED. Vizion's demo is
+# metered against the same account key rather than being free fixed data, so there is no
+# always-reachable sandbox and defaulting to one would spend somebody's quota.
+# Never commit a real key.
+VIZION_ENABLED = env.bool("VIZION_ENABLED", default=False)
+VIZION_BASE_URL = env.str("VIZION_BASE_URL", default="https://prod.vizionapi.com")
+VIZION_DEMO_BASE_URL = env.str("VIZION_DEMO_BASE_URL", default="https://demo.vizionapi.com")
+VIZION_API_KEY = env.str("VIZION_API_KEY", default="")
+
 # SCM Business Central
 # Pauses the scheduled Business Central dispatcher without removing the schedule or
 # the implementation. Manual and per-integration syncs are unaffected.

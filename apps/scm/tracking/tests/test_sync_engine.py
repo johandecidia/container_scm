@@ -307,6 +307,69 @@ class SkippedSyncTest(TestCase):
         run = _sync(manual)
         self.assertEqual(run.status, TrackingSyncRun.Status.SKIPPED)
 
+    def test_a_provider_this_poller_does_not_drive_is_told_apart_from_a_broken_one(self):
+        """Traqo is a working provider the carrier poller is simply not the caller for."""
+        traqo = _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+
+        run = sync_tracking_subscription(traqo)
+
+        self.assertEqual(run.status, TrackingSyncRun.Status.SKIPPED)
+        self.assertEqual(run.error_type, _ErrorType.NOT_CARRIER_POLLED)
+
+    def test_skipping_it_leaves_the_subscription_tracking(self):
+        traqo = _subscription(
+            self.team,
+            _provider("traqo"),
+            tracking_reference="CPWU2588297",
+            tracking_status=TrackingSubscription.TrackingStatus.TRACKING,
+        )
+
+        sync_tracking_subscription(traqo)
+
+        traqo.refresh_from_db()
+        # NOT_CONFIGURED here would tell the UI the container cannot be tracked, when
+        # its events are already stored and correct.
+        self.assertEqual(traqo.tracking_status, TrackingSubscription.TrackingStatus.TRACKING)
+        self.assertEqual(traqo.status, TrackingSubscription.Status.ACTIVE)
+        self.assertEqual(traqo.consecutive_failures, 0)
+
+    def test_skipping_it_records_no_error_against_the_subscription(self):
+        traqo = _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+
+        run = sync_tracking_subscription(traqo)
+
+        traqo.refresh_from_db()
+        self.assertEqual(traqo.last_error_message, "")
+        # The explanation lives on the run, where it is information rather than a fault.
+        self.assertIn("refresh_with", run.metadata)
+
+    def test_it_never_reaches_the_carrier_factory(self):
+        traqo = _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+
+        with mock.patch("apps.scm.integrations.carriers.factory.build_carrier_client") as build:
+            sync_tracking_subscription(traqo)
+
+        build.assert_not_called()
+
+    def test_the_scheduled_poller_does_not_queue_it_at_all(self):
+        _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+
+        due = list(get_due_tracking_subscriptions(self.team))
+
+        self.assertEqual([sub.pk for sub in due], [self.subscription.pk])
+
+    def test_a_misconfigured_carrier_is_still_reported_as_not_configured(self):
+        """The safe skip must not become a way for real carrier faults to go quiet."""
+        with mock.patch(
+            "apps.scm.integrations.carriers.factory.build_carrier_client",
+            side_effect=UnknownCarrierError("nope"),
+        ):
+            run = sync_tracking_subscription(self.subscription)
+
+        self.subscription.refresh_from_db()
+        self.assertEqual(run.error_type, _ErrorType.NOT_CONFIGURED)
+        self.assertEqual(self.subscription.tracking_status, TrackingSubscription.TrackingStatus.NOT_CONFIGURED)
+
     def test_skipped_run_schedules_a_later_retry(self):
         _sync(self.subscription, client=FakeClient(error=CarrierNotImplementedError("stub")))
         self.subscription.refresh_from_db()
