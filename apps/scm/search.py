@@ -71,12 +71,11 @@ def search_scm(team: Team, query: str) -> list[SearchResult]:
     )[:10]
 
     for s in shipments:
-        route = " → ".join(filter(None, [s.origin_port, s.destination_port]))
         results.append(
             SearchResult(
                 kind="shipment",
                 title=str(s),
-                subtitle=route or s.get_status_display(),
+                subtitle=s.route_label or s.get_status_display(),
                 url=reverse("shipments:detail", kwargs={"pk": s.pk}),
             )
         )
