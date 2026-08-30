@@ -41,6 +41,14 @@ BASE = datetime(2026, 8, 10, 14, 0, tzinfo=UTC)
 class BenchmarkTestCase(TestCase):
     """Shared fixtures: one container, two providers, and an event factory."""
 
+    # Declared because `setUpTestData` assigns them through `cls`, which creates the
+    # attributes at runtime but declares nothing. Same convention as the visibility
+    # tests.
+    team: Team
+    container: Container
+    maersk: TrackingProvider
+    traqo: TrackingProvider
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="benchmark", slug="benchmark")

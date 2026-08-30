@@ -326,7 +326,10 @@ class Command(BaseCommand):
                         for subscription in TrackingSubscription.objects.filter(
                             team=team, container__isnull=False
                         ).select_related("provider", "container")
-                        if subscription.container.container_id == container_number
+                        # The queryset already excludes null containers; saying so again
+                        # here is what lets the attribute access below be checked.
+                        if subscription.container is not None
+                        and subscription.container.container_id == container_number
                         and subscription.provider.code != PROVIDER_CODE
                     }
                 )

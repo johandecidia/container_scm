@@ -32,7 +32,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 import requests
@@ -210,8 +210,13 @@ class CarrierHttpClient:
         self._session = session or requests
 
     def get(self, url: str, *, params: dict | None = None) -> dict:
-        """GET ``url`` and return parsed JSON, raising a typed CarrierError on failure."""
-        return self.get_with_headers(url, params=params).payload
+        """GET ``url`` and return parsed JSON, raising a typed CarrierError on failure.
+
+        For endpoints that answer with a JSON object. A carrier that returns a
+        top-level array — DCSA's event feeds do — must use :meth:`get_with_headers`
+        and read ``payload`` itself, because that is where the list survives.
+        """
+        return cast(dict, self.get_with_headers(url, params=params).payload)
 
     def get_with_headers(self, url: str, *, params: dict | None = None) -> CarrierResponse:
         """GET ``url`` and return the parsed JSON together with the response headers.
@@ -237,7 +242,7 @@ class CarrierHttpClient:
         the existing reference rather than a second one. A provider whose POST is not
         idempotent must configure ``max_retries=0`` rather than rely on this.
         """
-        return self._request("POST", url, params=params, json_body=json_body).payload
+        return cast(dict, self._request("POST", url, params=params, json_body=json_body).payload)
 
     def delete(self, url: str, *, params: dict | None = None) -> dict:
         """DELETE ``url`` and return parsed JSON, raising a typed CarrierError on failure.
@@ -248,7 +253,7 @@ class CarrierHttpClient:
         through the shared transport keeps its error classification and sanitised
         logging rather than growing a second HTTP path for one verb.
         """
-        return self._request("DELETE", url, params=params).payload
+        return cast(dict, self._request("DELETE", url, params=params).payload)
 
     def _request(
         self,

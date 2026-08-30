@@ -57,6 +57,14 @@ NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 class Phase22TestCase(TestCase):
     """One team, two providers, and factories for containers and events."""
 
+    # Declared because `setUpTestData` assigns them through `cls`, which creates the
+    # attributes at runtime but declares nothing. Same convention as the visibility
+    # tests.
+    team: Team
+    equipment_type: EquipmentType
+    maersk: TrackingProvider
+    traqo: TrackingProvider
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="phase22", slug="phase22")

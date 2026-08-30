@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Any
 
 from apps.scm.shipments.models import Shipment
 
@@ -83,7 +84,9 @@ class ProviderEtaObservation:
         provider that calls its forecast unreliable is not the same claim. The full
         response is not duplicated here — it is already in ``TrackingRawPayload``.
         """
-        metadata = {
+        # Annotated because the reliability flag and the provider context added below
+        # are not strings, and an inferred dict[str, str] would reject both.
+        metadata: dict[str, Any] = {
             "provider": self.provider_code,
             "observed_at": self.observed_at.isoformat(),
             "eta_target": self.target,
