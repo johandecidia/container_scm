@@ -9,6 +9,10 @@ app_name = "visibility"
 # would give it three places to drift.
 urlpatterns = [
     path("", views.visibility_overview, name="overview"),
+    # The work queues. Under visibility because they are views over the same read
+    # models the Control Tower composes, not bounded contexts of their own.
+    path("exceptions/", views.exceptions_queue, name="exceptions"),
+    path("arrivals/", views.arrivals_queue, name="arrivals"),
     path("map-data/", views.visibility_map_data, name="map_data"),
     path("panel/<str:kind>/<int:pk>/", views.visibility_object_panel, name="object_panel"),
     path("shipments/<int:pk>/map-data/", views.shipment_map_data, name="shipment_map_data"),

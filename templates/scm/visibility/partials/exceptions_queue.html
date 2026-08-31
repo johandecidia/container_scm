@@ -1,0 +1,118 @@
+{% load i18n %}
+
+{% comment %}
+  The Exceptions work queue: the count, the filters and the rows. Swapped whole by
+  HTMX whenever a filter changes, which is why the count is in here and not in the
+  page header — it describes the current selection.
+
+  Layout: one row per object, as a grid that reflows. Dense and table-like from `sm`
+  up, stacked into a readable card below it. One set of markup rather than two, so a
+  column added on desktop cannot go missing on a phone — and no horizontal scroll,
+  which is not an operational mobile experience.
+
+  There is no acknowledge, assign, resolve or snooze. None of that state exists in
+  the database, and a button that only looked like it did would misrepresent the
+  platform. A row leaves this queue when the supply chain changes.
+{% endcomment %}
+
+{% url 'visibility:exceptions' as queue_url %}
+
+<div id="exceptions-queue" class="flex flex-col gap-4">
+
+  {% comment %}
+    1. How much work there is. "Need attention" rather than "open": nothing here is
+    opened or closed, because there is no workflow state to open or close.
+  {% endcomment %}
+  <p class="text-sm text-base-content/60">
+    {% if filters.is_active %}
+      {% blocktranslate trimmed with shown=queue.items|length total=queue.total %}
+        {{ shown }} of {{ total }} items need attention
+      {% endblocktranslate %}
+    {% else %}
+      {% blocktranslate trimmed count count=queue.total %}
+        {{ count }} item needs attention
+      {% plural %}
+        {{ count }} items need attention
+      {% endblocktranslate %}
+    {% endif %}
+  </p>
+
+  {# 2. Filters. GET-only, pushed to the URL so a selection can be linked. #}
+  <form
+    class="scm-panel flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5"
+    hx-get="{{ queue_url }}"
+    hx-target="#exceptions-queue"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+    hx-trigger="change, keyup changed delay:400ms from:input[name='search']"
+  >
+    <select name="issue" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Issue' %}">
+      <option value="">{% translate "Any issue" %}</option>
+      {% for value, label in queue.issue_choices %}
+        <option value="{{ value }}" {% if filters.issue == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="carrier" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Carrier' %}">
+      <option value="">{% translate "Any carrier" %}</option>
+      {% for carrier in queue.carrier_choices %}
+        <option value="{{ carrier }}" {% if filters.carrier == carrier %}selected{% endif %}>{{ carrier }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="kind" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Object type' %}">
+      <option value="">{% translate "Any object" %}</option>
+      {% for value, label in queue.kind_choices %}
+        <option value="{{ value }}" {% if filters.kind == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="eta" class="select select-sm select-bordered w-auto" aria-label="{% translate 'ETA' %}">
+      <option value="">{% translate "Any ETA" %}</option>
+      <option value="today" {% if filters.eta_window == "today" %}selected{% endif %}>{% translate "Arriving today" %}</option>
+      <option value="7" {% if filters.eta_window == "7" %}selected{% endif %}>{% translate "Next 7 days" %}</option>
+      <option value="30" {% if filters.eta_window == "30" %}selected{% endif %}>{% translate "Next 30 days" %}</option>
+      <option value="overdue" {% if filters.eta_window == "overdue" %}selected{% endif %}>{% translate "Overdue" %}</option>
+    </select>
+
+    <input
+      type="search"
+      name="search"
+      value="{{ filters.search }}"
+      placeholder="{% translate 'Filter by container, shipment, vessel…' %}"
+      class="input input-sm input-bordered grow min-w-48"
+      aria-label="{% translate 'Filter this queue' %}"
+    >
+
+    {% if filters.is_active %}
+      <a href="{{ queue_url }}" class="btn btn-ghost btn-sm shrink-0">{% translate "Clear" %}</a>
+    {% endif %}
+  </form>
+
+  {# 3. The work. #}
+  <section class="scm-panel">
+    {% if queue.items %}
+      {% comment %}
+        Column headings, from `sm` up only. Below that each row labels its own
+        values, so headings would be a legend for a table that is not there.
+      {% endcomment %}
+      <div class="hidden sm:grid sm:grid-cols-12 sm:gap-3 border-b border-base-300 pb-2 text-xs font-semibold uppercase tracking-wide text-base-content/50">
+        <div class="sm:col-span-3">{% translate "Issue" %}</div>
+        <div class="sm:col-span-3">{% translate "Object" %}</div>
+        <div class="sm:col-span-3">{% translate "Current state" %}</div>
+        <div class="sm:col-span-2">{% translate "ETA" %}</div>
+        <div class="sm:col-span-1 sm:text-right">{% translate "Updated" %}</div>
+      </div>
+
+      <ul class="divide-y divide-base-200">
+        {% for item in queue.items %}
+          {% include "scm/visibility/partials/exception_row.html" with item=item %}
+        {% endfor %}
+      </ul>
+    {% elif filters.is_active %}
+      {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("No exceptions match these filters") message=_("Clear a filter to widen the search.") %}
+    {% else %}
+      {% include "scm/components/empty_state.html" with icon="fa-circle-check" title=_("No current exceptions") message=_("Nothing in the current supply chain requires attention.") %}
+    {% endif %}
+  </section>
+</div>
