@@ -263,9 +263,9 @@ class QueueSortOrderTest(TestCase):
     """Band first, then the soonest arrival. Documented, so it can be relied on."""
 
     def _sorted(self, objects):
-        from apps.scm.visibility.work_queues import _queue_item
+        from apps.scm.visibility.work_queues.issues import build_queue_item
 
-        items = sorted((_queue_item(obj) for obj in objects), key=lambda item: item.sort_key)
+        items = sorted((build_queue_item(obj) for obj in objects), key=lambda item: item.sort_key)
         return [item.object.label for item in items]
 
     def test_the_soonest_arrival_leads_within_a_band(self):

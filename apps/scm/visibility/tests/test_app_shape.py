@@ -43,8 +43,12 @@ class VisibilityAppShapeTest(SimpleTestCase):
         of truth for whether something is still a problem. The queues read the
         exception and delay engines and store nothing.
         """
-        source = (APP_DIR / "work_queues.py").read_text()
-        self.assertTrue((APP_DIR / "work_queues.py").exists())
-        for forbidden in ("models.Model", "BaseTeamModel", ".objects.create(", ".save(", ".delete("):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, source)
+        package = APP_DIR / "work_queues"
+        self.assertTrue(package.is_dir(), "Missing apps/scm/visibility/work_queues/")
+        modules = sorted(package.glob("*.py"))
+        self.assertTrue(modules, "work_queues package is empty")
+        for module in modules:
+            source = module.read_text()
+            for forbidden in ("models.Model", "BaseTeamModel", ".objects.create(", ".save(", ".delete("):
+                with self.subTest(module=module.name, forbidden=forbidden):
+                    self.assertNotIn(forbidden, source)
