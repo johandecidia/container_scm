@@ -54,12 +54,32 @@ class PrimaryNavigationTest(NavigationFixture):
         """One page. The label changed; the implementation did not move."""
         self.assertIn(reverse("visibility:overview"), self.nav_html())
 
-    def test_exceptions_and_arrivals_are_control_tower_filters(self):
-        """No new work-queue pages in UX-1 — the existing filter parameters do it."""
+    def test_exceptions_and_arrivals_are_their_own_work_queues(self):
+        """UX-3 gave both a real page. They were Control Tower filters until then."""
+        html = self.nav_html()
+        self.assertIn(f'href="{reverse("visibility:exceptions")}"', html)
+        self.assertIn(f'href="{reverse("visibility:arrivals")}"', html)
+
+    def test_the_navigation_no_longer_points_at_the_control_tower_filters(self):
+        """Otherwise Control lists the same page three times under three names."""
         html = self.nav_html()
         overview = reverse("visibility:overview")
-        self.assertIn(f"{overview}?exceptions=1", html)
-        self.assertIn(f"{overview}?eta=7", html)
+        self.assertNotIn(f'href="{overview}?exceptions=1"', html)
+        self.assertNotIn(f'href="{overview}?eta=7"', html)
+
+    def test_each_control_entry_is_marked_active_on_its_own_page(self):
+        for route in ("visibility:overview", "visibility:exceptions", "visibility:arrivals"):
+            with self.subTest(route=route):
+                url = reverse(route)
+                html = self.client.get(url).content.decode()
+                self.assertIn(f'href="{url}" class="menu-active"', html)
+
+    def test_no_control_entry_is_marked_active_on_another_control_page(self):
+        """The three entries share a URL prefix, so this is easy to get wrong."""
+        exceptions, arrivals = reverse("visibility:exceptions"), reverse("visibility:arrivals")
+        html = self.client.get(exceptions).content.decode()
+        self.assertNotIn(f'href="{arrivals}" class="menu-active"', html)
+        self.assertNotIn(f'href="{reverse("visibility:overview")}" class="menu-active"', html)
 
     def test_tracking_is_no_longer_in_the_navigation(self):
         self.assertNotIn(reverse("tracking:list"), self.nav_html())

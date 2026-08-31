@@ -13,16 +13,14 @@
   There is no acknowledge, assign or resolve. Exceptions have no ownership model
   yet, and a button that only looked like it did would be a lie about the state of
   the platform. The row's one action is to open the object.
+
+  Where that click lands is `object.detail_url`, the same rule the Exceptions queue
+  uses, so a finding opened from the summary and the same finding opened from the
+  queue go to the same place.
 {% endcomment %}
 
-{% if object.kind == "shipment" %}
-  {% url 'shipments:detail' object.shipment.pk as attention_url %}
-{% else %}
-  {% url 'containers:detail' object.container.pk as attention_url %}
-{% endif %}
-
 <li>
-  <a href="{{ attention_url }}"
+  <a href="{{ object.detail_url }}"
      class="group -mx-2 flex items-start gap-2.5 rounded-box px-2 py-2.5 transition-colors hover:bg-base-200">
     <span class="mt-1.5 size-2 shrink-0 rounded-full {% if object.has_exception %}bg-error{% else %}bg-warning{% endif %}"></span>
 

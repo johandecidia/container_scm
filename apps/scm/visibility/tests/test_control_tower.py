@@ -158,12 +158,35 @@ class ControlTowerPageTest(TestCase):
         """
         return f'<a href="{url}" class="stat bg-base-200'
 
-    def test_the_kpi_cards_apply_the_filter_they_count(self):
+    def test_the_operational_kpi_cards_drill_into_the_work_queues(self):
+        """Since UX-3 the Control Tower is the summary and the queues are the work.
+
+        Arriving and Exceptions lead to their queues; Delayed leads to the same
+        queue with its issue filter applied, because a delay is one of the things
+        that queue is about rather than a fourth destination.
+        """
         response = self.get()
+        for url in (
+            reverse("visibility:arrivals"),
+            reverse("visibility:exceptions"),
+            f"{reverse('visibility:exceptions')}?issue=delay",
+        ):
+            with self.subTest(url=url):
+                self.assertContains(response, self._kpi_card(url))
+
+    def test_no_kpi_card_still_filters_the_board_it_sits_on(self):
+        """A card that reloaded the same page with a filter is no longer a drill-down."""
         overview_url = reverse("visibility:overview")
+        response = self.get()
         for query in ("?eta=7", "?delayed=1", "?exceptions=1"):
             with self.subTest(query=query):
-                self.assertContains(response, self._kpi_card(f"{overview_url}{query}"))
+                self.assertNotContains(response, self._kpi_card(f"{overview_url}{query}"))
+
+    def test_the_attention_panel_offers_the_queue_it_summarises(self):
+        self.assertContains(self.get(), f'href="{reverse("visibility:exceptions")}" class="text-xs link')
+
+    def test_the_arrivals_panel_offers_the_queue_it_summarises(self):
+        self.assertContains(self.get(), f'href="{reverse("visibility:arrivals")}" class="text-xs link')
 
     def test_the_active_shipments_kpi_leads_to_the_shipment_list(self):
         """A total is not a filter — it links to the list it counts."""
@@ -180,20 +203,46 @@ class ControlTowerPageTest(TestCase):
         """
         self.assertNotContains(self.get(), '<div class="stat bg-base-200')
 
-    def test_the_exceptions_kpi_link_actually_filters(self):
+    # -- backwards compatibility -------------------------------------------
+    #
+    # The KPI cards and the navigation stopped pointing at these in UX-3, but the
+    # URLs are in bookmarks and in links people have shared. They keep working.
+
+    def test_the_old_exceptions_filter_url_still_filters_the_board(self):
         response = self.get(exceptions="1")
         self.assertContains(response, "SHP-HELD")
         self.assertNotContains(response, "SHP-LATE")
 
-    def test_the_delayed_kpi_link_actually_filters(self):
+    def test_the_old_delayed_filter_url_still_filters_the_board(self):
         response = self.get(delayed="1")
         self.assertContains(response, "SHP-LATE")
         self.assertNotContains(response, "SHP-HELD")
 
-    def test_the_arrivals_link_actually_filters(self):
+    def test_the_old_eta_filter_url_still_filters_the_board(self):
         response = self.get(eta="7")
         self.assertContains(response, "SHP-HELD")
         self.assertNotContains(response, "SHP-LATE")
+
+    # -- no duplicate definitions ------------------------------------------
+
+    def test_the_queues_and_the_control_tower_agree_about_what_needs_attention(self):
+        """One definition, two presentations. Two definitions would be the bug."""
+        from apps.scm.visibility.work_queues import get_exception_queue
+
+        overview = get_visibility_overview(self.team)
+        self.assertEqual(
+            {obj.key for obj in overview.needs_attention},
+            {item.key for item in get_exception_queue(self.team).items},
+        )
+
+    def test_the_queues_and_the_control_tower_agree_about_what_is_arriving(self):
+        from apps.scm.visibility.work_queues import get_arrival_queue
+
+        overview = get_visibility_overview(self.team)
+        self.assertEqual(
+            {obj.key for obj in overview.arriving_soon},
+            {obj.key for obj in get_arrival_queue(self.team).objects},
+        )
 
     # -- HTMX and the map --------------------------------------------------
 
