@@ -1,0 +1,68 @@
+{% load i18n %}
+
+{% comment %}
+  One expected arrival: a shipment with its boxes, or a container tracked on its own.
+
+  Usage: {% include "scm/visibility/partials/arrival_row.html" with object=object %}
+
+  Same reflowing grid as the exceptions queue — dense from `sm` up, stacked below —
+  and the same single link per row, to the object's own page.
+
+  Destination is the shipment's destination port, which is what was booked. Where
+  there is no shipment there is no destination, and the row says so rather than
+  printing where the box is now: current location is not a destination.
+{% endcomment %}
+
+<li>
+  <a href="{{ object.detail_url }}"
+     class="group -mx-2 grid grid-cols-1 gap-x-3 gap-y-1 rounded-box px-2 py-3 transition-colors hover:bg-base-200 sm:grid-cols-12 sm:items-start">
+
+    {# What is arriving. #}
+    <div class="min-w-0 sm:col-span-4">
+      {% include "scm/visibility/components/object_identity.html" with object=object %}
+      {% if object.carrier_name %}
+        <span class="mt-0.5 block truncate text-xs text-base-content/50">{{ object.carrier_name }}</span>
+      {% endif %}
+    </div>
+
+    {# Where it is going. #}
+    <div class="min-w-0 sm:col-span-3">
+      <span class="block truncate text-xs text-base-content/70">
+        <span class="sm:hidden text-base-content/40">{% translate "To" %}: </span>
+        {% if object.destination %}
+          {{ object.destination }}
+        {% else %}
+          <span class="text-base-content/40">{% translate "No destination recorded" %}</span>
+        {% endif %}
+      </span>
+      {% if object.origin %}
+        <span class="block truncate text-xs text-base-content/40">
+          {% blocktranslate trimmed with origin=object.origin %}from {{ origin }}{% endblocktranslate %}
+        </span>
+      {% endif %}
+    </div>
+
+    {# When. The hour only where a carrier forecast gave one. #}
+    <div class="min-w-0 sm:col-span-3">
+      <span class="block text-xs">
+        <span class="sm:hidden text-base-content/40">{% translate "ETA" %}: </span>
+        {{ object.current_eta|date:"d M Y" }}
+        {% if object.current_eta_at %}
+          <span class="text-base-content/60">{{ object.current_eta_at|time:"H:i" }}</span>
+        {% endif %}
+      </span>
+      <span class="block text-xs text-base-content/40">
+        {% if object.eta_source == "tracking" %}
+          {% translate "Carrier tracking" %}
+        {% else %}
+          {% translate "Shipment" %}
+        {% endif %}
+      </span>
+    </div>
+
+    {# In what condition. The visibility layer's own health, unchanged. #}
+    <div class="min-w-0 sm:col-span-2 sm:text-right">
+      {% include "scm/visibility/components/health_badge.html" with object=object %}
+    </div>
+  </a>
+</li>

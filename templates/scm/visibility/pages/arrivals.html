@@ -1,0 +1,15 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Arrivals — the operational planning queue for what is expected to land.
+
+  Answers four questions in one screen: what is arriving, when, where, and in what
+  condition. Everything that answers to a filter lives in the partial that HTMX
+  swaps, so the day groups and the count follow the chosen window.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/components/page_header.html" with title=_("Arrivals") subtitle=_("Upcoming containers and shipments.") %}
+  {% include "scm/visibility/partials/arrivals_queue.html" %}
+{% endblock %}
