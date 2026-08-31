@@ -1,0 +1,83 @@
+{% load i18n %}
+
+{% comment %}
+  How this order is being fulfilled, in batches.
+
+  Supplier deliveries are contextualised here rather than being a place you have to
+  navigate to separately: the question "how is this order arriving" is a question
+  about the order. Each row still links to the delivery's own page, which is where
+  its lines and its containers are edited.
+
+  Quantities and container counts are folded out of the delivery lines the read
+  model already loaded, so this tab costs one query for the deliveries themselves.
+
+  Ship and arrival dates print the actual where one is recorded and the planned
+  otherwise, labelled so the two are never confused.
+{% endcomment %}
+
+<section class="scm-panel">
+  <div class="flex flex-wrap items-baseline justify-between gap-3 mb-3">
+    <div class="flex items-baseline gap-2">
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">{% translate "Deliveries" %}</h2>
+      <span class="badge badge-xs badge-ghost font-medium">{{ workspace.delivery_count }}</span>
+    </div>
+    <a href="{% url 'supplier_deliveries:create' %}" class="text-xs link link-hover shrink-0">
+      {% translate "New delivery" %}
+    </a>
+  </div>
+
+  {% if workspace.delivery_rows %}
+    <div class="divide-y divide-base-200">
+      {% for row in workspace.delivery_rows %}
+        {% with delivery=row.delivery %}
+          <a href="{% url 'supplier_deliveries:detail' delivery_id=delivery.pk %}" class="flex items-start gap-3 py-3 px-2 -mx-2 rounded-box hover:bg-base-200/60 group">
+            <span class="text-base-content/40 pt-0.5 shrink-0"><i class="fa fa-truck w-4"></i></span>
+
+            <span class="min-w-0 flex-1">
+              <span class="flex flex-wrap items-baseline gap-2">
+                <span class="text-sm font-medium group-hover:underline">{{ delivery.delivery_reference }}</span>
+                {% include "scm/supplier_deliveries/partials/delivery_status_badge.html" with delivery=delivery %}
+              </span>
+
+              <span class="block text-xs text-base-content/60 mt-0.5">
+                {% blocktranslate trimmed count count=row.container_count %}
+                  {{ count }} container
+                {% plural %}
+                  {{ count }} containers
+                {% endblocktranslate %}
+                <span class="text-base-content/30">·</span>
+                {% blocktranslate trimmed with qty=row.quantity|floatformat:"-2" %}{{ qty }} units{% endblocktranslate %}
+              </span>
+
+              {% if row.ship_date or row.arrival_date %}
+                <span class="block text-xs text-base-content/50 mt-0.5">
+                  {% if row.ship_date %}
+                    {% if row.ship_date_is_actual %}
+                      {% blocktranslate trimmed with when=row.ship_date|date:"j M" %}Shipped {{ when }}{% endblocktranslate %}
+                    {% else %}
+                      {% blocktranslate trimmed with when=row.ship_date|date:"j M" %}Ship planned {{ when }}{% endblocktranslate %}
+                    {% endif %}
+                  {% endif %}
+                  {% if row.ship_date and row.arrival_date %}<span class="text-base-content/30">·</span>{% endif %}
+                  {% if row.arrival_date %}
+                    {% if row.arrival_date_is_actual %}
+                      {% blocktranslate trimmed with when=row.arrival_date|date:"j M" %}Arrived {{ when }}{% endblocktranslate %}
+                    {% else %}
+                      {% blocktranslate trimmed with when=row.arrival_date|date:"j M" %}ETA {{ when }}{% endblocktranslate %}
+                    {% endif %}
+                  {% endif %}
+                </span>
+              {% endif %}
+            </span>
+
+            <span class="text-base-content/30 pt-0.5 shrink-0"><i class="fa fa-arrow-right text-xs"></i></span>
+          </a>
+        {% endwith %}
+      {% endfor %}
+    </div>
+  {% else %}
+    {% translate "No deliveries against this order yet" as no_deliveries_title %}
+    {% translate "A supplier delivery is one batch shipped against this order. Create one to record what is leaving and when." as no_deliveries_message %}
+    {% include "scm/components/empty_state.html" with icon="fa-truck" title=no_deliveries_title message=no_deliveries_message %}
+  {% endif %}
+</section>

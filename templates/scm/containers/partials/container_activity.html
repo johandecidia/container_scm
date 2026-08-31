@@ -8,71 +8,16 @@
   sync runs, association rows, ETA history, and the container's own timestamps.
   See apps/scm/containers/activity.py.
 
-  The note at the bottom is part of the feature, not an apology. There is no
-  field-level audit trail in the schema, so "Container record updated" can name the
-  time and the person and nothing more. Saying so is what stops this view from
-  reading as a complete history when it is not one.
+  The note is part of the feature, not an apology. There is no field-level audit
+  trail in the schema, so "Container record updated" can name the time and the
+  person and nothing more. Saying so is what stops this view from reading as a
+  complete history when it is not one.
 {% endcomment %}
 
-<section class="scm-panel">
-  {% include "scm/components/section_header.html" with title=_("Activity") count=activity|length %}
+{% translate "Nothing has been recorded against this container yet." as empty_message %}
+{% blocktranslate trimmed asvar activity_note %}
+  Derived from movements, tracking runs, links and record timestamps. Edits are
+  dated but not itemised — which field changed is not recorded yet.
+{% endblocktranslate %}
 
-  {% if activity %}
-    <ol class="divide-y divide-base-200">
-      {% for entry in activity %}
-        <li class="py-3 flex items-start gap-3">
-          <span class="text-base-content/40 pt-0.5 shrink-0">
-            {% if entry.kind == "movement" %}
-              <i class="fa fa-dolly w-4"></i>
-            {% elif entry.kind == "shipment" %}
-              <i class="fa fa-ship w-4"></i>
-            {% elif entry.kind == "delivery" %}
-              <i class="fa fa-truck w-4"></i>
-            {% elif entry.kind == "tracking" %}
-              <i class="fa fa-satellite-dish w-4"></i>
-            {% elif entry.kind == "refresh" %}
-              <i class="fa fa-rotate w-4"></i>
-            {% elif entry.kind == "eta" %}
-              <i class="fa fa-clock w-4"></i>
-            {% elif entry.kind == "created" %}
-              <i class="fa fa-plus w-4"></i>
-            {% else %}
-              <i class="fa fa-pen w-4"></i>
-            {% endif %}
-          </span>
-
-          <p class="text-xs text-base-content/50 shrink-0 w-20 sm:w-28 pt-0.5">
-            {{ entry.occurred_at|date:"d M H:i" }}
-          </p>
-
-          <div class="min-w-0">
-            <p class="text-sm font-medium">
-              {% if entry.url %}
-                <a href="{{ entry.url }}" class="link link-hover">{{ entry.title }}</a>
-              {% else %}
-                {{ entry.title }}
-              {% endif %}
-            </p>
-            {% if entry.detail %}
-              <p class="text-xs text-base-content/70 mt-0.5">{{ entry.detail }}</p>
-            {% endif %}
-            {% if entry.actor %}
-              <p class="text-xs text-base-content/50 mt-0.5">{{ entry.actor }}</p>
-            {% endif %}
-          </div>
-        </li>
-      {% endfor %}
-    </ol>
-  {% else %}
-    <p class="text-sm text-base-content/60 py-4">
-      {% translate "Nothing has been recorded against this container yet." %}
-    </p>
-  {% endif %}
-
-  <p class="text-xs text-base-content/40 mt-4 pt-4 border-t border-base-300">
-    {% blocktranslate trimmed %}
-      Derived from movements, tracking runs, links and record timestamps. Edits are
-      dated but not itemised — which field changed is not recorded yet.
-    {% endblocktranslate %}
-  </p>
-</section>
+{% include "scm/components/activity_list.html" with activity=activity empty_message=empty_message note=activity_note %}

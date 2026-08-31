@@ -1,0 +1,91 @@
+{% load i18n %}
+
+{% comment %}
+  The purchase order workspace header: which order, whose goods, and how far along
+  it actually is.
+
+  The badge beside the number is the SCM *logistics* status — computed from the
+  fulfillment quantities, and the only status an operator can act on. The Business
+  Central *document* status is a different fact about a different thing, so it sits
+  in Order details on the Overview tab with the rest of the source metadata rather
+  than competing here. Conflating the two is the specific mistake this header
+  exists to stop.
+
+  The frame is the container workspace's: identity, status, business context,
+  dates, source, progress, actions.
+{% endcomment %}
+
+<div class="mb-6">
+  <a href="{% url 'procurement:purchase_order_list' %}" class="text-sm text-base-content/60 hover:text-base-content inline-flex items-center gap-1 mb-2">
+    <i class="fa fa-arrow-left text-xs"></i>
+    {% translate "Purchase Orders" %}
+  </a>
+
+  <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div class="min-w-0">
+      {# Identity. The PO number is the loudest thing on the page. #}
+      <div class="flex flex-wrap items-center gap-3">
+        <h1 class="text-2xl font-bold break-all">
+          {% blocktranslate trimmed with number=purchase_order.po_number %}PO {{ number }}{% endblocktranslate %}
+        </h1>
+        <span class="badge badge-sm {{ workspace.logistics_status_tone }}">{{ workspace.logistics_status_label }}</span>
+      </div>
+
+      {# Whose goods. #}
+      {% if purchase_order.supplier_name %}
+        <p class="text-sm font-medium mt-1">{{ purchase_order.supplier_name }}</p>
+      {% endif %}
+
+      {# Dates that mean something operationally. #}
+      {% if purchase_order.order_date or purchase_order.expected_receipt_date %}
+        <p class="text-sm text-base-content/70 mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {% if purchase_order.order_date %}
+            <span>{% blocktranslate trimmed with when=purchase_order.order_date|date:"j F Y" %}Ordered {{ when }}{% endblocktranslate %}</span>
+          {% endif %}
+          {% if purchase_order.expected_receipt_date %}
+            {% if purchase_order.order_date %}<span class="text-base-content/30">·</span>{% endif %}
+            <span>{% blocktranslate trimmed with when=purchase_order.expected_receipt_date|date:"j F Y" %}Expected {{ when }}{% endblocktranslate %}</span>
+          {% endif %}
+        </p>
+      {% endif %}
+
+      {% comment %}
+        Who owns this record. A Business Central order is read-only in SCM, and the
+        header says so where somebody would otherwise go looking for an edit button.
+      {% endcomment %}
+      <p class="text-xs text-base-content/50 mt-2">
+        {% if workspace.is_read_only %}
+          <span class="badge badge-info badge-sm" title="{% translate 'This purchase order is read-only in SCM.' %}">
+            {% translate "Managed by Business Central" %}
+          </span>
+        {% else %}
+          {% blocktranslate trimmed with source=workspace.source_label %}Source: {{ source }}{% endblocktranslate %}
+        {% endif %}
+      </p>
+    </div>
+
+    {% comment %}
+      One action, so one button rather than a menu hiding it behind two clicks.
+      Adding containers books numbers onto this order through the shared intake
+      modal, and it is the only write this page has: there is no purchase order edit
+      view and no import-now endpoint, so neither is offered. Delete stays on the
+      list where it already lives — a Business Central order is master-owned
+      elsewhere, and the workspace is not the place to widen that.
+
+      A menu appears here the moment there is a second real action to put in it. An
+      Actions dropdown is not a reason to invent one.
+    {% endcomment %}
+    <button
+      type="button"
+      class="btn btn-primary btn-sm shrink-0"
+      hx-get="{% url 'containers:create' %}?purchase_order={{ purchase_order.pk }}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      <i class="fa fa-plus text-xs"></i>
+      {% translate "Add containers" %}
+    </button>
+  </div>
+
+  {% include "scm/procurement/partials/purchase_order_progress.html" %}
+</div>

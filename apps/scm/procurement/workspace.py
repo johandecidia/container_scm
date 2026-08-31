@@ -99,6 +99,28 @@ class ContainerRow:
     def needs_shipment(self) -> bool:
         return self.shipment is None
 
+    @property
+    def filter_buckets(self) -> str:
+        """Which of the Containers tab's quick filters this row belongs to.
+
+        A space-separated string because the filtering happens in the browser over
+        rows that are already rendered — one attribute the client can test, rather
+        than four booleans the template has to spell out. A row can be in more than
+        one bucket: a box that arrived without ever being put on a shipment is both
+        arrived and missing a shipment, and both filters should find it.
+        """
+        from apps.scm.visibility.read_models import JourneyState
+
+        buckets = []
+        if self.needs_shipment:
+            buckets.append("needs-shipment")
+        state = self.journey_state
+        if state == JourneyState.IN_TRANSIT:
+            buckets.append("moving")
+        elif state in (JourneyState.ARRIVED, JourneyState.DELIVERED):
+            buckets.append("arrived")
+        return " ".join(buckets)
+
 
 @dataclass(frozen=True)
 class DeliveryRow:
