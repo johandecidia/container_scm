@@ -24,19 +24,21 @@ is not an audit log:
 
 A real audit trail is a schema change and belongs to its own piece of work. Until
 then this view shows what is true and the template says what it cannot show.
+
+The entry shape itself lives in :mod:`apps.scm.activity`, shared with the other
+workspaces that have an Activity tab.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from django.utils.translation import gettext_lazy as _
 
-if TYPE_CHECKING:
-    from django_stubs_ext import StrOrPromise
+from apps.scm.activity import ActivityEntry
 
+if TYPE_CHECKING:
     from apps.teams.models import Team
 
     from .models import Container
@@ -52,23 +54,6 @@ _ACTIVITY_LIMIT = 40
 # container would report an edit it never had — which is exactly the kind of
 # invented history this module exists to avoid.
 _EDIT_THRESHOLD = timedelta(seconds=1)
-
-
-@dataclass(frozen=True)
-class ActivityEntry:
-    """One thing that happened to this container's record.
-
-    ``kind`` selects the icon and nothing else — it is presentation, not a taxonomy
-    anything depends on. ``actor`` is a person where we know of one and a system
-    where we do not, and the two are never conflated.
-    """
-
-    occurred_at: datetime
-    kind: str
-    title: StrOrPromise
-    detail: str = ""
-    actor: str = ""
-    url: str = ""
 
 
 def get_container_activity(team: Team, container: Container, workspace: ContainerWorkspace) -> list[ActivityEntry]:
