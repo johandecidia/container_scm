@@ -238,6 +238,26 @@ class QueueCompositionTest(TestCase):
     def test_the_carrier_filter_offers_the_carriers_in_the_queue(self):
         self.assertEqual(self.queue().carrier_choices, ["MSC", "Maersk"])
 
+    def test_an_issue_filter_that_matches_nothing_is_still_offered(self):
+        """The Control Tower's Delayed card links here whether or not anything is delayed.
+
+        The filter applies either way. What must not happen is the select reading
+        "Any issue" while the list is filtered to nothing: the empty state then
+        advises clearing a filter that nothing on the page shows.
+        """
+        queue = self.queue(issue="rolled")
+        self.assertEqual(queue.items, [])
+        self.assertIn("rolled", dict(queue.issue_choices))
+
+    def test_a_carrier_filter_that_matches_nothing_is_still_offered(self):
+        queue = self.queue(carrier="Hapag-Lloyd")
+        self.assertEqual(queue.items, [])
+        self.assertIn("Hapag-Lloyd", queue.carrier_choices)
+
+    def test_an_unknown_issue_code_is_not_invented_into_a_choice(self):
+        """Only issue types the queue has words for. A typo must not become a filter."""
+        self.assertNotIn("not_a_real_issue", dict(self.queue(issue="not_a_real_issue").issue_choices))
+
 
 class QueueSortOrderTest(TestCase):
     """Band first, then the soonest arrival. Documented, so it can be relied on."""

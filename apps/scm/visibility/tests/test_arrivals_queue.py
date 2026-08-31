@@ -436,6 +436,22 @@ class ArrivalFilterTest(TestCase):
         self.assertEqual(queue.carrier_choices, ["CMA CGM", "Maersk"])
         self.assertEqual(queue.destination_choices, ["Gothenburg", "Rotterdam"])
 
+    def test_a_filter_that_matches_nothing_still_appears_in_its_dropdown(self):
+        """A filtered link can outlive the state behind it.
+
+        The filter applies regardless; what must not happen is the page reading
+        "Any carrier" while the list is in fact filtered down to nothing, because
+        then the empty state's advice to clear a filter points at nothing visible.
+        """
+        queue = get_arrival_queue(self.team, parse_arrival_queue_filters({"carrier": "Hapag-Lloyd"}))
+        self.assertEqual(queue.objects, [])
+        self.assertIn("Hapag-Lloyd", queue.carrier_choices)
+
+    def test_a_destination_that_matches_nothing_still_appears_too(self):
+        queue = get_arrival_queue(self.team, parse_arrival_queue_filters({"destination": "Felixstowe"}))
+        self.assertEqual(queue.objects, [])
+        self.assertIn("Felixstowe", queue.destination_choices)
+
     def test_the_default_window_alone_is_not_an_active_filter(self):
         """Otherwise the page offers to clear filters nobody applied."""
         self.assertFalse(ArrivalQueueFilters().is_active)

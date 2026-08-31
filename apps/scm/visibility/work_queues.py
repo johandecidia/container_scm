@@ -361,8 +361,10 @@ def get_exception_queue(team: Team, filters: ExceptionQueueFilters | None = None
     return ExceptionQueue(
         items=_filter_exception_items(items, filters),
         filters=filters,
-        carrier_choices=sorted({item.object.carrier_name for item in items if item.object.carrier_name}),
-        issue_choices=_issue_choices(items),
+        carrier_choices=_text_choices(
+            {item.object.carrier_name for item in items if item.object.carrier_name}, filters.carrier
+        ),
+        issue_choices=_issue_choices(items, filters.issue),
         total=len(items),
     )
 
@@ -379,8 +381,10 @@ def get_arrival_queue(team: Team, filters: ArrivalQueueFilters | None = None) ->
         # Offered from everything in the window rather than from the filtered
         # result, so choosing a carrier does not remove the other carriers from the
         # dropdown that was just used to choose it.
-        carrier_choices=sorted({obj.carrier_name for obj in in_window if obj.carrier_name}),
-        destination_choices=sorted({obj.destination for obj in in_window if obj.destination}),
+        carrier_choices=_text_choices({obj.carrier_name for obj in in_window if obj.carrier_name}, filters.carrier),
+        destination_choices=_text_choices(
+            {obj.destination for obj in in_window if obj.destination}, filters.destination
+        ),
     )
 
 
@@ -410,14 +414,34 @@ def _delay_detail(obj: VisibilityObject) -> str:
     return reason
 
 
-def _issue_choices(items: list[QueueItem]) -> list[tuple[str, str]]:
+def _issue_choices(items: list[QueueItem], active: str = "") -> list[tuple[str, str]]:
     """The issue types actually present, in ISSUE_LABELS order.
 
     Only what is in the queue: a filter offering "Rolled" when nothing has rolled
     invites a click that can only return an empty list.
     """
     present = {issue_type for item in items for issue_type in item.issue_types}
+    if active in ISSUE_LABELS:
+        present.add(active)
     return [(issue_type, str(label)) for issue_type, label in ISSUE_LABELS.items() if issue_type in present]
+
+
+def _text_choices(present: set[str], active: str = "") -> list[str]:
+    """Sorted free-text choices — carriers, destinations — with *active* guaranteed.
+
+    A filter can arrive by URL naming something the queue has none of: the Control
+    Tower's Delayed card links to ``?issue=delay`` whether or not anything is
+    delayed, and a filtered link can be bookmarked and reopened after the state
+    behind it cleared. Offering only what is present would drop that value from the
+    dropdown, leaving the control reading "Any carrier" while the list was in fact
+    filtered to nothing — and the empty state advising a filter be cleared that
+    nothing on the page showed. The filter still applies either way; this is about
+    the page telling the truth about it.
+    """
+    choices = sorted(present)
+    if active and active not in choices:
+        choices = sorted({*choices, active})
+    return choices
 
 
 def _filter_exception_items(items: list[QueueItem], filters: ExceptionQueueFilters) -> list[QueueItem]:
