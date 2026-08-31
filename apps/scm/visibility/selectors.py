@@ -364,15 +364,21 @@ def _apply_filters(objects: list[VisibilityObject], filters: VisibilityFilters) 
     if filters.exceptions_only:
         result = [obj for obj in result if obj.has_exception]
     if filters.eta_window:
-        result = _filter_by_eta_window(result, filters.eta_window)
+        result = filter_by_eta_window(result, filters.eta_window)
     if filters.search:
-        result = [obj for obj in result if _matches_search(obj, filters.search.lower())]
+        result = [obj for obj in result if matches_search(obj, filters.search.lower())]
     return result
 
 
-def _filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[VisibilityObject]:
+def filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[VisibilityObject]:
+    """Narrow *objects* to those arriving within *window*.
+
+    Public because the work queues ask the same question the Control Tower's ETA
+    filter does, and two implementations of "the next seven days" would eventually
+    disagree about whether today counts. An unrecognised window narrows nothing.
+    """
     today = timezone.localdate()
-    windows = {"7": 7, "14": 14, "30": 30}
+    windows = {"today": 0, "7": 7, "14": 14, "30": 30}
     if window == "overdue":
         return [obj for obj in objects if obj.current_eta and obj.current_eta < today]
     days = windows.get(window)
@@ -382,7 +388,8 @@ def _filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[
     return [obj for obj in objects if obj.current_eta and today <= obj.current_eta <= cutoff]
 
 
-def _matches_search(obj: VisibilityObject, needle: str) -> bool:
+def matches_search(obj: VisibilityObject, needle: str) -> bool:
+    """True when *needle* — already lowercased — appears in anything naming *obj*."""
     haystack = [obj.label, obj.carrier_name, obj.vessel_name, obj.voyage_number]
     haystack.extend(container.container_id for container in obj.containers)
     if obj.shipment is not None:

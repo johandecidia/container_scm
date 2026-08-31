@@ -147,6 +147,22 @@ class VisibilityObject:
         return container.container_id if container else ""
 
     @property
+    def detail_url(self) -> str:
+        """The page where this object can be understood and acted on.
+
+        A shipment leads to the shipment, a standalone container to its workspace —
+        the object the visibility layer is actually about. A queue row is a single
+        link, so this is the one place that decides where a click lands, and the
+        work queues and the attention list cannot disagree about it.
+        """
+        from django.urls import reverse
+
+        if self.kind == ObjectKind.SHIPMENT and self.shipment is not None:
+            return reverse("shipments:detail", args=[self.shipment.pk])
+        container = self.container
+        return reverse("containers:detail", args=[container.pk]) if container is not None else ""
+
+    @property
     def lead(self) -> ContainerWorkspace | None:
         """The container whose tracking speaks for the object.
 
@@ -162,6 +178,29 @@ class VisibilityObject:
         if dated:
             return max(dated, key=lambda pair: pair[0])[1]
         return self.workspaces[0] if self.workspaces else None
+
+    # -- route -------------------------------------------------------------
+    #
+    # Where this came from and where it is going. The shipment's ports are the
+    # answer for both kinds of object: they are what was booked, and a container
+    # tracked on its own still carries its shipment here when it has one.
+    #
+    # There is deliberately no fallback to the current position. A bulk-built
+    # container workspace has no journey to read ports out of, and the place a box
+    # is now is not the place it is going — printing one as the other would put a
+    # confident wrong destination on an arrivals list.
+
+    @property
+    def origin(self) -> str:
+        return self.shipment.origin_port if self.shipment else ""
+
+    @property
+    def destination(self) -> str:
+        return self.shipment.destination_port if self.shipment else ""
+
+    @property
+    def route_label(self) -> str:
+        return self.shipment.route_label if self.shipment else ""
 
     # -- carrier and carriage ---------------------------------------------
 
