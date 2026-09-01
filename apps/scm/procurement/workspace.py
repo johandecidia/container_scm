@@ -283,6 +283,16 @@ class PurchaseOrderWorkspace:
         """True when there is an ordered quantity to measure progress against."""
         return self.ordered_qty > 0
 
+    @property
+    def has_started(self) -> bool:
+        """True once anything has been booked, shipped or given a container.
+
+        The threshold for saying something is missing. An order placed yesterday
+        with nothing against it is not incomplete, it is new, and flagging its whole
+        quantity as a shortfall would train people to ignore the flags.
+        """
+        return self.assigned_qty > 0 or self.shipped_qty > 0 or bool(self.container_rows)
+
     # -- containers ---------------------------------------------------------
 
     @property
@@ -356,8 +366,7 @@ class PurchaseOrderWorkspace:
         only raised once the order has begun to be fulfilled.
         """
         gaps: list[Gap] = []
-        started = self.assigned_qty > 0 or self.shipped_qty > 0 or bool(self.container_rows)
-        if not started:
+        if not self.has_started:
             return gaps
 
         if self.unbooked_qty > 0:

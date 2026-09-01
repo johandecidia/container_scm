@@ -134,14 +134,27 @@
                   <td class="text-right tabular-nums">{{ line.ordered_qty|floatformat:"-2" }}</td>
                   <td class="text-right tabular-nums">
                     {{ summary.booked_qty|floatformat:"-2" }}
-                    {% if summary.unbooked_qty %}
-                      <span class="text-warning text-xs">(−{{ summary.unbooked_qty|floatformat:"-2" }})</span>
+                    {% comment %}
+                      Spelled out rather than shown as a signed number: "0 (−1)"
+                      reads as if minus one had been booked. And only once the order
+                      has started — every line of a brand-new order is short by its
+                      whole quantity, which is not news.
+                    {% endcomment %}
+                    {% if workspace.has_started and summary.unbooked_qty %}
+                      <span class="text-warning text-xs whitespace-nowrap">
+                        {% blocktranslate trimmed with qty=summary.unbooked_qty|floatformat:"-2" %}{{ qty }} short{% endblocktranslate %}
+                      </span>
                     {% endif %}
                   </td>
                   <td class="text-right tabular-nums">{{ line.shipped_qty|floatformat:"-2" }}</td>
                   <td class="text-right tabular-nums">{{ line.received_qty|floatformat:"-2" }}</td>
-                  <td class="text-right tabular-nums">{{ line.unit_price|default:"—" }}</td>
-                  <td class="text-right tabular-nums">{{ line.line_amount|default:"—" }}</td>
+                  {% comment %}
+                    Money to two places. The columns multiply a 4-decimal price by a
+                    3-decimal quantity, so an unformatted amount prints seven
+                    decimals — arithmetic precision shown as if it were currency.
+                  {% endcomment %}
+                  <td class="text-right tabular-nums">{{ line.unit_price|floatformat:2|default:"—" }}</td>
+                  <td class="text-right tabular-nums">{{ line.line_amount|floatformat:2|default:"—" }}</td>
                   <td class="text-xs text-base-content/60">{{ line.expected_receipt_date|default:"—" }}</td>
                 </tr>
               {% endwith %}
@@ -150,8 +163,10 @@
           {% if workspace.total_order_amount is not None %}
             <tfoot>
               <tr class="font-semibold">
-                <td colspan="8" class="text-right text-base-content/60 text-xs uppercase tracking-wide">{% translate "Total" %}</td>
-                <td class="text-right tabular-nums">{{ workspace.total_order_amount }}</td>
+                <td colspan="8" class="text-right text-base-content/60 text-xs uppercase tracking-wide">
+                  {% blocktranslate trimmed with currency=purchase_order.currency %}Total {{ currency }}{% endblocktranslate %}
+                </td>
+                <td class="text-right tabular-nums">{{ workspace.total_order_amount|floatformat:2 }}</td>
                 <td></td>
               </tr>
             </tfoot>

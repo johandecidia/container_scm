@@ -56,8 +56,9 @@
           {% endblocktranslate %}
         </span>
         {% if workspace.moved_in_last_week %}
-          <span class="text-base-content/30">·</span>
-          <span class="text-base-content/70">
+          {# The separator only earns its place when the two phrases share a line. #}
+          <span class="text-base-content/30 hidden sm:inline">·</span>
+          <span class="text-base-content/70 basis-full sm:basis-auto">
             {% blocktranslate trimmed count count=workspace.moved_in_last_week %}
               {{ count }} arrival recorded in the last 7 days
             {% plural %}
