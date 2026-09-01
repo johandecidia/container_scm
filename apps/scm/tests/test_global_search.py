@@ -193,12 +193,19 @@ class SearchScopeTest(SearchTestBase):
         self.assertEqual([result.title for result in shipments], ["SH-2026-00124"])
         self.assertEqual(shipments[0].subtitle, "Shanghai → Gothenburg")
 
-    def test_a_location_finds_the_containers_recorded_there(self):
+    def test_a_location_leads_to_its_own_workspace(self):
+        from django.urls import reverse
+
         results = self._search("Oceanterminalen")
 
         locations = [result for result in results if result.kind == "location"]
         self.assertEqual([result.title for result in locations], ["Oceanterminalen"])
-        self.assertIn(f"location_id={self.location.pk}", locations[0].url)
+        # Not the container list filtered to it, which is what this returned before
+        # the location workspace existed.
+        self.assertEqual(
+            locations[0].url,
+            reverse("containers:location_detail", kwargs={"location_id": self.location.pk}),
+        )
 
     def test_containers_are_offered_before_the_supporting_kinds(self):
         """A term that hits several kinds still leads with the container."""

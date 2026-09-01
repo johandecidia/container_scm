@@ -273,7 +273,7 @@ class WorkspaceRelatedTest(WorkspacePageTestBase):
         )
         self.assertContains(response, "CPI")
 
-    def test_a_recorded_location_links_to_the_containers_there(self):
+    def test_a_recorded_location_links_to_its_workspace(self):
         location = ContainerLocation.objects.create(
             team=self.team, name="Oceanterminalen", city="Gothenburg", country="Sweden"
         )
@@ -283,7 +283,7 @@ class WorkspaceRelatedTest(WorkspacePageTestBase):
         response = self._get()
 
         self.assertContains(response, "Oceanterminalen")
-        self.assertContains(response, f"{reverse('containers:list')}?location_id={location.pk}")
+        self.assertContains(response, reverse("containers:location_detail", args=[location.pk]))
 
     def test_a_container_with_no_relations_says_so_once(self):
         response = self._get()

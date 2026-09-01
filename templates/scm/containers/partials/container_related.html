@@ -8,10 +8,6 @@
   Only relationships that exist are shown. There is no "no shipment" row and no
   empty PO card — an absent relationship is absence of a row, and a workspace with
   none says so once, at the bottom.
-
-  Location is deliberately linked to the container list filtered by that location
-  rather than to a location workspace: no location detail route exists yet, and a
-  link to nothing would be worse than the honest "everything here" destination.
 {% endcomment %}
 
 <div class="flex flex-col gap-4">
@@ -90,15 +86,8 @@
       {% include "scm/components/section_header.html" with title=_("Current location") %}
       {% with location=container.current_location %}
         {% firstof location.city|add:", "|add:location.country location.city location.country as place %}
-        {% url 'containers:list' as list_url %}
-        {% comment %}
-          The primary key is stringified before it is concatenated: the `add`
-          filter falls back to string concatenation only when both sides are
-          strings, and would silently produce an empty href otherwise.
-        {% endcomment %}
-        {% with location_pk=location.pk|stringformat:"s" %}
-          {% include "scm/components/related_object.html" with icon="fa-warehouse" title=location.name subtitle=place meta=location.get_location_type_display url=list_url|add:"?location_id="|add:location_pk note=_("Opens every container recorded at this location.") %}
-        {% endwith %}
+        {% url 'containers:location_detail' location.pk as location_url %}
+        {% include "scm/components/related_object.html" with icon="fa-warehouse" title=location.name subtitle=place meta=location.get_location_type_display url=location_url %}
       {% endwith %}
     </section>
   {% endif %}

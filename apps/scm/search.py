@@ -191,11 +191,12 @@ def _search_shipments(team: Team, q: str) -> list[SearchResult]:
 
 
 def _search_locations(team: Team, q: str) -> list[SearchResult]:
-    """Locations matching *q*.
+    """Locations matching *q*, each leading to its own workspace.
 
-    A location has no workspace of its own yet, so the destination is the container
-    list filtered to it — "everything recorded here", which is the question a
-    location is usually being searched for in order to ask.
+    The destination used to be the container list filtered to the location, because
+    no location page existed. It does now, and it answers more of what somebody
+    searching for a depot wants to know — what is standing there, and what has moved
+    — so the filtered list is no longer the best available answer.
     """
     from django.urls import reverse
 
@@ -210,7 +211,7 @@ def _search_locations(team: Team, q: str) -> list[SearchResult]:
             title=location.name,
             subtitle=", ".join(part for part in (location.city, location.country) if part)
             or location.get_location_type_display(),
-            url=f"{reverse('containers:list')}?location_id={location.pk}",
+            url=reverse("containers:location_detail", kwargs={"location_id": location.pk}),
         )
         for location in locations
     ]

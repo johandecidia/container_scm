@@ -173,6 +173,59 @@ class LocationWorkspacePageTest(TestCase):
 
 
 @override_settings(STORAGES=_TEST_STORAGES)
+class LocationsAreReachableTest(TestCase):
+    """Every place a location is named leads to its workspace, not to a workaround."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="Reach", slug="loc-ws-reach")
+        cls.user = CustomUser.objects.create_user(username="loc-ws-reach@example.com", password="pw")
+        cls.team.members.add(cls.user, through_defaults={"role": ROLE_MEMBER})
+        cls.depot = _location(cls.team)
+        cls.container = _container(cls.team, "900001", location=cls.depot)
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.workspace_url = reverse("containers:location_detail", args=[self.depot.pk])
+
+    def test_the_list_links_each_location_to_its_workspace(self):
+        response = self.client.get(reverse("containers:location_list"))
+        self.assertContains(response, self.workspace_url)
+
+    def test_the_list_still_shows_the_container_count(self):
+        response = self.client.get(reverse("containers:location_list"))
+        self.assertContains(response, "Oceanterminalen")
+        self.assertContains(response, "Containers")
+
+    def test_the_container_workspace_links_to_the_location_workspace(self):
+        response = self.client.get(reverse("containers:detail", args=[self.container.pk]))
+        self.assertContains(response, self.workspace_url)
+
+    def test_global_search_links_to_the_location_workspace(self):
+        from apps.scm.search import search_scm
+
+        results = [result for result in search_scm(self.team, "Oceanterminalen") if result.kind == "location"]
+
+        self.assertEqual([result.url for result in results], [self.workspace_url])
+
+    def test_the_old_filtered_container_list_url_still_works(self):
+        response = self.client.get(reverse("containers:list"), {"location_id": self.depot.pk})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.container.container_id)
+
+    def test_search_does_not_reach_another_teams_location(self):
+        from apps.scm.search import search_scm
+
+        other = Team.objects.create(name="Other", slug="loc-ws-reach-other")
+        _location(other, name="Oceanterminalen")
+
+        results = [result for result in search_scm(self.team, "Oceanterminalen") if result.kind == "location"]
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, self.workspace_url)
+
+
+@override_settings(STORAGES=_TEST_STORAGES)
 class LocationWorkspaceQueryCountTest(TestCase):
     """A busy depot must not cost more queries than a quiet one."""
 
