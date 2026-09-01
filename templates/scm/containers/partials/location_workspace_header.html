@@ -1,0 +1,120 @@
+{% load i18n %}
+
+{% comment %}
+  The location workspace header: which place this is, and what is standing on it.
+
+  The headline number is the current inventory — the containers whose
+  `current_location` points here, counted on read. There is no stored count and
+  nothing to keep in sync.
+
+  Expected arrivals are deliberately absent from the header. No reliable
+  relationship connects a location to a shipment's destination yet, and a number
+  here would be the most visible place to put a guess. The Expected tab says why.
+
+  Same frame as the container and purchase order headers: back link, identity,
+  context, the figures that matter, actions.
+{% endcomment %}
+
+<div class="mb-6">
+  <a href="{% url 'containers:location_list' %}" class="text-sm text-base-content/60 hover:text-base-content inline-flex items-center gap-1 mb-2">
+    <i class="fa fa-arrow-left text-xs"></i>
+    {% translate "Locations" %}
+  </a>
+
+  <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div class="min-w-0">
+      <div class="flex flex-wrap items-center gap-3">
+        <h1 class="text-2xl font-bold break-words">{{ location.name }}</h1>
+        {% if not workspace.is_active %}
+          <span class="badge badge-ghost badge-sm" title="{% translate 'This location is deactivated. Containers recorded here are still shown.' %}">
+            {% translate "Inactive" %}
+          </span>
+        {% endif %}
+      </div>
+
+      <p class="text-sm text-base-content/70 mt-1">
+        {{ workspace.type_label }}
+        {% if workspace.place %}
+          <span class="text-base-content/30 mx-1">·</span>{{ workspace.place }}
+        {% endif %}
+      </p>
+
+      {% if location.owner_name or location.external_reference %}
+        <p class="text-xs text-base-content/50 mt-1">
+          {% if location.owner_name %}{{ location.owner_name }}{% endif %}
+          {% if location.owner_name and location.external_reference %}<span class="text-base-content/30 mx-1">·</span>{% endif %}
+          {% if location.external_reference %}{{ location.external_reference }}{% endif %}
+        </p>
+      {% endif %}
+
+      <p class="text-sm mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span class="font-medium">
+          {% blocktranslate trimmed count count=workspace.container_count %}
+            {{ count }} container currently here
+          {% plural %}
+            {{ count }} containers currently here
+          {% endblocktranslate %}
+        </span>
+        {% if workspace.moved_in_last_week %}
+          <span class="text-base-content/30">·</span>
+          <span class="text-base-content/70">
+            {% blocktranslate trimmed count count=workspace.moved_in_last_week %}
+              {{ count }} arrival recorded in the last 7 days
+            {% plural %}
+              {{ count }} arrivals recorded in the last 7 days
+            {% endblocktranslate %}
+          </span>
+        {% endif %}
+      </p>
+    </div>
+
+    {% comment %}
+      Actions. Editing a location and toggling it active are real endpoints and are
+      offered. Gate in, gate out and move are not: `set_container_location` exists as
+      a service but nothing exposes it over HTTP, so there is no workflow behind
+      those buttons. A menu entry that opened nothing would misdescribe the platform.
+    {% endcomment %}
+    <div class="dropdown dropdown-end shrink-0">
+      <div tabindex="0" role="button" class="btn btn-outline btn-sm">
+        <i class="fa fa-bolt text-xs"></i>
+        {% translate "Actions" %}
+        <i class="fa fa-chevron-down text-xs"></i>
+      </div>
+      <ul tabindex="0" class="dropdown-content menu z-50 mt-1 w-60 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+        <li>
+          <button
+            type="button"
+            hx-get="{% url 'containers:location_update' location.pk %}"
+            hx-target="#modal-container"
+            hx-swap="innerHTML"
+          >
+            <i class="fa fa-edit w-4"></i>
+            {% translate "Edit location" %}
+          </button>
+        </li>
+        <li>
+          <a href="{% url 'containers:list' %}?location_id={{ location.pk }}">
+            <i class="fa fa-box w-4"></i>
+            {% translate "Open in container list" %}
+          </a>
+        </li>
+        <li class="mt-1 border-t border-base-200 pt-1">
+          {% comment %}
+            A plain form rather than HTMX: the list page swaps its own table back in,
+            which is not what this page wants. `return_to` asks the shared endpoint
+            to come back here instead — a flag, not a URL, so it cannot be pointed
+            somewhere else.
+          {% endcomment %}
+          <form method="post" action="{% url 'containers:location_deactivate' location.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="return_to" value="detail">
+            <button type="submit" class="w-full text-left">
+              <i class="fa {% if workspace.is_active %}fa-toggle-off{% else %}fa-toggle-on{% endif %} w-4"></i>
+              {% if workspace.is_active %}{% translate "Deactivate location" %}{% else %}{% translate "Activate location" %}{% endif %}
+            </button>
+          </form>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>

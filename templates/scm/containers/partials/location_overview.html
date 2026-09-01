@@ -1,0 +1,71 @@
+{% load i18n %}
+
+{% comment %}
+  Overview: what is standing here, what is expected, and what moved recently.
+
+  The status breakdown lists only the statuses actually present. An absent status
+  renders no row rather than a zero — a depot holding nothing but available boxes
+  should not display four empty counters.
+
+  Expected arrivals get a panel here rather than being hidden, because "nothing is
+  expected" and "we cannot tell you what is expected" are different answers and the
+  second one is the true one today. It says so in one sentence and points at the
+  Arrivals queue, which does answer the question for the fleet as a whole.
+{% endcomment %}
+
+<div class="flex flex-col gap-4">
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+    {# ---------------------------------------------------------------- #}
+    {# Current inventory.                                               #}
+    {# ---------------------------------------------------------------- #}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Current inventory") count=workspace.container_count %}
+
+      {% if workspace.is_empty %}
+        <p class="text-sm text-base-content/60 py-2">
+          {% translate "No containers are recorded at this location." %}
+        </p>
+      {% else %}
+        <ul class="divide-y divide-base-200">
+          {% for row in workspace.occupied_status_counts %}
+            <li class="py-2 flex items-baseline justify-between gap-3 text-sm">
+              <span>{{ row.label }}</span>
+              <span class="tabular-nums font-medium">{{ row.count }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+      <p class="text-xs text-base-content/40 mt-3 pt-3 border-t border-base-300">
+        {% translate "Counted from the containers whose current location is this one." %}
+      </p>
+    </section>
+
+    {# ---------------------------------------------------------------- #}
+    {# Expected arrivals — or why there is no honest number.            #}
+    {# ---------------------------------------------------------------- #}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Expected arrivals") %}
+      {% include "scm/containers/partials/location_expected_note.html" %}
+    </section>
+  </div>
+
+  {# ------------------------------------------------------------------ #}
+  {# Recent movement.                                                    #}
+  {# ------------------------------------------------------------------ #}
+  <section class="scm-panel">
+    {% include "scm/components/section_header.html" with title=_("Recent movement") %}
+
+    {% if overview_movements %}
+      <ol class="divide-y divide-base-200">
+        {% for movement in overview_movements %}
+          {% include "scm/containers/partials/location_movement_row.html" with movement=movement location=location %}
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="text-sm text-base-content/60 py-2">
+        {% translate "No movements have been recorded into or out of this location." %}
+      </p>
+    {% endif %}
+  </section>
+</div>

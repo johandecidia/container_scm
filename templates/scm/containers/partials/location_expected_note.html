@@ -1,0 +1,36 @@
+{% load i18n %}
+
+{% comment %}
+  Why this location cannot yet say what is arriving.
+
+  Shared by the Overview panel and the Expected tab so the two cannot come to
+  describe the limitation differently. The sentence itself is written once, in
+  apps/scm/containers/location_workspace.py, next to the code that would produce the
+  answer if the data supported it.
+
+  The link goes to the fleet-wide Arrivals queue and is not filtered by destination.
+  Filtering it would require exactly the location-to-destination match that does not
+  reliably exist, so the link promises what it delivers: everything arriving.
+{% endcomment %}
+
+{% if workspace.expected.is_available %}
+  {% comment %} Reserved for when a canonical destination relation exists. {% endcomment %}
+  <p class="text-sm">
+    {% blocktranslate trimmed count count=workspace.expected.count %}
+      {{ count }} container expected here
+    {% plural %}
+      {{ count }} containers expected here
+    {% endblocktranslate %}
+  </p>
+{% else %}
+  <div class="flex items-start gap-3">
+    <i class="fa fa-circle-info text-base-content/30 pt-1 w-4 shrink-0"></i>
+    <div class="min-w-0">
+      <p class="text-sm text-base-content/70">{{ workspace.expected.reason }}</p>
+      <a href="{% url 'visibility:arrivals' %}" class="text-xs link link-hover inline-flex items-center gap-1 mt-2">
+        {% translate "See all upcoming arrivals" %}
+        <i class="fa fa-arrow-right text-[0.6rem]"></i>
+      </a>
+    </div>
+  </div>
+{% endif %}
