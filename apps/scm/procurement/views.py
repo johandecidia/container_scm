@@ -4,8 +4,9 @@ Business logic belongs in services.py; queries belong in selectors.py.
 """
 
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
@@ -52,10 +53,23 @@ def purchase_order_create(request):
 @scm_login_required
 @require_http_methods(["POST", "DELETE"])
 def purchase_order_delete(request, purchase_order_id: int):
-    """Permanently delete a purchase order and its related records."""
+    """Permanently delete a purchase order and its related records.
+
+    Business Central orders are refused by the service, which owns the rule. This
+    view only chooses how to say so: 403 for HTMX, because htmx does not swap on a
+    4xx and the row stays where it is, and the message-plus-redirect the rest of
+    SCM uses for a refused operation otherwise.
+    """
     team = request.default_team
     purchase_order = get_object_or_404(get_team_purchase_orders(team=team), pk=purchase_order_id)
-    delete_purchase_order(purchase_order=purchase_order)
+    try:
+        delete_purchase_order(purchase_order=purchase_order)
+    except PermissionDenied:
+        denial = _("This purchase order is managed by Business Central and cannot be deleted here.")
+        if request.htmx:
+            return HttpResponseForbidden(denial)
+        messages.error(request, denial)
+        return redirect("procurement:purchase_order_list")
     if request.htmx:
         # The row targets itself with hx-swap="outerHTML", so an empty body removes it.
         return HttpResponse(status=200)

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.utils import timezone
 
@@ -134,9 +135,17 @@ def delete_purchase_order(purchase_order: PurchaseOrder) -> None:
     (including their delivery lines). Containers are not deleted — a delivery
     line only references them, so the container itself survives.
 
-    A Business Central PO deleted here is only removed from SCM; BC remains
-    master and a later sync will recreate it.
+    Refuses Business Central orders. BC is master for what it owns, so deleting
+    one here does not delete anything: the next sync recreates the order, and in
+    the meantime SCM has silently dropped the deliveries and events that were
+    attached to it. That is data loss disguised as a no-op, which is why the rule
+    lives here rather than only in the views that happen to call it.
+
+    Raises:
+        PermissionDenied: if the order is owned by Business Central.
     """
+    if purchase_order.is_business_central:
+        raise PermissionDenied(f"Purchase order {purchase_order.po_number} is managed by Business Central.")
     with transaction.atomic():
         purchase_order.delete()
 
