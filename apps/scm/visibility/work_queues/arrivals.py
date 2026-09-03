@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
+from typing import TYPE_CHECKING
 
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -19,8 +20,11 @@ from ..read_models import Health, ObjectKind, VisibilityObject
 from ..selectors import ARRIVING_SOON_DAYS, filter_by_eta_window, list_visibility_objects, matches_search
 from .choices import text_choices
 
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
+
 # The arrivals windows, in the order the quick filters offer them.
-ARRIVAL_WINDOWS: tuple[tuple[str, str], ...] = (
+ARRIVAL_WINDOWS: tuple[tuple[str, StrOrPromise], ...] = (
     ("today", _("Today")),
     ("7", _("7 days")),
     ("30", _("30 days")),

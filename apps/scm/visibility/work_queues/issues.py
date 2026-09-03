@@ -8,11 +8,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from typing import TYPE_CHECKING
 
 from django.db.models import TextChoices
 from django.utils.translation import gettext_lazy as _
 
 from ..read_models import VisibilityObject
+
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
 
 # The delay engine's finding, given an issue type so it can sit in one list beside
 # the exception engine's. It is not an exception code and the engine never emits it.
@@ -34,7 +38,7 @@ class IssueBand(TextChoices):
 # Every issue type a queue can show, with the words to show it in. Keys are the
 # exception engine's own codes plus DELAY_ISSUE — this table maps them, it does not
 # add to them, and a code the engine stops emitting simply stops appearing.
-ISSUE_LABELS: dict[str, str] = {
+ISSUE_LABELS: dict[str, StrOrPromise] = {
     "customs_hold": _("Customs hold"),
     "rolled": _("Rolled"),
     "port_congestion": _("Port congestion"),

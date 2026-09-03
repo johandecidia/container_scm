@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from django.db.models import Sum
 from django.utils.translation import gettext_lazy as _
@@ -45,7 +45,9 @@ from .models import PurchaseOrder, PurchaseOrderLogisticsStatus
 if TYPE_CHECKING:
     from django_stubs_ext import StrOrPromise
 
+    from apps.scm.containers.models import Container
     from apps.scm.containers.workspace import ContainerWorkspace
+    from apps.scm.supplier_deliveries.models import SupplierDelivery
 
 _ZERO = Decimal("0")
 
@@ -59,7 +61,7 @@ class ContainerRow:
     order with eighty containers costs the same number of queries as one with two.
     """
 
-    container: object
+    container: Container
     workspace: ContainerWorkspace | None = None
     articles: list[str] = field(default_factory=list)
     delivery_references: list[str] = field(default_factory=list)
@@ -126,7 +128,7 @@ class ContainerRow:
 class DeliveryRow:
     """One supplier delivery against this purchase order, with what is on it."""
 
-    delivery: object
+    delivery: SupplierDelivery
     quantity: Decimal = _ZERO
     container_count: int = 0
     line_count: int = 0
@@ -206,7 +208,7 @@ class PurchaseOrderWorkspace:
         status itself.
         """
         S = PurchaseOrderLogisticsStatus
-        return {
+        tones: dict[str, str] = {
             S.NOT_STARTED: "badge-ghost",
             S.PARTIALLY_SHIPPED: "badge-info",
             S.FULLY_SHIPPED: "badge-info",
@@ -214,7 +216,8 @@ class PurchaseOrderWorkspace:
             S.PARTIALLY_RECEIVED: "badge-success",
             S.COMPLETED: "badge-success",
             S.EXCEPTION: "badge-error",
-        }.get(self.logistics_status, "badge-ghost")
+        }
+        return tones.get(self.logistics_status, "badge-ghost")
 
     @property
     def is_read_only(self) -> bool:
@@ -418,7 +421,9 @@ def _quantity(value: Decimal) -> str:
     """Render a quantity without its trailing zeros — 6, not 6.000."""
     normalised = value.normalize()
     # normalize() turns 100 into 1E+2; quantize back when the exponent went positive.
-    if normalised.as_tuple().exponent > 0:
+    # as_tuple().exponent is typed to allow the NaN/Infinity markers; a stored
+    # quantity is always finite, so it is an int here.
+    if cast(int, normalised.as_tuple().exponent) > 0:
         normalised = normalised.quantize(Decimal(1))
     return f"{normalised:f}"
 
@@ -475,7 +480,7 @@ def _container_rows(team: Team, delivery_lines, build_workspaces) -> list[Contai
     A container that appears on several delivery lines — two ordered articles in one
     box — is one row naming both articles, not two rows naming the same box.
     """
-    containers: dict[int, object] = {}
+    containers: dict[int, Container] = {}
     articles: dict[int, list[str]] = {}
     references: dict[int, list[str]] = {}
 

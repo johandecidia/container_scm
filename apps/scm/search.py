@@ -17,7 +17,10 @@ The scale here is one team's operational data, so this is Postgres `icontains` a
 nothing more. No search infrastructure.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
@@ -25,13 +28,16 @@ from django.utils.translation import gettext_lazy as _
 from apps.scm.containers.utils import container_number_query
 from apps.teams.models import Team
 
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
+
 # How many of each kind to offer. Enough to recognise the one you meant, few enough
 # that no kind buries the ones under it.
 _PER_KIND = 10
 _PER_MINOR_KIND = 5
 
 # The order results are returned and grouped in, with the heading for each group.
-KIND_LABELS: dict[str, str] = {
+KIND_LABELS: dict[str, StrOrPromise] = {
     "container": _("Containers"),
     "purchase_order": _("Purchase orders"),
     "shipment": _("Shipments"),

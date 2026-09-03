@@ -572,6 +572,8 @@ class PurchaseOrderWorkspaceQueryCountTest(TestCase):
     change and teach people to bump the number.
     """
 
+    team: Team
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="N1", slug="po-ws-n1")
@@ -605,8 +607,8 @@ class PurchaseOrderWorkspaceQueryCountTest(TestCase):
             # Touch every derivation the containers tab renders.
             for row in workspace.container_rows:
                 _ = (row.article_label, row.shipment, row.eta, row.current_status, row.filter_buckets)
-            for row in workspace.delivery_rows:
-                _ = (row.quantity, row.container_count)
+            for delivery_row in workspace.delivery_rows:
+                _ = (delivery_row.quantity, delivery_row.container_count)
         return len(captured)
 
     def test_ten_containers_cost_the_same_as_one(self):
