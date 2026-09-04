@@ -67,16 +67,23 @@
                 <td class="text-right tabular-nums">{{ f.remaining_qty }}</td>
                 <td class="text-right">
                   <div class="flex justify-end gap-1">
-                    <button
-                      class="btn btn-ghost btn-xs text-error"
-                      title="{% translate 'Delete purchase order' %}"
-                      hx-delete="{% url 'procurement:purchase_order_delete' po.pk %}"
-                      hx-confirm="{% blocktranslate trimmed with po_number=po.po_number %}Permanently delete purchase order {{ po_number }}? Its lines, events and supplier deliveries are deleted too. This cannot be undone.{% endblocktranslate %}"
-                      hx-target="#po-row-{{ po.pk }}"
-                      hx-swap="outerHTML"
-                    >
-                      <i class="fa fa-trash"></i>
-                    </button>
+                    {% comment %}
+                      No delete on a Business Central order. The server refuses it,
+                      so offering the button would only produce a button that always
+                      fails. The BC badge beside the number already says why.
+                    {% endcomment %}
+                    {% if not po.is_business_central %}
+                      <button
+                        class="btn btn-ghost btn-xs text-error"
+                        title="{% translate 'Delete purchase order' %}"
+                        hx-delete="{% url 'procurement:purchase_order_delete' po.pk %}"
+                        hx-confirm="{% blocktranslate trimmed with po_number=po.po_number %}Permanently delete purchase order {{ po_number }}? Its lines, events and supplier deliveries are deleted too. This cannot be undone.{% endblocktranslate %}"
+                        hx-target="#po-row-{{ po.pk }}"
+                        hx-swap="outerHTML"
+                      >
+                        <i class="fa fa-trash"></i>
+                      </button>
+                    {% endif %}
                   </div>
                 </td>
               </tr>

@@ -1,0 +1,151 @@
+{% load i18n %}
+
+{% comment %}
+  The containers physically at this location.
+
+  Server-rendered, filtered and paginated, because a depot can hold hundreds of
+  boxes and putting all of them in the DOM to filter them client-side would be a
+  slow page in exchange for nothing. Filtering and paging swap this partial alone.
+
+  The filtering itself is the shared container-list filter, so search, status and
+  equipment type behave exactly as they do on the container list. `Since` is when
+  the box arrived here, from the most recent recorded movement into this location or
+  the container's own location stamp; a container with neither shows a dash rather
+  than a date nobody recorded.
+{% endcomment %}
+
+<div id="location-inventory">
+  <form
+    class="flex flex-wrap items-end gap-2 mb-4"
+    hx-get="{% url 'containers:location_detail' location.pk %}"
+    hx-target="#location-inventory"
+    hx-swap="outerHTML"
+    hx-trigger="change, submit, keyup changed delay:300ms from:find input[name='search']"
+  >
+    <label class="form-control">
+      <span class="label-text text-xs text-base-content/60">{% translate "Search" %}</span>
+      <input
+        type="search" name="search" value="{{ inventory_filters.search }}"
+        placeholder="{% translate 'Container number' %}"
+        class="input input-bordered input-sm w-48"
+      >
+    </label>
+
+    <label class="form-control">
+      <span class="label-text text-xs text-base-content/60">{% translate "Status" %}</span>
+      <select name="status" class="select select-bordered select-sm">
+        <option value="">{% translate "All statuses" %}</option>
+        {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if inventory_filters.status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="form-control">
+      <span class="label-text text-xs text-base-content/60">{% translate "Type" %}</span>
+      <select name="equipment_type" class="select select-bordered select-sm">
+        <option value="">{% translate "All types" %}</option>
+        {% for equipment_type in equipment_types %}
+          <option value="{{ equipment_type.iso_code }}" {% if inventory_filters.equipment_type == equipment_type.iso_code %}selected{% endif %}>
+            {{ equipment_type.iso_code }} — {{ equipment_type.description }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    {% if inventory_filters.search or inventory_filters.status or inventory_filters.equipment_type %}
+      <a href="{% url 'containers:location_detail' location.pk %}?tab=inventory" class="btn btn-ghost btn-sm">
+        {% translate "Clear" %}
+      </a>
+    {% endif %}
+  </form>
+
+  {% if inventory %}
+    {# ---- Wide screens. -------------------------------------------- #}
+    <div class="hidden md:block">
+      <table class="table table-sm w-full">
+        <thead>
+          <tr>
+            <th>{% translate "Container" %}</th>
+            <th>{% translate "Type" %}</th>
+            <th>{% translate "Status" %}</th>
+            <th>{% translate "Since" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for container in inventory %}
+            <tr>
+              <td>
+                <a href="{% url 'containers:detail' container_id=container.pk %}" class="link link-hover font-mono font-medium">
+                  {{ container.container_id }}
+                </a>
+              </td>
+              <td class="text-sm text-base-content/70">{{ container.equipment_type.description }}</td>
+              <td>{% include "scm/components/status_badge.html" with status=container.status %}</td>
+              <td class="text-sm text-base-content/60 tabular-nums">
+                {{ container.at_location_since|date:"j M Y"|default:"—" }}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# ---- Phone. ---------------------------------------------------- #}
+    <ul class="md:hidden divide-y divide-base-200">
+      {% for container in inventory %}
+        <li class="py-3">
+          <a href="{% url 'containers:detail' container_id=container.pk %}" class="block">
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="font-mono font-medium text-sm">{{ container.container_id }}</span>
+              {% include "scm/components/status_badge.html" with status=container.status %}
+            </div>
+            <p class="text-xs text-base-content/60 mt-0.5">
+              {{ container.equipment_type.description }}
+              {% if container.at_location_since %}
+                <span class="text-base-content/30">·</span>
+                {% blocktranslate trimmed with when=container.at_location_since|date:"j M Y" %}since {{ when }}{% endblocktranslate %}
+              {% endif %}
+            </p>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+
+    {% if page_obj.has_other_pages %}
+      <div class="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-base-200">
+        <p class="text-xs text-base-content/50">
+          {% blocktranslate trimmed with start=page_obj.start_index end=page_obj.end_index total=page_obj.paginator.count %}
+            {{ start }}–{{ end }} of {{ total }}
+          {% endblocktranslate %}
+        </p>
+        <div class="join">
+          {% if page_obj.has_previous %}
+            <button
+              class="btn btn-sm join-item"
+              hx-get="{% url 'containers:location_detail' location.pk %}?page={{ page_obj.previous_page_number }}&status={{ inventory_filters.status }}&equipment_type={{ inventory_filters.equipment_type }}&search={{ inventory_filters.search }}"
+              hx-target="#location-inventory"
+              hx-swap="outerHTML"
+            >{% translate "Previous" %}</button>
+          {% endif %}
+          {% if page_obj.has_next %}
+            <button
+              class="btn btn-sm join-item"
+              hx-get="{% url 'containers:location_detail' location.pk %}?page={{ page_obj.next_page_number }}&status={{ inventory_filters.status }}&equipment_type={{ inventory_filters.equipment_type }}&search={{ inventory_filters.search }}"
+              hx-target="#location-inventory"
+              hx-swap="outerHTML"
+            >{% translate "Next" %}</button>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% elif inventory_filters.search or inventory_filters.status or inventory_filters.equipment_type %}
+    {% translate "No containers match these filters" as no_match_title %}
+    {% translate "Clear the filters to see everything recorded at this location." as no_match_message %}
+    {% include "scm/components/empty_state.html" with icon="fa-filter" title=no_match_title message=no_match_message %}
+  {% else %}
+    {% translate "Nothing is here" as empty_title %}
+    {% translate "No container currently has this location set. Containers appear here as soon as they are moved to it." as empty_message %}
+    {% include "scm/components/empty_state.html" with icon="fa-warehouse" title=empty_title message=empty_message %}
+  {% endif %}
+</div>

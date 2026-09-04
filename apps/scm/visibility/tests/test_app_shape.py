@@ -34,3 +34,21 @@ class VisibilityAppShapeTest(SimpleTestCase):
         for name in ("apps.py", "selectors.py", "read_models.py", "geojson.py", "views.py", "urls.py"):
             with self.subTest(name=name):
                 self.assertTrue((APP_DIR / name).exists(), f"Missing apps/scm/visibility/{name}")
+
+    def test_the_work_queues_own_no_state_either(self):
+        """Exceptions and Arrivals are views over supply chain state, not records of it.
+
+        A persisted work item — an acknowledgement, an assignee, a resolution — is the
+        thing this app must not grow, because it would immediately be a second source
+        of truth for whether something is still a problem. The queues read the
+        exception and delay engines and store nothing.
+        """
+        package = APP_DIR / "work_queues"
+        self.assertTrue(package.is_dir(), "Missing apps/scm/visibility/work_queues/")
+        modules = sorted(package.glob("*.py"))
+        self.assertTrue(modules, "work_queues package is empty")
+        for module in modules:
+            source = module.read_text()
+            for forbidden in ("models.Model", "BaseTeamModel", ".objects.create(", ".save(", ".delete("):
+                with self.subTest(module=module.name, forbidden=forbidden):
+                    self.assertNotIn(forbidden, source)

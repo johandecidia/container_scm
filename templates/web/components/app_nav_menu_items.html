@@ -8,10 +8,10 @@
   above this list, the account and admin groups below it — and this file only
   decides what the SCM experience puts inside it.
 
-  Exceptions and Arrivals are not separate pages. They are the Control Tower with
-  a filter already applied, using the query parameters the visibility layer
-  already parses (`exceptions=1`, `eta=7`), so the navigation works before work
-  queues exist.
+  Control is a drill-down, not three views of the same thing: the Control Tower is
+  the summary, and Exceptions and Arrivals are the work queues it leads into. They
+  were filter links onto the Control Tower until the queues existed; the old
+  filtered URLs still work, but they are no longer where the navigation points.
 
   Tracking, Discovery, Imports, Integrations, Supplier Deliveries and AI Chat are
   deliberately absent from the primary groups. Every one of those routes still
@@ -22,23 +22,28 @@
 <li class="menu-title">
   <span>{% translate "Control" %}</span>
 </li>
+{% comment %}
+  Active state is an exact path match, not a prefix one: all three Control entries
+  live under /scm/visibility/, so `in request.path` would light up Control Tower on
+  the queue pages too.
+{% endcomment %}
+{% url 'visibility:overview' as overview_url %}
+{% url 'visibility:exceptions' as exceptions_url %}
+{% url 'visibility:arrivals' as arrivals_url %}
 <li>
-  <a href="{% url 'visibility:overview' %}"
-     {% if '/scm/visibility/' in request.path and not request.GET.exceptions and not request.GET.eta %}class="menu-active"{% endif %}>
+  <a href="{{ overview_url }}" {% if request.path == overview_url %}class="menu-active"{% endif %}>
     <i class="fa fa-satellite-dish h-4 w-4"></i>
     {% translate "Control Tower" %}
   </a>
 </li>
 <li>
-  <a href="{% url 'visibility:overview' %}?exceptions=1"
-     {% if '/scm/visibility/' in request.path and request.GET.exceptions %}class="menu-active"{% endif %}>
+  <a href="{{ exceptions_url }}" {% if request.path == exceptions_url %}class="menu-active"{% endif %}>
     <i class="fa fa-triangle-exclamation h-4 w-4"></i>
     {% translate "Exceptions" %}
   </a>
 </li>
 <li>
-  <a href="{% url 'visibility:overview' %}?eta=7"
-     {% if '/scm/visibility/' in request.path and request.GET.eta %}class="menu-active"{% endif %}>
+  <a href="{{ arrivals_url }}" {% if request.path == arrivals_url %}class="menu-active"{% endif %}>
     <i class="fa fa-anchor h-4 w-4"></i>
     {% translate "Arrivals" %}
   </a>

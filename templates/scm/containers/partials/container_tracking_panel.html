@@ -1,304 +1,34 @@
 {% load i18n %}
 
 {% comment %}
-  Carrier tracking for one container — an HTMX component with a stable root id.
-  Refresh posts to containers:refresh_tracking and swaps this whole element, so the
-  summary, the result banner and the timeline can never disagree with each other.
+  Carrier tracking for one container, in the two places the workspace shows it:
+  the current-state summary on Overview and the journey timeline on Journey.
 
-  Everything shown is derived from the container's shipment, its tracking
-  subscription and its tracking events. None of it is stored on Container.
+  This template owns both, so there is one description of a container's tracking
+  and one refresh behind it. `containers:refresh_tracking` renders this template
+  with no `panel_section`, which produces:
 
-  The carrier we would ask and the carrier that actually tracks the box are two
-  different things and are shown as such: a subscription exists only where a carrier
-  has returned data, so "Maersk ● Active" is never shown for a carrier that was
-  merely tried. A shipment booked with Maersk that Maersk has no events for yet
-  reads as an untracked container with a shipment carrier — which is what it is.
+      <div id="container-tracking-panel">   … swapped into the Overview summary
+      <div id="container-journey" hx-swap-oob="true">  … swapped into the Journey tab
 
-  A container can have several verified sources at once — carriers that covered
-  different legs, plus our own physical record — so they are listed, every timeline
-  entry says which one reported it, and a segment none of them explains is called
-  out rather than smoothed over.
+  One request, one carrier call, both tabs current. The refresh button and the
+  Actions menu both target `#container-tracking-panel`; nothing targets the
+  timeline directly, so it cannot be refreshed on its own and drift.
+
+  The workspace page includes this template twice, once per tab, naming the section
+  it wants — the tab wrappers own visibility, so neither swapped element carries
+  Alpine state that a swap could lose.
+
+  Usage:
+    {% include "scm/containers/partials/container_tracking_panel.html" with panel_section="summary" %}
+    {% include "scm/containers/partials/container_tracking_panel.html" with panel_section="journey" %}
 {% endcomment %}
 
-<div id="container-tracking-panel" class="flex flex-col gap-6">
-  <section class="app-card">
-    <div class="flex items-start justify-between gap-4 mb-4">
-      <div>
-        <h2 class="text-lg font-semibold">{% translate "Carrier Tracking" %}</h2>
-        <p class="text-sm mt-1">
-          {% if workspace.is_tracked %}
-            <span class="font-medium">{{ workspace.tracking_carrier_name }}</span>
-            {% if workspace.has_tracking_error %}
-              <span class="text-error ml-2">! {{ workspace.tracking_status|default:_("Error") }}</span>
-            {% elif workspace.is_tracking_active %}
-              <span class="text-success ml-2">● {{ workspace.tracking_status|default:_("Active") }}</span>
-            {% else %}
-              <span class="text-base-content/50 ml-2">○ {{ workspace.active_subscription.get_status_display }}</span>
-            {% endif %}
-          {% else %}
-            <span class="text-base-content/50">○ {% translate "Not tracked" %}</span>
-          {% endif %}
-        </p>
-
-        {% comment %}
-          The shipment's carrier is context, not a tracking state: it says who a
-          refresh would ask first, not who it is limited to — an untracked container
-          is swept across every connected carrier. Shown whenever it is not already
-          the verified tracking carrier, so "Not tracked" reads as an answer about
-          Maersk rather than a gap in the setup. What the last refresh actually
-          returned is the banner's job.
-        {% endcomment %}
-        {% if not workspace.is_tracked %}
-          <p class="text-xs text-base-content/60 mt-1">
-            {% if workspace.shipment_carrier %}
-              {% blocktranslate trimmed with carrier=workspace.shipment_carrier %}
-                Shipment carrier: {{ carrier }}. No tracking data available yet.
-              {% endblocktranslate %}
-            {% else %}
-              {% translate "No tracking source yet. A refresh checks the connected carriers." %}
-            {% endif %}
-          </p>
-        {% elif workspace.shipment_carrier and workspace.shipment_carrier != workspace.tracking_carrier_name %}
-          <p class="text-xs text-base-content/60 mt-1">
-            {% blocktranslate trimmed with carrier=workspace.shipment_carrier %}
-              Shipment carrier: {{ carrier }}
-            {% endblocktranslate %}
-          </p>
-        {% endif %}
-
-      </div>
-
-      {% comment %}
-        One button, one request: hx-disabled-elt disables it for the duration, so a
-        double click cannot start a second refresh.
-      {% endcomment %}
-      <button
-        type="button"
-        class="btn btn-outline btn-sm shrink-0"
-        hx-post="{% url 'containers:refresh_tracking' container.pk %}"
-        hx-target="#container-tracking-panel"
-        hx-swap="outerHTML"
-        hx-disabled-elt="this"
-      >
-        <span class="loading loading-spinner loading-xs htmx-request-show"></span>
-        <i class="fa fa-rotate htmx-request-hide"></i>
-        <span class="htmx-request-hide">{% translate "Refresh tracking" %}</span>
-        <span class="htmx-request-show">{% translate "Refreshing…" %}</span>
-      </button>
-    </div>
-
-    {% if refresh %}
-      {% include "scm/containers/partials/container_tracking_result.html" with refresh=refresh %}
-    {% elif workspace.sync_problem %}
-      <div role="alert" class="alert alert-warning alert-soft mb-4">
-        <i class="fa fa-triangle-exclamation"></i>
-        <span class="text-sm">{{ workspace.sync_problem }}</span>
-      </div>
-    {% endif %}
-
-    {% comment %}
-      What is unexplained is stated, not hidden. A gap is only ever raised by a
-      contradiction — the box was seen somewhere no source followed it to — never by
-      a carrier being quiet, so this line means something every time it appears.
-    {% endcomment %}
-    {% with gap=workspace.tracking_gap %}
-      {% if gap %}
-        <div role="alert" class="alert alert-warning alert-soft mb-4 items-start">
-          <i class="fa fa-link-slash mt-0.5"></i>
-          <div class="text-sm">
-            <p class="font-medium">
-              {% translate "Journey gap detected" %}
-              <span class="font-normal">— {{ gap.segment }}</span>
-            </p>
-            <p class="text-xs mt-0.5">{{ gap.description }}</p>
-            <p class="text-xs text-base-content/60 mt-0.5">
-              {% blocktranslate trimmed with origin=gap.from_source.name origin_at=gap.from_datetime|date:"d M" destination=gap.to_source.name destination_at=gap.to_datetime|date:"d M" %}
-                Last reported by {{ origin }} on {{ origin_at }}, observed by {{ destination }} on {{ destination_at }}.
-              {% endblocktranslate %}
-            </p>
-          </div>
-        </div>
-      {% endif %}
-    {% endwith %}
-
-    {% comment %}
-      Every source that has reported this container, in the order they took over the
-      box. Compact on purpose: this says who knows what, and the timeline below says
-      what each of them said.
-    {% endcomment %}
-    {% if workspace.tracking_sources %}
-      <div class="mb-4">
-        <p class="text-xs text-base-content/60 mb-1">{% translate "Tracking sources" %}</p>
-        <div class="flex flex-wrap gap-1.5">
-          {% for source in workspace.tracking_sources %}
-            <span class="badge badge-sm {% if source.is_physical %}badge-neutral{% else %}badge-ghost{% endif %}">
-              {% if source.is_physical %}<i class="fa fa-warehouse text-xs mr-1"></i>{% endif %}
-              {{ source.name }}
-            </span>
-          {% endfor %}
-        </div>
-      </div>
-    {% endif %}
-
-    {% comment %}
-      Status, position, ETA and freshness are rendered by the shared visibility
-      components, so this panel, the map cards and the visibility overview cannot
-      disagree about what the same carrier data means.
-    {% endcomment %}
-    <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-      <div>
-        <dt class="text-xs text-base-content/60">{% translate "Current status" %}</dt>
-        <dd class="font-medium text-sm">{{ workspace.current_status|default:"—" }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs text-base-content/60">{% translate "Vessel" %}</dt>
-        <dd class="font-medium text-sm">
-          {% if workspace.vessel_name %}
-            {{ workspace.vessel_name }}{% if workspace.voyage_number %} · {{ workspace.voyage_number }}{% endif %}
-          {% else %}—{% endif %}
-        </dd>
-      </div>
-      <div>
-        {% comment %}
-          The derived current location, which is not always the newest carrier
-          event: when we have physically seen the box more recently than the carrier
-          last reported it, that is where it is. The carrier's event keeps its place
-          on the timeline either way.
-        {% endcomment %}
-        {% include "scm/visibility/components/position_summary.html" with position=workspace.current_position %}
-        {% with current=workspace.derived_current_location %}
-          {% if current %}
-            <p class="text-xs text-base-content/50 mt-1">
-              {% blocktranslate trimmed with source=current.source.name basis=current.basis_label %}
-                {{ basis }} · {{ source }}
-              {% endblocktranslate %}
-            </p>
-          {% endif %}
-        {% endwith %}
-      </div>
-    </dl>
-
-    <div class="mt-4 pt-4 border-t border-base-300">
-      {% include "scm/visibility/components/eta_summary.html" with object=visibility eta_history=eta_history %}
-    </div>
-
-    <div class="mt-4 pt-4 border-t border-base-300">
-      {% include "scm/visibility/components/tracking_freshness.html" with object=visibility %}
-    </div>
-
-    {% if visibility.shipment %}
-      <div class="mt-4 pt-4 border-t border-base-300">
-        <a href="{% url 'shipments:detail' visibility.shipment.pk %}" class="btn btn-ghost btn-sm">
-          {% translate "View shipment" %} <i class="fa fa-arrow-right text-xs"></i>
-        </a>
-      </div>
-    {% endif %}
-
-    {% if workspace.tracking_subscriptions %}
-      <div class="mt-4 pt-4 border-t border-base-300 flex items-center justify-between gap-2">
-        <div class="text-xs text-base-content/60">
-          {% for sub in workspace.tracking_subscriptions %}
-            <a href="{% url 'tracking:detail' sub.pk %}" class="font-mono link link-hover">{{ sub.tracking_reference }}</a>
-            <span class="text-base-content/40">({{ sub.provider }})</span>{% if not forloop.last %} · {% endif %}
-          {% endfor %}
-        </div>
-        <a href="{% url 'tracking:list' %}" class="btn btn-ghost btn-xs shrink-0">{% translate "All tracking" %}</a>
-      </div>
-    {% endif %}
-  </section>
-
-  {% comment %}
-    One timeline for the whole journey, whoever reported each part of it: every
-    carrier that has tracked this box, and our own physical observations. Each row
-    names its source, so two sources describing the same leg read as two accounts of
-    one journey rather than as a contradiction.
-
-    Every row shows only what its source actually said, in a fixed order — what
-    happened, where, on what. Absent fields collapse rather than render as blanks or
-    dashes, so the shape of a row says how much is known about it.
-
-    An event we could not classify still shows the carrier's own wording and codes:
-    a gap in our mapping tables must cost the reader detail, not the whole event.
-
-    A point that has coordinates carries data-map-event-id, which is the whole
-    contract between the timeline and the map: clicking the row flies the map to
-    that point, and selecting it on the map highlights the row. The timeline stays
-    the authoritative chronology — the map only points at it, and cannot show a
-    place we have no coordinates for.
-  {% endcomment %}
-  <section class="app-card">
-    <h2 class="text-lg font-semibold mb-4">{% translate "Tracking Timeline" %}</h2>
-    {% if workspace.journey_timeline %}
-      <ol class="divide-y divide-base-200">
-        {% for point in workspace.journey_timeline %}
-          {% with event=point.event %}
-            <li
-              class="py-3 flex items-start gap-3 {% if point.has_coordinates %}cursor-pointer hover:bg-base-200/60 rounded-box px-2 -mx-2{% endif %}"
-              {% if point.has_coordinates %}data-map-event-id="{{ point.event_id }}"{% endif %}
-            >
-              <p class="text-xs text-base-content/50 shrink-0 w-28 pt-0.5">
-                {{ point.occurred_at|date:"d M H:i"|default:"—" }}
-              </p>
-              <div class="min-w-0">
-                <p class="font-medium text-sm">
-                  {{ point.title }}
-                  {% if not point.is_actual %}
-                    <span class="badge badge-xs badge-ghost ml-1">{{ event.get_event_time_type_display }}</span>
-                  {% endif %}
-                </p>
-
-                {% if point.location_name or point.location_unlocode %}
-                  <p class="text-xs text-base-content/70 mt-0.5">
-                    {{ point.location_name }}
-                    {% if point.location_unlocode %}
-                      <span class="badge badge-xs badge-ghost font-mono ml-1">{{ point.location_unlocode }}</span>
-                    {% endif %}
-                  </p>
-                {% endif %}
-
-                {% if point.vessel_name %}
-                  <p class="text-xs text-base-content/60 mt-0.5">
-                    {{ point.vessel_name }}{% if point.voyage_number %} · {{ point.voyage_number }}{% endif %}
-                  </p>
-                {% elif point.voyage_number %}
-                  <p class="text-xs text-base-content/60 mt-0.5">
-                    {% blocktranslate trimmed with voyage=point.voyage_number %}Voyage {{ voyage }}{% endblocktranslate %}
-                  </p>
-                {% endif %}
-
-                {% if point.description and point.description != point.title %}
-                  <p class="text-xs text-base-content/60 mt-0.5">{{ point.description }}</p>
-                {% endif %}
-
-                {% if event.is_unclassified and event.carrier_reference %}
-                  <p class="text-xs text-base-content/50 font-mono mt-0.5">
-                    {% blocktranslate trimmed with reference=event.carrier_reference %}
-                      Carrier: {{ reference }}
-                    {% endblocktranslate %}
-                  </p>
-                {% endif %}
-
-                {% comment %}
-                  Who says so. A second source that reported the same physical event
-                  is listed beside the first rather than replacing it — neither is
-                  discarded, and the reader can see they agree.
-                {% endcomment %}
-                <p class="text-xs text-base-content/50 mt-0.5">
-                  {% blocktranslate trimmed with source=point.source.name %}Source: {{ source }}{% endblocktranslate %}
-                  {% for name in point.corroborating_source_names %}
-                    <span class="text-base-content/40">
-                      {% blocktranslate trimmed with source=name %}· also {{ source }}{% endblocktranslate %}
-                    </span>
-                  {% endfor %}
-                </p>
-              </div>
-            </li>
-          {% endwith %}
-        {% endfor %}
-      </ol>
-    {% else %}
-      <p class="text-sm text-base-content/60">{% translate "No tracking events yet." %}</p>
-      <p class="text-sm text-base-content/50">{% translate "Refresh tracking to check the carriers." %}</p>
-    {% endif %}
-  </section>
-</div>
+{% if panel_section == "summary" %}
+  {% include "scm/containers/partials/container_tracking_summary.html" %}
+{% elif panel_section == "journey" %}
+  {% include "scm/containers/partials/container_journey_timeline.html" %}
+{% else %}
+  {% include "scm/containers/partials/container_tracking_summary.html" %}
+  {% include "scm/containers/partials/container_journey_timeline.html" with oob=True %}
+{% endif %}

@@ -1,0 +1,101 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  The Location Workspace. A location was previously reachable only as a container
+  list filtered to it; this is the page that answers the questions a place actually
+  raises — what is here, what is expected, what has moved.
+
+  Four tabs, one page load, in the same Alpine shell as the Container and Purchase
+  Order workspaces: panels in the DOM, `?tab=` for a bookmarkable tab, no router.
+
+  Inventory is the exception to "everything in the DOM": it filters and paginates
+  server-side over the shared container list, because a depot holding six hundred
+  boxes should not render six hundred rows to let somebody search them. Its HTMX
+  requests replace that table alone.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/containers/partials/location_workspace_header.html" %}
+
+  <div
+    x-data="{
+      tab: new URLSearchParams(window.location.search).get('tab') || 'overview',
+      show(name) {
+        this.tab = name;
+        window.history.replaceState({}, '', name === 'overview' ? window.location.pathname : '?tab=' + name);
+      }
+    }"
+  >
+    <div role="tablist" class="tabs tabs-border mb-6 overflow-x-auto flex-nowrap">
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'overview' && 'tab-active'"
+        :aria-selected="tab === 'overview'"
+        @click="show('overview')"
+      >{% translate "Overview" %}</button>
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'inventory' && 'tab-active'"
+        :aria-selected="tab === 'inventory'"
+        @click="show('inventory')"
+      >{% translate "Inventory" %}</button>
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'expected' && 'tab-active'"
+        :aria-selected="tab === 'expected'"
+        @click="show('expected')"
+      >{% translate "Expected" %}</button>
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'activity' && 'tab-active'"
+        :aria-selected="tab === 'activity'"
+        @click="show('activity')"
+      >{% translate "Activity" %}</button>
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Overview — inventory, what is expected, and recent movement.       #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'overview'" role="tabpanel">
+      {% include "scm/containers/partials/location_overview.html" %}
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Inventory — the boxes standing here, filterable.                   #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'inventory'" role="tabpanel" x-cloak>
+      <section class="scm-panel">
+        {% include "scm/components/section_header.html" with title=_("Inventory") count=workspace.container_count %}
+        {% include "scm/containers/partials/location_inventory.html" %}
+      </section>
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Expected — what is on its way, or why we cannot say.               #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'expected'" role="tabpanel" x-cloak>
+      <section class="scm-panel">
+        {% include "scm/components/section_header.html" with title=_("Expected arrivals") %}
+        {% include "scm/containers/partials/location_expected_note.html" %}
+        <p class="text-xs text-base-content/40 mt-4 pt-4 border-t border-base-300">
+          {% blocktranslate trimmed %}
+            This tab will list containers routed to this location once a shipment's
+            destination can be resolved to a location record. Until then no count is
+            shown here, because a count matched on place names would be confidently
+            wrong.
+          {% endblocktranslate %}
+        </p>
+      </section>
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Activity — the physical moves recorded here.                       #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'activity'" role="tabpanel" x-cloak>
+      {% include "scm/containers/partials/location_activity.html" %}
+    </div>
+  </div>
+
+  <div id="modal-container"></div>
+{% endblock %}

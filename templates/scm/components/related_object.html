@@ -1,0 +1,50 @@
+{% load i18n %}
+
+{% comment %}
+  One object related to the one being viewed — a row in a Related panel.
+
+  Usage — on one line. Django's template lexer does not match a newline inside
+  {% templatetag openblock %} … {% templatetag closeblock %}, so a wrapped include
+  is not a tag at all: it renders as its own source text.
+
+    {% templatetag openblock %} include "scm/components/related_object.html" with icon="fa-ship" title=shipment subtitle=shipment.route_label url=shipment_url {% templatetag closeblock %}
+
+  Optional: subtitle, meta, url, icon, note.
+
+  Without `url` the row still renders, unlinked and without a chevron: the
+  relationship is real even where the destination is not built yet, and a link to a
+  page that does not exist would be worse than no link. `note` is where to say why.
+{% endcomment %}
+
+{% if url %}
+  <a href="{{ url }}" class="flex items-start gap-3 py-3 px-2 -mx-2 rounded-box hover:bg-base-200/60 group">
+{% else %}
+  <div class="flex items-start gap-3 py-3">
+{% endif %}
+
+  <span class="text-base-content/40 pt-0.5 shrink-0">
+    <i class="fa {{ icon|default:'fa-circle-nodes' }} w-4"></i>
+  </span>
+
+  <span class="min-w-0 flex-1">
+    <span class="block text-sm font-medium {% if url %}group-hover:underline{% endif %}">{{ title }}</span>
+    {% if subtitle %}
+      <span class="block text-xs text-base-content/60">{{ subtitle }}</span>
+    {% endif %}
+    {% if meta %}
+      <span class="block text-xs text-base-content/50">{{ meta }}</span>
+    {% endif %}
+    {% if note %}
+      <span class="block text-xs text-base-content/40 mt-0.5">{{ note }}</span>
+    {% endif %}
+  </span>
+
+  {% if url %}
+    <span class="text-base-content/30 pt-0.5 shrink-0"><i class="fa fa-arrow-right text-xs"></i></span>
+  {% endif %}
+
+{% if url %}
+  </a>
+{% else %}
+  </div>
+{% endif %}

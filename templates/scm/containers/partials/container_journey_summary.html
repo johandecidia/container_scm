@@ -1,0 +1,91 @@
+{% load i18n %}
+
+{% comment %}
+  The journey in three steps: where it started, where it is, where it is going.
+
+  The Overview's answer to "how far along is this box" — the Journey tab has the
+  full chronology. Every step is derived: the ends come from the shipment's ports
+  or, for a container tracked on its own, from the journey's own first and last
+  placed points; the middle is the derived current location, which is not always
+  the newest carrier event.
+
+  The basis of the middle step is always shown. A physical observation of the box,
+  a carrier's report and a carrier's forecast are three different claims, and this
+  component never lets a forecast read as an observation.
+
+  The current step carries data-map-event-id when its point has coordinates, so
+  clicking it flies the map on this same tab to that place.
+{% endcomment %}
+
+{% with current=workspace.derived_current_location %}
+  {% if workspace.has_route or current %}
+    <section class="scm-panel">
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-4">
+        {% translate "Journey" %}
+      </h2>
+
+      <ol class="flex flex-col">
+        {% if workspace.route_origin %}
+          <li class="flex items-baseline gap-3">
+            <span class="text-base-content/30 w-4 text-center shrink-0">●</span>
+            <span class="text-sm font-medium">{{ workspace.route_origin }}</span>
+          </li>
+          <li aria-hidden="true" class="flex gap-3">
+            <span class="w-4 text-center text-base-content/20 shrink-0 leading-tight">↓</span>
+          </li>
+        {% endif %}
+
+        {% if current %}
+          <li
+            class="flex items-baseline gap-3 {% if current.point.has_coordinates %}cursor-pointer rounded-box -mx-2 px-2 py-1 hover:bg-base-200/60{% endif %}"
+            {% if current.point.has_coordinates %}data-map-event-id="{{ current.point.event_id }}"{% endif %}
+          >
+            <span class="w-4 text-center shrink-0 {% if current.is_physical %}text-neutral{% else %}text-success{% endif %}">●</span>
+            <span class="min-w-0">
+              <span class="text-sm font-medium">{{ workspace.current_status|default:current.label|default:_("Position reported") }}</span>
+              {% if current.label and current.label != workspace.current_status %}
+                <span class="block text-xs text-base-content/70">{{ current.label }}</span>
+              {% endif %}
+              <span class="block text-xs text-base-content/50">
+                {% blocktranslate trimmed with basis=current.basis_label source=current.source.name %}
+                  {{ basis }} · {{ source }}
+                {% endblocktranslate %}
+                {% if current.occurred_at %}
+                  <span class="text-base-content/40">· {{ current.occurred_at|date:"d M H:i" }}</span>
+                {% endif %}
+              </span>
+            </span>
+          </li>
+          {% if workspace.route_destination %}
+            <li aria-hidden="true" class="flex gap-3">
+              <span class="w-4 text-center text-base-content/20 shrink-0 leading-tight">↓</span>
+            </li>
+          {% endif %}
+        {% endif %}
+
+        {% if workspace.route_destination %}
+          <li class="flex items-baseline gap-3">
+            {% comment %}
+              An open circle: nothing has reported the box here yet. It fills in
+              when a source does.
+            {% endcomment %}
+            <span class="text-base-content/30 w-4 text-center shrink-0">○</span>
+            <span>
+              <span class="text-sm font-medium">{{ workspace.route_destination }}</span>
+              {% if workspace.current_eta %}
+                <span class="block text-xs text-base-content/60">
+                  {% blocktranslate trimmed with when=workspace.current_eta|date:"j M Y" %}ETA {{ when }}{% endblocktranslate %}
+                  {% if workspace.eta_source == "tracking" %}
+                    <span class="text-base-content/40">· {% translate "Carrier forecast" %}</span>
+                  {% elif workspace.eta_source == "shipment" %}
+                    <span class="text-base-content/40">· {% translate "Planned" %}</span>
+                  {% endif %}
+                </span>
+              {% endif %}
+            </span>
+          </li>
+        {% endif %}
+      </ol>
+    </section>
+  {% endif %}
+{% endwith %}

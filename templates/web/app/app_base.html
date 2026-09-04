@@ -20,6 +20,9 @@
         {% endblock %}
       </div>
       <div class="w-full">
+        {# A place for an app to put a bar above its content — search, say. Empty unless filled. #}
+        {% block app_topbar %}
+        {% endblock %}
         {% block app %}
         {% endblock %}
       </div>

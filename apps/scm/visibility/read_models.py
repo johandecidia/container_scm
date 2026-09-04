@@ -22,7 +22,7 @@ from django.utils.translation import gettext_lazy as _
 from apps.scm.containers.workspace import ContainerWorkspace
 from apps.scm.shipments.models import Shipment
 from apps.scm.tracking.delay_detection import DelayReport
-from apps.scm.tracking.exception_detection import ExceptionReport
+from apps.scm.tracking.exception_detection import ExceptionIssue, ExceptionReport
 
 
 class ObjectKind(TextChoices):
@@ -147,6 +147,22 @@ class VisibilityObject:
         return container.container_id if container else ""
 
     @property
+    def detail_url(self) -> str:
+        """The page where this object can be understood and acted on.
+
+        A shipment leads to the shipment, a standalone container to its workspace —
+        the object the visibility layer is actually about. A queue row is a single
+        link, so this is the one place that decides where a click lands, and the
+        work queues and the attention list cannot disagree about it.
+        """
+        from django.urls import reverse
+
+        if self.kind == ObjectKind.SHIPMENT and self.shipment is not None:
+            return reverse("shipments:detail", args=[self.shipment.pk])
+        container = self.container
+        return reverse("containers:detail", args=[container.pk]) if container is not None else ""
+
+    @property
     def lead(self) -> ContainerWorkspace | None:
         """The container whose tracking speaks for the object.
 
@@ -162,6 +178,29 @@ class VisibilityObject:
         if dated:
             return max(dated, key=lambda pair: pair[0])[1]
         return self.workspaces[0] if self.workspaces else None
+
+    # -- route -------------------------------------------------------------
+    #
+    # Where this came from and where it is going. The shipment's ports are the
+    # answer for both kinds of object: they are what was booked, and a container
+    # tracked on its own still carries its shipment here when it has one.
+    #
+    # There is deliberately no fallback to the current position. A bulk-built
+    # container workspace has no journey to read ports out of, and the place a box
+    # is now is not the place it is going — printing one as the other would put a
+    # confident wrong destination on an arrivals list.
+
+    @property
+    def origin(self) -> str:
+        return self.shipment.origin_port if self.shipment else ""
+
+    @property
+    def destination(self) -> str:
+        return self.shipment.destination_port if self.shipment else ""
+
+    @property
+    def route_label(self) -> str:
+        return self.shipment.route_label if self.shipment else ""
 
     # -- carrier and carriage ---------------------------------------------
 
@@ -345,6 +384,15 @@ class VisibilityObject:
     @property
     def exception_details(self) -> list[str]:
         return self.exceptions.details if self.exceptions else []
+
+    @property
+    def exception_issues(self) -> list[ExceptionIssue]:
+        """Each exception paired with the engine's reason for raising it.
+
+        What a work queue row needs: the flat type and detail lists de-duplicate
+        differently across a shipment's containers, so they cannot be zipped.
+        """
+        return self.exceptions.issues if self.exceptions else []
 
     @property
     def exception_count(self) -> int:

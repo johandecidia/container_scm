@@ -2,229 +2,112 @@
 {% load i18n %}
 {% load django_vite %}
 
+{% comment %}
+  The Container Workspace, served by the long-standing `containers:detail` route so
+  every existing link, bookmark and redirect keeps working.
+
+  Four sections, one page load. The tabs are Alpine state over markup that is all
+  present in the DOM: switching costs no request, nothing can be lost by a swap,
+  and the tracking refresh reaches both the Overview summary and the Journey
+  timeline in one response.
+
+  All four panels being present is also why the map works. There is one map per
+  page — map.js takes the single `[data-scm-map]` element — and it fits its bounds
+  once its GeoJSON arrives. A map that started hidden would fit those bounds to a
+  zero-height canvas, so the map lives on Overview, which is the tab that is open
+  on arrival.
+
+  `?tab=` makes a tab bookmarkable. It is read once on load and written with
+  replaceState on switch: no router, no history entries to back out of.
+
+  This is the reference implementation for the Shipment, Purchase Order and
+  Location workspaces that follow, so the tab shell and the header are written to
+  be copied.
+{% endcomment %}
+
 {% block app %}
-  {# Workspace header #}
-  <div class="mb-6">
-    <a href="{% url 'containers:list' %}" class="text-sm text-base-content/60 hover:text-base-content inline-flex items-center gap-1 mb-2">
-      <i class="fa fa-arrow-left text-xs"></i>
-      {% translate "Containers" %}
-    </a>
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold font-mono">{{ container.container_id }}</h1>
-        <p class="text-sm text-base-content/60 mt-1">{{ container.equipment_type.description }}</p>
+  {% include "scm/containers/partials/container_workspace_header.html" %}
+
+  <div
+    x-data="{
+      tab: new URLSearchParams(window.location.search).get('tab') || 'overview',
+      show(name) {
+        this.tab = name;
+        window.history.replaceState({}, '', name === 'overview' ? window.location.pathname : '?tab=' + name);
+      }
+    }"
+  >
+    {% comment %}
+      A tablist rather than links: the panels are already here, so navigating away
+      and back would be a slower way of doing nothing. DaisyUI's bordered tabs
+      scroll horizontally on a narrow screen instead of wrapping into two rows.
+    {% endcomment %}
+    <div role="tablist" class="tabs tabs-border mb-6 overflow-x-auto flex-nowrap">
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'overview' && 'tab-active'"
+        :aria-selected="tab === 'overview'"
+        @click="show('overview')"
+      >{% translate "Overview" %}</button>
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'journey' && 'tab-active'"
+        :aria-selected="tab === 'journey'"
+        @click="show('journey')"
+      >{% translate "Journey" %}</button>
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'activity' && 'tab-active'"
+        :aria-selected="tab === 'activity'"
+        @click="show('activity')"
+      >{% translate "Activity" %}</button>
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'related' && 'tab-active'"
+        :aria-selected="tab === 'related'"
+        @click="show('related')"
+      >{% translate "Related" %}</button>
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Overview — the current state of this container.                    #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'overview'" role="tabpanel" class="flex flex-col gap-4">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        {% include "scm/containers/partials/container_journey_summary.html" %}
+        {% include "scm/containers/partials/container_tracking_panel.html" with panel_section="summary" %}
       </div>
-      <div class="flex gap-2 shrink-0">
-        <button
-          class="btn btn-outline btn-sm"
-          hx-get="{% url 'containers:update' container.pk %}"
-          hx-target="#modal-container"
-          hx-swap="innerHTML"
-        >
-          <i class="fa fa-edit"></i>
-          {% translate "Edit" %}
-        </button>
-        <button
-          class="btn btn-outline btn-error btn-sm"
-          hx-delete="{% url 'containers:delete' container.pk %}"
-          hx-confirm="{% translate 'Are you sure you want to delete this container?' %}"
-          hx-target="body"
-        >
-          <i class="fa fa-trash"></i>
-          {% translate "Delete" %}
-        </button>
-      </div>
+
+      {% comment %}
+        The one map on the page. Clicking a step of the journey summary above flies
+        it, through the data-map-event-id contract map.js already implements.
+      {% endcomment %}
+      {% include "scm/visibility/components/map_card.html" with map_title=_("Where it has been") map_height="h-64 lg:h-[24rem]" map_card_class="scm-panel" map_note=_("Where the carrier reported this container. Click a journey entry to fly to it.") %}
+
+      {% include "scm/containers/partials/container_business_context.html" %}
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Journey — the physical transport history, with provenance.         #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'journey'" role="tabpanel" x-cloak>
+      {% include "scm/containers/partials/container_tracking_panel.html" with panel_section="journey" %}
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Activity — what happened to the record, not to the box.            #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'activity'" role="tabpanel" x-cloak>
+      {% include "scm/containers/partials/container_activity.html" %}
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Related — this container's place in the object graph.              #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'related'" role="tabpanel" x-cloak>
+      {% include "scm/containers/partials/container_related.html" %}
     </div>
   </div>
-
-  {# Status + summary cards #}
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-    <div class="bg-base-200 rounded-box p-3">
-      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Status" %}</p>
-      {% include "scm/components/status_badge.html" with status=container.status %}
-    </div>
-    <div class="bg-base-200 rounded-box p-3">
-      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Condition" %}</p>
-      <p class="font-medium text-sm">{{ container.get_condition_display }}</p>
-    </div>
-    <div class="bg-base-200 rounded-box p-3">
-      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Location" %}</p>
-      {% if container.current_location %}
-        <p class="font-medium text-sm">{{ container.current_location.name }}</p>
-        <p class="text-xs text-base-content/50">{{ container.current_location.get_location_type_display }}</p>
-      {% else %}
-        <p class="font-medium text-sm">—</p>
-      {% endif %}
-    </div>
-    <div class="bg-base-200 rounded-box p-3">
-      <p class="text-xs text-base-content/60 uppercase tracking-wide mb-1">{% translate "Shipments" %}</p>
-      <p class="font-medium text-sm">{{ workspace.shipment_containers|length }}</p>
-    </div>
-  </div>
-
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-    {# Container details #}
-    <section class="app-card">
-      <h2 class="text-lg font-semibold mb-4">{% translate "Container Details" %}</h2>
-      <dl class="grid grid-cols-2 gap-x-4 gap-y-3">
-        <div>
-          <dt class="text-xs text-base-content/60">{% translate "Container ID" %}</dt>
-          <dd class="font-medium font-mono text-sm">{{ container.container_id }}</dd>
-        </div>
-        <div>
-          <dt class="text-xs text-base-content/60">{% translate "Equipment Type" %}</dt>
-          <dd class="font-medium text-sm">{{ container.equipment_type.description }}</dd>
-        </div>
-        {% if container.color_code %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Colour" %}</dt>
-            <dd class="font-medium text-sm">{{ container.color_code }} ({{ container.get_color_system_display }})</dd>
-          </div>
-        {% endif %}
-        {% if container.manufacture_date %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Manufacture Date" %}</dt>
-            <dd class="font-medium text-sm">{{ container.manufacture_date|date:"Y-m-d" }}</dd>
-          </div>
-        {% endif %}
-        {% if container.manufacturer %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Manufacturer" %}</dt>
-            <dd class="font-medium text-sm">{{ container.manufacturer }}</dd>
-          </div>
-        {% endif %}
-        {% if container.manufacturer_id %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Manufacturer ID" %}</dt>
-            <dd class="font-medium text-sm">{{ container.manufacturer_id }}</dd>
-          </div>
-        {% endif %}
-        <div>
-          <dt class="text-xs text-base-content/60">{% translate "Created" %}</dt>
-          <dd class="font-medium text-sm">
-            {{ container.created_at|date:"Y-m-d" }}{% if container.created_by %} {% translate "by" %} {{ container.created_by }}{% endif %}
-          </dd>
-        </div>
-        <div>
-          <dt class="text-xs text-base-content/60">{% translate "Updated" %}</dt>
-          <dd class="font-medium text-sm">
-            {{ container.updated_at|date:"Y-m-d" }}{% if container.updated_by %} {% translate "by" %} {{ container.updated_by }}{% endif %}
-          </dd>
-        </div>
-      </dl>
-      {% if container.notes %}
-        <div class="mt-4 pt-4 border-t border-base-300">
-          <dt class="text-xs text-base-content/60 mb-1">{% translate "Notes" %}</dt>
-          <dd class="text-sm whitespace-pre-wrap">{{ container.notes }}</dd>
-        </div>
-      {% endif %}
-    </section>
-
-    {# Shipments section #}
-    <section class="app-card">
-      <h2 class="text-lg font-semibold mb-4">{% translate "Shipments" %}</h2>
-      {% if workspace.shipment_containers %}
-        <ul class="divide-y divide-base-200">
-          {% for sc in workspace.shipment_containers %}
-            <li class="py-3 flex items-center justify-between gap-2">
-              <div>
-                <a href="{% url 'shipments:detail' sc.shipment.pk %}" class="font-medium text-sm link link-hover">
-                  {{ sc.shipment }}
-                </a>
-                <p class="text-xs text-base-content/50">
-                  {% if sc.loaded_at %}{% translate "Loaded" %} {{ sc.loaded_at|date:"Y-m-d" }}{% endif %}
-                  {% if sc.seal_number %} · {% translate "Seal" %}: {{ sc.seal_number }}{% endif %}
-                </p>
-              </div>
-              {% include "scm/shipments/partials/shipment_status_badge.html" with status=sc.shipment.status %}
-            </li>
-          {% endfor %}
-        </ul>
-      {% else %}
-        <p class="text-sm text-base-content/50 py-4">{% translate "Not assigned to any shipment." %}</p>
-      {% endif %}
-    </section>
-  </div>
-
-  {# Journey map. Works whether or not this container is on a shipment: the map is #}
-  {# drawn from the container's own carrier events. #}
-  <div class="mt-6">
-    {% include "scm/visibility/components/map_card.html" with map_title=_("Journey") map_height="h-[24rem]" map_note=_("Where the carrier reported this container. Click a timeline entry to fly to it.") %}
-  </div>
-
-  {# Carrier tracking (its own HTMX component) and linked purchase orders #}
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6 items-start">
-    {% include "scm/containers/partials/container_tracking_panel.html" %}
-    {% include "scm/containers/partials/container_purchase_orders.html" %}
-  </div>
-
-  {# Location details #}
-  {% if container.current_location %}
-    <section class="app-card mt-6">
-      <h2 class="text-lg font-semibold mb-4">{% translate "Location Details" %}</h2>
-      <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">
-        <div>
-          <dt class="text-xs text-base-content/60">{% translate "Location" %}</dt>
-          <dd class="font-medium text-sm">{{ container.current_location.name }}</dd>
-        </div>
-        <div>
-          <dt class="text-xs text-base-content/60">{% translate "Type" %}</dt>
-          <dd class="font-medium text-sm">{{ container.current_location.get_location_type_display }}</dd>
-        </div>
-        {% if container.current_location.city or container.current_location.country %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Place" %}</dt>
-            <dd class="font-medium text-sm">
-              {{ container.current_location.city }}{% if container.current_location.city and container.current_location.country %}, {% endif %}{{ container.current_location.country }}
-            </dd>
-          </div>
-        {% endif %}
-        {% if container.last_location_update %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Last updated" %}</dt>
-            <dd class="font-medium text-sm">{{ container.last_location_update|date:"Y-m-d H:i" }}</dd>
-          </div>
-        {% endif %}
-        {% if container.location_source %}
-          <div>
-            <dt class="text-xs text-base-content/60">{% translate "Source" %}</dt>
-            <dd class="font-medium text-sm">{{ container.get_location_source_display }}</dd>
-          </div>
-        {% endif %}
-      </dl>
-    </section>
-  {% endif %}
-
-  {# Movement history #}
-  {% if workspace.movements %}
-    <section class="app-card mt-6">
-      <h2 class="text-lg font-semibold mb-4">{% translate "Movement History" %}</h2>
-      <ul class="divide-y divide-base-200">
-        {% for movement in workspace.movements %}
-          <li class="py-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-sm font-medium">
-                  {% if movement.from_location %}
-                    {{ movement.from_location.name }} → {{ movement.to_location.name|default:"—" }}
-                  {% else %}
-                    → {{ movement.to_location.name|default:"—" }}
-                  {% endif %}
-                </p>
-                <p class="text-xs text-base-content/50 mt-0.5">
-                  {{ movement.get_movement_type_display }} · {{ movement.occurred_at|date:"Y-m-d H:i" }}
-                  {% if movement.source %} · {{ movement.get_source_display }}{% endif %}
-                </p>
-                {% if movement.notes %}
-                  <p class="text-xs text-base-content/60 mt-1">{{ movement.notes }}</p>
-                {% endif %}
-              </div>
-            </div>
-          </li>
-        {% endfor %}
-      </ul>
-    </section>
-  {% endif %}
 
   <div id="modal-container"></div>
 {% endblock %}

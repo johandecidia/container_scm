@@ -1,0 +1,131 @@
+{% load i18n %}
+
+{% comment %}
+  The containers booked against this order, as an operational list rather than a
+  row of badges.
+
+  Every row carries the article it was booked for, because a container reaches a
+  purchase order through a delivery line and that line names the ordered article.
+  Losing it would flatten away the one thing that says which boxes belong to which
+  purchased line.
+
+  Shipment, state and ETA all come from the bulk container-workspace build the read
+  model already did — one fixed set of queries for the whole tab, not one per box.
+
+  The quick filters are Alpine over rows that are already in the DOM: no request, no
+  server-side filter state, and nothing persisted. A box with no carrier events
+  reports "Not tracked" rather than being guessed into a state.
+
+  Table on a wide screen, stacked cards on a phone. The same rows, rendered twice
+  rather than scrolled sideways — a container list is core workflow.
+{% endcomment %}
+
+{% translate "Not tracked" as not_tracked_label %}
+
+<section class="scm-panel"
+  x-data="{
+    filter: 'all',
+    matches(el) {
+      if (this.filter === 'all') return true;
+      return el.dataset.bucket.split(' ').includes(this.filter);
+    }
+  }"
+>
+  <div class="flex flex-wrap items-baseline justify-between gap-3 mb-3">
+    <div class="flex items-baseline gap-2">
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">{% translate "Containers" %}</h2>
+      <span class="badge badge-xs badge-ghost font-medium">{{ workspace.container_count }}</span>
+    </div>
+
+    {% if workspace.container_rows %}
+      <div role="group" class="join" aria-label="{% translate 'Filter containers' %}">
+        <button type="button" class="btn btn-xs join-item" :class="filter === 'all' && 'btn-active'" @click="filter = 'all'">
+          {% translate "All" %}
+        </button>
+        <button type="button" class="btn btn-xs join-item" :class="filter === 'needs-shipment' && 'btn-active'" @click="filter = 'needs-shipment'">
+          {% translate "Needs shipment" %}
+          <span class="badge badge-xs badge-ghost">{{ workspace.containers_needing_shipment|length }}</span>
+        </button>
+        <button type="button" class="btn btn-xs join-item" :class="filter === 'moving' && 'btn-active'" @click="filter = 'moving'">
+          {% translate "Moving" %}
+          <span class="badge badge-xs badge-ghost">{{ workspace.moving_containers|length }}</span>
+        </button>
+        <button type="button" class="btn btn-xs join-item" :class="filter === 'arrived' && 'btn-active'" @click="filter = 'arrived'">
+          {% translate "Arrived" %}
+          <span class="badge badge-xs badge-ghost">{{ workspace.arrived_containers|length }}</span>
+        </button>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if workspace.container_rows %}
+    {# ---- Wide screens: one row per container. ---------------------- #}
+    <div class="hidden md:block">
+      <table class="table table-sm w-full">
+        <thead>
+          <tr>
+            <th>{% translate "Container" %}</th>
+            <th>{% translate "Article" %}</th>
+            <th>{% translate "State" %}</th>
+            <th>{% translate "Shipment" %}</th>
+            <th>{% translate "ETA" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in workspace.container_rows %}
+            <tr data-bucket="{{ row.filter_buckets }}" x-show="matches($el)">
+              <td>
+                <a href="{% url 'containers:detail' container_id=row.container.pk %}" class="link link-hover font-mono font-medium">
+                  {{ row.container.container_id }}
+                </a>
+              </td>
+              <td class="font-mono text-xs text-base-content/70">{{ row.article_label|default:"—" }}</td>
+              <td class="text-sm">
+                {% if row.current_status %}
+                  {{ row.current_status }}
+                {% else %}
+                  <span class="text-base-content/40">{{ not_tracked_label }}</span>
+                {% endif %}
+              </td>
+              <td class="text-sm">
+                {% if row.shipment %}
+                  <a href="{% url 'shipments:detail' pk=row.shipment.pk %}" class="link link-hover">{{ row.shipment }}</a>
+                {% else %}
+                  <span class="text-base-content/40">—</span>
+                {% endif %}
+              </td>
+              <td class="text-sm tabular-nums">{{ row.eta|date:"j M"|default:"—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# ---- Phone: the same rows as cards. ---------------------------- #}
+    <ul class="md:hidden divide-y divide-base-200">
+      {% for row in workspace.container_rows %}
+        <li data-bucket="{{ row.filter_buckets }}" x-show="matches($el)" class="py-3">
+          <a href="{% url 'containers:detail' container_id=row.container.pk %}" class="block">
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="font-mono font-medium text-sm">{{ row.container.container_id }}</span>
+              {% if row.eta %}<span class="text-xs text-base-content/60 tabular-nums">{{ row.eta|date:"j M" }}</span>{% endif %}
+            </div>
+            {% if row.article_label %}
+              <p class="font-mono text-xs text-base-content/60 mt-0.5">{{ row.article_label }}</p>
+            {% endif %}
+            <p class="text-xs text-base-content/70 mt-0.5">
+              {{ row.current_status|default:not_tracked_label }}
+              {% if row.shipment %}
+                <span class="text-base-content/30">·</span> {{ row.shipment }}
+              {% endif %}
+            </p>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    {% translate "No containers booked yet" as no_containers_title %}
+    {% translate "Use “Add containers” to book container numbers onto this order. They appear here with their shipment and arrival once they are linked." as no_containers_message %}
+    {% include "scm/components/empty_state.html" with icon="fa-box" title=no_containers_title message=no_containers_message %}
+  {% endif %}
+</section>

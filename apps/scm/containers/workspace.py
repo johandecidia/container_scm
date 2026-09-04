@@ -349,6 +349,20 @@ class ContainerWorkspace:
         return shipment.original_eta if shipment else None
 
     @property
+    def eta_is_future(self) -> bool:
+        """True when the ETA is still ahead of us.
+
+        The header counts down to arrival, and a countdown to a date that has
+        already passed reads as "0 minutes" — which says nothing about a box that
+        arrived last week. Asked here so the template does not have to compare
+        dates.
+        """
+        from django.utils import timezone
+
+        eta = self.current_eta
+        return eta is not None and eta > timezone.localdate()
+
+    @property
     def eta_delay_days(self) -> int | None:
         """How much later the arrival is now expected than first forecast."""
         if self.current_eta and self.original_eta:
@@ -403,6 +417,55 @@ class ContainerWorkspace:
     def suppliers(self) -> list[str]:
         names = {order.supplier_name for order in self.purchase_orders if getattr(order, "supplier_name", "")}
         return sorted(names)
+
+    # -- route -------------------------------------------------------------
+    #
+    # Where the box came from and where it is going, for the one line of the
+    # workspace header that answers it. The shipment's ports lead: they are what
+    # was booked, and they exist before any carrier has reported anything. A
+    # container tracked on its own has no booking to read, so the journey's own
+    # first and last *placed* points answer instead — derived, and empty rather
+    # than guessed when the journey names no places.
+
+    @property
+    def route_origin(self) -> str:
+        shipment = self.active_shipment
+        if shipment is not None and shipment.origin_port:
+            return shipment.origin_port
+        first = self._first_placed_point
+        return first.place_label if first is not None else ""
+
+    @property
+    def route_destination(self) -> str:
+        shipment = self.active_shipment
+        if shipment is not None and shipment.destination_port:
+            return shipment.destination_port
+        last = self._last_placed_point
+        # One placed point is an origin, not a route: reporting it as both ends
+        # would invent a destination out of the only place we know.
+        if last is None or last is self._first_placed_point:
+            return ""
+        return last.place_label
+
+    @property
+    def has_route(self) -> bool:
+        return bool(self.route_origin or self.route_destination)
+
+    @property
+    def _placed_points(self) -> list[JourneyPoint]:
+        if self.journey is None:
+            return []
+        return [point for point in self.journey.points if point.place_label]
+
+    @property
+    def _first_placed_point(self) -> JourneyPoint | None:
+        placed = self._placed_points
+        return placed[0] if placed else None
+
+    @property
+    def _last_placed_point(self) -> JourneyPoint | None:
+        placed = self._placed_points
+        return placed[-1] if placed else None
 
 
 def _not_configured_message(subscription) -> str:

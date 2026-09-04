@@ -143,6 +143,31 @@ class FilterContainersTest(TestCase):
         qs = filter_containers(self.team, search="Singamas")
         self.assertIn(self.c2, qs)
 
+    def test_search_finds_a_container_by_its_whole_number(self):
+        """The number printed on the box has to find the box.
+
+        It is stored as four columns and composed on read, so `icontains` over those
+        columns matches nothing for the number typed whole — which is exactly how
+        somebody with a container in front of them types it.
+        """
+        qs = filter_containers(self.team, search=self.c1.container_id)
+        self.assertEqual(list(qs), [self.c1])
+
+    def test_search_tolerates_a_number_typed_with_spaces(self):
+        number = self.c1.container_id
+        spaced = f"{number[:4]} {number[4:10]} {number[10]}"
+        self.assertEqual(list(filter_containers(self.team, search=spaced)), [self.c1])
+
+    def test_search_by_a_partial_number_narrows_to_that_prefix(self):
+        qs = filter_containers(self.team, search=self.c1.container_id[:8])
+        self.assertEqual(list(qs), [self.c1])
+
+    def test_search_by_a_whole_number_with_a_wrong_check_digit_matches_nothing(self):
+        """The number as typed is what was asked for — it is not silently corrected."""
+        number = self.c1.container_id
+        wrong = f"{number[:10]}{(int(number[10]) + 1) % 10}"
+        self.assertEqual(filter_containers(self.team, search=wrong).count(), 0)
+
     def test_sort_newest_default(self):
         # Just verify it doesn't error
         qs = filter_containers(self.team, sort="newest")

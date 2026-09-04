@@ -13,6 +13,8 @@ from apps.scm.decorators import scm_login_required
 from apps.scm.tracking.manual_refresh import refresh_container_tracking
 from apps.scm.visibility.context import get_container_map_context
 
+from .activity import get_container_activity
+from .choices import ContainerStatus
 from .discovery import (
     add_planned_container,
     cancel_planned_container,
@@ -25,6 +27,9 @@ from .selectors import (
     filter_containers,
     get_active_equipment_types,
     get_container_workspace,
+    get_location_inventory,
+    get_location_overview_movements,
+    get_location_workspace,
     get_team_locations_with_counts,
 )
 from .services import create_location, delete_container, update_container, update_location
@@ -34,6 +39,10 @@ CONTAINERS_PER_PAGE = 25
 # The tracking panel is its own HTMX component: the detail page includes it, and
 # a refresh re-renders exactly this and nothing else.
 TRACKING_PANEL_TEMPLATE = "scm/containers/partials/container_tracking_panel.html"
+
+# The location workspace's inventory table is its own HTMX component: filtering and
+# paging it replaces the table without re-rendering the workspace around it.
+LOCATION_INVENTORY_TEMPLATE = "scm/containers/partials/location_inventory.html"
 
 # Maps a RefreshResult level onto the messages framework, so the tracking service
 # stays independent of it.
@@ -82,6 +91,12 @@ def container_list(request):
 
 @scm_login_required
 def container_detail(request, container_id):
+    """The Container Workspace: overview, journey, activity and related objects.
+
+    Kept on the `containers:detail` route and template name it has always had, so
+    every existing link and redirect still resolves. All four sections are rendered
+    in one response and switched client-side — see the template.
+    """
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
     workspace = get_container_workspace(team=team, container=container)
@@ -91,6 +106,9 @@ def container_detail(request, container_id):
         {
             "container": container,
             "workspace": workspace,
+            # Derived from what the workspace already loaded, plus one query for the
+            # ETA history. Team-scoped throughout.
+            "activity": get_container_activity(team=team, container=container, workspace=workspace),
             # The map and the journey summary read the same workspace, so the page
             # loads this container's tracking once.
             **get_container_map_context(team=team, container=container, workspace=workspace),
@@ -283,6 +301,53 @@ def container_location_list(request):
 
 
 @scm_login_required
+def container_location_detail(request, location_id):
+    """The Location Workspace: what is here, what is expected, what has moved.
+
+    Four sections in one response, switched client-side, in the same shell as the
+    Container and Purchase Order workspaces. The Inventory tab paginates and filters
+    server-side over the shared container list, so an HTMX request returns just that
+    table — a depot with six hundred boxes must not put all of them in the DOM.
+
+    Inactive locations still open. Deactivating a location does not move the
+    containers standing on it, so refusing to show them would hide real inventory.
+    """
+    team = request.default_team
+    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
+    workspace = get_location_workspace(team=team, location=location)
+
+    inventory = get_location_inventory(
+        team=team,
+        location=location,
+        status=request.GET.get("status"),
+        equipment_type=request.GET.get("equipment_type"),
+        search=request.GET.get("search"),
+        sort=request.GET.get("sort"),
+    )
+    paginator = Paginator(inventory, CONTAINERS_PER_PAGE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    context = {
+        "location": location,
+        "workspace": workspace,
+        "inventory": page_obj,
+        "page_obj": page_obj,
+        "overview_movements": get_location_overview_movements(workspace),
+        "equipment_types": get_active_equipment_types(),
+        "status_choices": ContainerStatus.choices,
+        "inventory_filters": {
+            "status": request.GET.get("status", ""),
+            "equipment_type": request.GET.get("equipment_type", ""),
+            "search": request.GET.get("search", ""),
+        },
+        "team_slug": team.slug,
+    }
+    if request.htmx:
+        return render(request, LOCATION_INVENTORY_TEMPLATE, context)
+    return render(request, "scm/containers/pages/container_location_detail.html", context)
+
+
+@scm_login_required
 def container_location_create(request):
     """Create a new container location."""
     team = request.default_team
@@ -349,7 +414,12 @@ def container_location_update(request, location_id):
 
 @scm_login_required
 def container_location_deactivate(request, location_id):
-    """Toggle active state of a container location."""
+    """Toggle active state of a container location.
+
+    Shared by the list, which swaps its own table back in over HTMX, and by the
+    Location Workspace, which posts a plain form. ``return_to=detail`` is a flag
+    rather than a URL so it can only ever mean this location's own page.
+    """
     team = request.default_team
     location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
     if request.method == "POST":
@@ -363,4 +433,6 @@ def container_location_deactivate(request, location_id):
                 {"locations": locations, "team_slug": team.slug},
             )
         messages.success(request, _("Location updated."))
+        if request.POST.get("return_to") == "detail":
+            return redirect("containers:location_detail", location_id=location.pk)
     return redirect("containers:location_list")

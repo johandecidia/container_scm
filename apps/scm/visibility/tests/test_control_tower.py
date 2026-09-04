@@ -13,9 +13,10 @@ top of the same read layer. Three things are worth a test rather than a comment:
   board would look fine and break panning, so the partial is asserted to contain the
   source URL and no map element.
 
-* **The KPI cards are filters.** Delayed and Exceptions are the two numbers an
-  operator acts on, and clicking them has to reach the same filtered board a URL
-  would.
+* **Every KPI card is an action.** Arriving, Delayed and Exceptions are the numbers
+  an operator acts on, and clicking them has to reach the same filtered board a URL
+  would. The two totals — active shipments and containers — lead out to the lists
+  they count, by route name rather than by a written-out path.
 """
 
 from __future__ import annotations
@@ -148,27 +149,100 @@ class ControlTowerPageTest(TestCase):
 
     # -- KPI strip ---------------------------------------------------------
 
-    def test_the_kpi_cards_apply_the_filter_they_count(self):
+    def _kpi_card(self, url: str) -> str:
+        """The opening tag metric_card renders for a linked card.
+
+        The anchor is matched along with the href on purpose: both list URLs are
+        also in the sidebar, so a bare href assertion would pass whether or not
+        the card itself is a link.
+        """
+        return f'<a href="{url}" class="stat bg-base-200'
+
+    def test_the_operational_kpi_cards_drill_into_the_work_queues(self):
+        """Since UX-3 the Control Tower is the summary and the queues are the work.
+
+        Arriving and Exceptions lead to their queues; Delayed leads to the same
+        queue with its issue filter applied, because a delay is one of the things
+        that queue is about rather than a fourth destination.
+        """
         response = self.get()
+        for url in (
+            reverse("visibility:arrivals"),
+            reverse("visibility:exceptions"),
+            f"{reverse('visibility:exceptions')}?issue=delay",
+        ):
+            with self.subTest(url=url):
+                self.assertContains(response, self._kpi_card(url))
+
+    def test_no_kpi_card_still_filters_the_board_it_sits_on(self):
+        """A card that reloaded the same page with a filter is no longer a drill-down."""
         overview_url = reverse("visibility:overview")
+        response = self.get()
         for query in ("?eta=7", "?delayed=1", "?exceptions=1"):
             with self.subTest(query=query):
-                self.assertContains(response, f'href="{overview_url}{query}"')
+                self.assertNotContains(response, self._kpi_card(f"{overview_url}{query}"))
 
-    def test_the_exceptions_kpi_link_actually_filters(self):
+    def test_the_attention_panel_offers_the_queue_it_summarises(self):
+        self.assertContains(self.get(), f'href="{reverse("visibility:exceptions")}" class="text-xs link')
+
+    def test_the_arrivals_panel_offers_the_queue_it_summarises(self):
+        self.assertContains(self.get(), f'href="{reverse("visibility:arrivals")}" class="text-xs link')
+
+    def test_the_active_shipments_kpi_leads_to_the_shipment_list(self):
+        """A total is not a filter — it links to the list it counts."""
+        self.assertContains(self.get(), self._kpi_card(reverse("shipments:list")))
+
+    def test_the_containers_kpi_leads_to_the_container_list(self):
+        self.assertContains(self.get(), self._kpi_card(reverse("containers:list")))
+
+    def test_no_kpi_card_is_a_dead_total(self):
+        """metric_card falls back to a bare `div.stat` without an href. None should.
+
+        Asserting the absence of the unlinked branch is what keeps a card from
+        quietly losing its href: a missing `{% url %}` would render one of these.
+        """
+        self.assertNotContains(self.get(), '<div class="stat bg-base-200')
+
+    # -- backwards compatibility -------------------------------------------
+    #
+    # The KPI cards and the navigation stopped pointing at these in UX-3, but the
+    # URLs are in bookmarks and in links people have shared. They keep working.
+
+    def test_the_old_exceptions_filter_url_still_filters_the_board(self):
         response = self.get(exceptions="1")
         self.assertContains(response, "SHP-HELD")
         self.assertNotContains(response, "SHP-LATE")
 
-    def test_the_delayed_kpi_link_actually_filters(self):
+    def test_the_old_delayed_filter_url_still_filters_the_board(self):
         response = self.get(delayed="1")
         self.assertContains(response, "SHP-LATE")
         self.assertNotContains(response, "SHP-HELD")
 
-    def test_the_arrivals_link_actually_filters(self):
+    def test_the_old_eta_filter_url_still_filters_the_board(self):
         response = self.get(eta="7")
         self.assertContains(response, "SHP-HELD")
         self.assertNotContains(response, "SHP-LATE")
+
+    # -- no duplicate definitions ------------------------------------------
+
+    def test_the_queues_and_the_control_tower_agree_about_what_needs_attention(self):
+        """One definition, two presentations. Two definitions would be the bug."""
+        from apps.scm.visibility.work_queues import get_exception_queue
+
+        overview = get_visibility_overview(self.team)
+        self.assertEqual(
+            {obj.key for obj in overview.needs_attention},
+            {item.key for item in get_exception_queue(self.team).items},
+        )
+
+    def test_the_queues_and_the_control_tower_agree_about_what_is_arriving(self):
+        from apps.scm.visibility.work_queues import get_arrival_queue
+
+        overview = get_visibility_overview(self.team)
+        self.assertEqual(
+            {obj.key for obj in overview.arriving_soon},
+            {obj.key for obj in get_arrival_queue(self.team).objects},
+        )
 
     # -- HTMX and the map --------------------------------------------------
 

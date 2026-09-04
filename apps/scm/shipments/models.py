@@ -80,6 +80,16 @@ class Shipment(BaseTeamModel):
     def __str__(self) -> str:
         return self.shipment_number or self.reference or f"Shipment #{self.pk}"
 
+    @property
+    def route_label(self) -> str:
+        """The route in one line, e.g. "Shanghai → Gothenburg".
+
+        Only the ports that are recorded: a shipment with one known port reads as
+        that port rather than as an arrow pointing at nothing. Empty when neither
+        is known, so callers can test it for truthiness.
+        """
+        return " → ".join(part for part in (self.origin_port, self.destination_port) if part)
+
 
 class ShipmentContainer(BaseModel):
     """Through model linking a Container to a Shipment."""

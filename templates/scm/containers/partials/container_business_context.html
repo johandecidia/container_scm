@@ -1,0 +1,145 @@
+{% load i18n %}
+
+{% comment %}
+  What this container is carrying and for whom — the business side of the box,
+  compact, on the Overview.
+
+  Only what a person reading the Overview needs. The equipment record itself
+  (colour, manufacture date, manufacturer, who created the row) is real data and
+  is kept, but it answers a different and rarer question, so it sits behind a
+  disclosure at the bottom rather than competing with the container's current
+  state. Full relations live in the Related tab.
+
+  Fields with no value are omitted, not dashed: a container with no manufacturer
+  recorded should read as a shorter panel, not as a panel with a hole in it.
+{% endcomment %}
+
+<section class="scm-panel">
+  <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-4">
+    {% translate "Business context" %}
+  </h2>
+
+  <dl class="grid grid-cols-2 gap-x-4 gap-y-3">
+    {% if workspace.purchase_orders %}
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Purchase order" %}</dt>
+        <dd class="font-medium text-sm">
+          {% for order in workspace.purchase_orders %}
+            <a href="{% url 'procurement:purchase_order_detail' order.pk %}" class="link link-hover">
+              {{ order.po_number }}
+            </a>{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+        </dd>
+      </div>
+    {% endif %}
+
+    {% if workspace.suppliers %}
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Supplier" %}</dt>
+        <dd class="font-medium text-sm">{{ workspace.suppliers|join:", " }}</dd>
+      </div>
+    {% endif %}
+
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Equipment type" %}</dt>
+      <dd class="font-medium text-sm">
+        {{ container.equipment_type.description }}
+        <span class="badge badge-xs badge-ghost font-mono ml-1">{{ container.equipment_type.iso_code }}</span>
+      </dd>
+    </div>
+
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Condition" %}</dt>
+      <dd class="font-medium text-sm">{{ container.get_condition_display }}</dd>
+    </div>
+
+    {% comment %}
+      Our own record of where the box is stored, which is a different claim from
+      the derived current location above it: this is the inventory position someone
+      recorded, with the source that recorded it.
+    {% endcomment %}
+    {% if container.current_location %}
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Recorded location" %}</dt>
+        <dd class="font-medium text-sm">
+          <a href="{% url 'containers:list' %}?location_id={{ container.current_location.pk }}" class="link link-hover">
+            {{ container.current_location.name }}
+          </a>
+          <span class="block text-xs text-base-content/50 font-normal">
+            {{ container.current_location.get_location_type_display }}
+            {% if container.current_location.city %}· {{ container.current_location.city }}{% endif %}
+          </span>
+        </dd>
+      </div>
+      {% if container.last_location_update %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Location recorded" %}</dt>
+          <dd class="font-medium text-sm">
+            {{ container.last_location_update|date:"d M Y H:i" }}
+            {% if container.location_source %}
+              <span class="block text-xs text-base-content/50 font-normal">{{ container.get_location_source_display }}</span>
+            {% endif %}
+          </dd>
+        </div>
+      {% endif %}
+    {% elif container.location_text %}
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Recorded location" %}</dt>
+        <dd class="font-medium text-sm">{{ container.location_text }}</dd>
+      </div>
+    {% endif %}
+  </dl>
+
+  {% if container.notes %}
+    <div class="mt-4 pt-4 border-t border-base-300">
+      <p class="text-xs text-base-content/60 mb-1">{% translate "Notes" %}</p>
+      <p class="text-sm whitespace-pre-wrap">{{ container.notes }}</p>
+    </div>
+  {% endif %}
+
+  <details class="mt-4 pt-4 border-t border-base-300">
+    <summary class="text-xs text-base-content/60 cursor-pointer">{% translate "Equipment record" %}</summary>
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-3 mt-3">
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Container ID" %}</dt>
+        <dd class="font-medium font-mono text-sm">{{ container.container_id }}</dd>
+      </div>
+      {% if container.color_code %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Colour" %}</dt>
+          <dd class="font-medium text-sm">{{ container.color_code }} ({{ container.get_color_system_display }})</dd>
+        </div>
+      {% endif %}
+      {% if container.manufacture_date %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Manufacture Date" %}</dt>
+          <dd class="font-medium text-sm">{{ container.manufacture_date|date:"Y-m-d" }}</dd>
+        </div>
+      {% endif %}
+      {% if container.manufacturer %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Manufacturer" %}</dt>
+          <dd class="font-medium text-sm">{{ container.manufacturer }}</dd>
+        </div>
+      {% endif %}
+      {% if container.manufacturer_id %}
+        <div>
+          <dt class="text-xs text-base-content/60">{% translate "Manufacturer ID" %}</dt>
+          <dd class="font-medium text-sm">{{ container.manufacturer_id }}</dd>
+        </div>
+      {% endif %}
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Created" %}</dt>
+        <dd class="font-medium text-sm">
+          {{ container.created_at|date:"Y-m-d" }}{% if container.created_by %} {% translate "by" %} {{ container.created_by }}{% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt class="text-xs text-base-content/60">{% translate "Updated" %}</dt>
+        <dd class="font-medium text-sm">
+          {{ container.updated_at|date:"Y-m-d" }}{% if container.updated_by %} {% translate "by" %} {{ container.updated_by }}{% endif %}
+        </dd>
+      </div>
+    </dl>
+  </details>
+</section>

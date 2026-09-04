@@ -32,8 +32,16 @@ from .selectors import (
     get_visibility_overview,
     parse_visibility_filters,
 )
+from .work_queues import (
+    get_arrival_queue,
+    get_exception_queue,
+    parse_arrival_queue_filters,
+    parse_exception_queue_filters,
+)
 
 BOARD_TEMPLATE = "scm/visibility/partials/visibility_board.html"
+EXCEPTIONS_QUEUE_TEMPLATE = "scm/visibility/partials/exceptions_queue.html"
+ARRIVALS_QUEUE_TEMPLATE = "scm/visibility/partials/arrivals_queue.html"
 
 
 @scm_login_required
@@ -54,6 +62,32 @@ def visibility_overview(request):
         "scm/visibility/pages/visibility_overview.html",
         {**context, "mapbox": get_mapbox_config()},
     )
+
+
+@scm_login_required
+def exceptions_queue(request):
+    """The Exceptions work queue, and its HTMX filter refreshes.
+
+    An HTMX request gets the queue partial only, so a filter change replaces the
+    rows without re-rendering the page around them.
+    """
+    team = request.default_team
+    queue = get_exception_queue(team=team, filters=parse_exception_queue_filters(request.GET))
+    context = {"queue": queue, "filters": queue.filters, "team_slug": team.slug}
+    if request.htmx:
+        return render(request, EXCEPTIONS_QUEUE_TEMPLATE, context)
+    return render(request, "scm/visibility/pages/exceptions.html", context)
+
+
+@scm_login_required
+def arrivals_queue(request):
+    """The Arrivals work queue — what is expected, when and where."""
+    team = request.default_team
+    queue = get_arrival_queue(team=team, filters=parse_arrival_queue_filters(request.GET))
+    context = {"queue": queue, "filters": queue.filters, "team_slug": team.slug}
+    if request.htmx:
+        return render(request, ARRIVALS_QUEUE_TEMPLATE, context)
+    return render(request, "scm/visibility/pages/arrivals.html", context)
 
 
 @scm_login_required

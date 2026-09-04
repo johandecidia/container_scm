@@ -1,0 +1,117 @@
+{% load i18n %}
+
+{% comment %}
+  One timeline for the whole journey, whoever reported each part of it: every
+  carrier that has tracked this box, and our own physical observations. Each row
+  names its source, so two sources describing the same leg read as two accounts of
+  one journey rather than as a contradiction.
+
+  Lives on the workspace Journey tab. A tracking refresh targets the Overview
+  summary, so this element is re-rendered out of band in the same response
+  (`oob=True`) — one request, one carrier call, both tabs current.
+
+  Every row shows only what its source actually said, in a fixed order — what
+  happened, where, on what. Absent fields collapse rather than render as blanks or
+  dashes, so the shape of a row says how much is known about it.
+
+  An event we could not classify still shows the carrier's own wording and codes:
+  a gap in our mapping tables must cost the reader detail, not the whole event.
+
+  A point that has coordinates carries data-map-event-id, which is the whole
+  contract between the timeline and the map: clicking the row flies the map to
+  that point, and selecting it on the map highlights the row. The timeline stays
+  the authoritative chronology — the map only points at it, and cannot show a
+  place we have no coordinates for.
+{% endcomment %}
+
+<div id="container-journey" {% if oob %}hx-swap-oob="true"{% endif %}>
+  <section class="scm-panel">
+    <div class="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
+        {% translate "Journey" %}
+      </h2>
+      {% if workspace.journey_timeline %}
+        <p class="text-xs text-base-content/50">
+          {% blocktranslate trimmed count events=workspace.journey_timeline|length %}
+            {{ events }} event, newest first
+          {% plural %}
+            {{ events }} events, newest first
+          {% endblocktranslate %}
+        </p>
+      {% endif %}
+    </div>
+
+    {% if workspace.journey_timeline %}
+      <ol class="divide-y divide-base-200">
+        {% for point in workspace.journey_timeline %}
+          {% with event=point.event %}
+            <li
+              class="py-3 flex items-start gap-3 {% if point.has_coordinates %}cursor-pointer hover:bg-base-200/60 rounded-box px-2 -mx-2{% endif %}"
+              {% if point.has_coordinates %}data-map-event-id="{{ point.event_id }}"{% endif %}
+            >
+              <p class="text-xs text-base-content/50 shrink-0 w-20 sm:w-28 pt-0.5">
+                {{ point.occurred_at|date:"d M H:i"|default:"—" }}
+              </p>
+              <div class="min-w-0">
+                <p class="font-medium text-sm">
+                  {{ point.title }}
+                  {% if not point.is_actual %}
+                    <span class="badge badge-xs badge-ghost ml-1">{{ event.get_event_time_type_display }}</span>
+                  {% endif %}
+                </p>
+
+                {% if point.location_name or point.location_unlocode %}
+                  <p class="text-xs text-base-content/70 mt-0.5">
+                    {{ point.location_name }}
+                    {% if point.location_unlocode %}
+                      <span class="badge badge-xs badge-ghost font-mono ml-1">{{ point.location_unlocode }}</span>
+                    {% endif %}
+                  </p>
+                {% endif %}
+
+                {% if point.vessel_name %}
+                  <p class="text-xs text-base-content/60 mt-0.5">
+                    {{ point.vessel_name }}{% if point.voyage_number %} · {{ point.voyage_number }}{% endif %}
+                  </p>
+                {% elif point.voyage_number %}
+                  <p class="text-xs text-base-content/60 mt-0.5">
+                    {% blocktranslate trimmed with voyage=point.voyage_number %}Voyage {{ voyage }}{% endblocktranslate %}
+                  </p>
+                {% endif %}
+
+                {% if point.description and point.description != point.title %}
+                  <p class="text-xs text-base-content/60 mt-0.5">{{ point.description }}</p>
+                {% endif %}
+
+                {% if event.is_unclassified and event.carrier_reference %}
+                  <p class="text-xs text-base-content/50 font-mono mt-0.5">
+                    {% blocktranslate trimmed with reference=event.carrier_reference %}
+                      Carrier: {{ reference }}
+                    {% endblocktranslate %}
+                  </p>
+                {% endif %}
+
+                {% comment %}
+                  Who says so. A second source that reported the same physical event
+                  is listed beside the first rather than replacing it — neither is
+                  discarded, and the reader can see they agree.
+                {% endcomment %}
+                <p class="text-xs text-base-content/50 mt-0.5">
+                  {% blocktranslate trimmed with source=point.source.name %}Source: {{ source }}{% endblocktranslate %}
+                  {% for name in point.corroborating_source_names %}
+                    <span class="text-base-content/40">
+                      {% blocktranslate trimmed with source=name %}· also {{ source }}{% endblocktranslate %}
+                    </span>
+                  {% endfor %}
+                </p>
+              </div>
+            </li>
+          {% endwith %}
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No tracking events yet." %}</p>
+      <p class="text-sm text-base-content/50">{% translate "Refresh tracking to check the carriers." %}</p>
+    {% endif %}
+  </section>
+</div>

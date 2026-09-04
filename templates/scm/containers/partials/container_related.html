@@ -1,0 +1,110 @@
+{% load i18n %}
+
+{% comment %}
+  This container as part of the object graph: the shipment carrying it, the
+  purchase orders behind it, the deliveries that received it, the location holding
+  it, the carriers watching it.
+
+  Only relationships that exist are shown. There is no "no shipment" row and no
+  empty PO card — an absent relationship is absence of a row, and a workspace with
+  none says so once, at the bottom.
+{% endcomment %}
+
+<div class="flex flex-col gap-4">
+  {% if workspace.shipment_containers %}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Shipments") count=workspace.shipment_containers|length %}
+      <div class="divide-y divide-base-200">
+        {% for link in workspace.shipment_containers %}
+          {% with shipment=link.shipment %}
+            {% url 'shipments:detail' shipment.pk as shipment_url %}
+            {% include "scm/components/related_object.html" with icon="fa-ship" title=shipment subtitle=shipment.route_label meta=shipment.get_status_display url=shipment_url %}
+          {% endwith %}
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  {% if workspace.purchase_orders %}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Purchase orders") count=workspace.purchase_orders|length %}
+      <div class="divide-y divide-base-200">
+        {% for order in workspace.purchase_orders %}
+          {% url 'procurement:purchase_order_detail' order.pk as order_url %}
+          {% include "scm/components/related_object.html" with icon="fa-file-invoice" title=order.po_number subtitle=order.supplier_name meta=order.get_status_display url=order_url %}
+        {% endfor %}
+      </div>
+
+      {% comment %}
+        Which lines of those orders are actually in this box — the reason the
+        relationship exists, kept beside it rather than on its own page.
+      {% endcomment %}
+      {% if workspace.purchase_order_lines %}
+        <details class="mt-3 pt-3 border-t border-base-300">
+          <summary class="text-xs text-base-content/60 cursor-pointer">
+            {% blocktranslate trimmed count lines=workspace.purchase_order_lines|length %}
+              {{ lines }} order line in this container
+            {% plural %}
+              {{ lines }} order lines in this container
+            {% endblocktranslate %}
+          </summary>
+          <ul class="mt-2 divide-y divide-base-200">
+            {% for line in workspace.purchase_order_lines %}
+              <li class="py-2 flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="text-xs font-medium">{{ line.item_no }}</p>
+                  {% if line.description %}
+                    <p class="text-xs text-base-content/60">{{ line.description }}</p>
+                  {% endif %}
+                  <p class="text-xs text-base-content/40">{{ line.purchase_order.po_number }}</p>
+                </div>
+                <p class="text-xs text-base-content/50 shrink-0">{{ line.ordered_qty }}</p>
+              </li>
+            {% endfor %}
+          </ul>
+        </details>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if workspace.supplier_delivery_lines %}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Supplier deliveries") %}
+      <div class="divide-y divide-base-200">
+        {% for line in workspace.supplier_delivery_lines %}
+          {% with delivery=line.delivery %}
+            {% url 'supplier_deliveries:detail' delivery.pk as delivery_url %}
+            {% include "scm/components/related_object.html" with icon="fa-truck" title=delivery.delivery_reference subtitle=delivery.supplier meta=delivery.get_status_display url=delivery_url %}
+          {% endwith %}
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  {% if container.current_location %}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Current location") %}
+      {% with location=container.current_location %}
+        {% firstof location.city|add:", "|add:location.country location.city location.country as place %}
+        {% url 'containers:location_detail' location.pk as location_url %}
+        {% include "scm/components/related_object.html" with icon="fa-warehouse" title=location.name subtitle=place meta=location.get_location_type_display url=location_url %}
+      {% endwith %}
+    </section>
+  {% endif %}
+
+  {% if workspace.tracking_subscriptions %}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Tracking sources") count=workspace.tracking_subscriptions|length %}
+      <div class="divide-y divide-base-200">
+        {% for subscription in workspace.tracking_subscriptions %}
+          {% url 'tracking:detail' subscription.pk as subscription_url %}
+          {% include "scm/components/related_object.html" with icon="fa-satellite-dish" title=subscription.provider subtitle=subscription.tracking_reference meta=subscription.get_status_display url=subscription_url %}
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  {% if not workspace.shipment_containers and not workspace.purchase_orders and not workspace.supplier_delivery_lines and not container.current_location and not workspace.tracking_subscriptions %}
+    {% include "scm/components/empty_state.html" with icon="fa-circle-nodes" title=_("Nothing linked to this container yet") message=_("Shipments, purchase orders, deliveries and locations appear here once this container is linked to them.") %}
+  {% endif %}
+</div>

@@ -30,7 +30,11 @@ from apps.scm.containers.models import Container
 from apps.scm.containers.workspace import get_container_workspaces
 from apps.scm.shipments.models import Shipment, ShipmentContainer
 from apps.scm.tracking.delay_detection import evaluate_shipment_delay
-from apps.scm.tracking.exception_detection import ExceptionReport, evaluate_container_exceptions
+from apps.scm.tracking.exception_detection import (
+    ExceptionReport,
+    evaluate_container_exceptions,
+    merge_exception_reports,
+)
 from apps.scm.tracking.models import ETAHistory, TrackingEvent, TrackingSubscription
 from apps.teams.models import Team
 
@@ -210,7 +214,7 @@ def list_visibility_objects(team: Team) -> list[VisibilityObject]:
                 shipment=shipment,
                 workspaces=members,
                 delay=evaluate_shipment_delay(shipment, has_delay_event=shipment.pk in delay_event_shipment_ids),
-                exceptions=_merge_exceptions(exceptions.get(w.container.pk) for w in members),
+                exceptions=merge_exception_reports(exceptions.get(w.container.pk) for w in members),
             )
         )
 
@@ -248,7 +252,7 @@ def get_shipment_visibility(team: Team, shipment: Shipment) -> VisibilityObject:
         shipment=shipment,
         workspaces=members,
         delay=evaluate_shipment_delay(shipment, has_delay_event=has_delay_event),
-        exceptions=_merge_exceptions(_exception_reports(team, container_ids).get(cid) for cid in container_ids),
+        exceptions=merge_exception_reports(_exception_reports(team, container_ids).get(cid) for cid in container_ids),
     )
 
 
@@ -343,24 +347,6 @@ def _exception_reports(team: Team, container_ids) -> dict[int, ExceptionReport]:
     return {cid: evaluate_container_exceptions(rows) for cid, rows in by_container.items()}
 
 
-def _merge_exceptions(reports) -> ExceptionReport:
-    """Combine several containers' exception reports into the shipment's own.
-
-    Types are de-duplicated — one customs hold across four boxes is one exception
-    for the shipment — while details are kept in full so the reason survives.
-    """
-    types: list[str] = []
-    details: list[str] = []
-    for report in reports:
-        if report is None:
-            continue
-        for exception_type in report.exception_types:
-            if exception_type not in types:
-                types.append(exception_type)
-        details.extend(report.details)
-    return ExceptionReport(has_exception=bool(types), exception_types=types, details=details)
-
-
 def _apply_filters(objects: list[VisibilityObject], filters: VisibilityFilters) -> list[VisibilityObject]:
     """Narrow the object list.
 
@@ -378,15 +364,21 @@ def _apply_filters(objects: list[VisibilityObject], filters: VisibilityFilters) 
     if filters.exceptions_only:
         result = [obj for obj in result if obj.has_exception]
     if filters.eta_window:
-        result = _filter_by_eta_window(result, filters.eta_window)
+        result = filter_by_eta_window(result, filters.eta_window)
     if filters.search:
-        result = [obj for obj in result if _matches_search(obj, filters.search.lower())]
+        result = [obj for obj in result if matches_search(obj, filters.search.lower())]
     return result
 
 
-def _filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[VisibilityObject]:
+def filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[VisibilityObject]:
+    """Narrow *objects* to those arriving within *window*.
+
+    Public because the work queues ask the same question the Control Tower's ETA
+    filter does, and two implementations of "the next seven days" would eventually
+    disagree about whether today counts. An unrecognised window narrows nothing.
+    """
     today = timezone.localdate()
-    windows = {"7": 7, "14": 14, "30": 30}
+    windows = {"today": 0, "7": 7, "14": 14, "30": 30}
     if window == "overdue":
         return [obj for obj in objects if obj.current_eta and obj.current_eta < today]
     days = windows.get(window)
@@ -396,7 +388,8 @@ def _filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[
     return [obj for obj in objects if obj.current_eta and today <= obj.current_eta <= cutoff]
 
 
-def _matches_search(obj: VisibilityObject, needle: str) -> bool:
+def matches_search(obj: VisibilityObject, needle: str) -> bool:
+    """True when *needle* — already lowercased — appears in anything naming *obj*."""
     haystack = [obj.label, obj.carrier_name, obj.vessel_name, obj.voyage_number]
     haystack.extend(container.container_id for container in obj.containers)
     if obj.shipment is not None:

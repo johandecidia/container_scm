@@ -1,0 +1,55 @@
+{% load i18n %}
+
+{% comment %}
+  One recorded physical movement, seen from this location.
+
+  Usage — on one line:
+
+    {% templatetag openblock %} include "scm/containers/partials/location_movement_row.html" with movement=movement location=location {% templatetag closeblock %}
+
+  The direction is read off the row rather than stored: a movement whose
+  `to_location` is this place arrived here, one whose `from_location` is this place
+  left it. The other end of the move is named where it is known — a container
+  arriving from nowhere recorded is a real state, not a missing value.
+
+  This is our own physical record, and the source is printed with it. A carrier's
+  discharge event is a different kind of claim and belongs on the container's
+  Journey tab, not here.
+{% endcomment %}
+
+{% if movement.to_location_id == location.pk %}
+  {% firstof movement.from_location.name "" as other_place %}
+  <li class="py-3 flex items-start gap-3">
+    <span class="text-success/60 pt-0.5 shrink-0"><i class="fa fa-arrow-right-to-bracket w-4"></i></span>
+{% else %}
+  {% firstof movement.to_location.name "" as other_place %}
+  <li class="py-3 flex items-start gap-3">
+    <span class="text-base-content/40 pt-0.5 shrink-0"><i class="fa fa-arrow-right-from-bracket w-4"></i></span>
+{% endif %}
+
+  <p class="text-xs text-base-content/50 shrink-0 w-20 sm:w-28 pt-0.5">
+    {{ movement.occurred_at|date:"d M H:i" }}
+  </p>
+
+  <div class="min-w-0">
+    <p class="text-sm font-medium">
+      <a href="{% url 'containers:detail' container_id=movement.container_id %}" class="link link-hover font-mono">
+        {{ movement.container.container_id }}
+      </a>
+    </p>
+    <p class="text-xs text-base-content/70 mt-0.5">
+      {{ movement.get_movement_type_display }}
+      {% if other_place %}
+        <span class="text-base-content/30">·</span>
+        {% if movement.to_location_id == location.pk %}
+          {% blocktranslate trimmed with place=other_place %}from {{ place }}{% endblocktranslate %}
+        {% else %}
+          {% blocktranslate trimmed with place=other_place %}to {{ place }}{% endblocktranslate %}
+        {% endif %}
+      {% endif %}
+    </p>
+    {% if movement.source %}
+      <p class="text-xs text-base-content/50 mt-0.5">{{ movement.get_source_display }}</p>
+    {% endif %}
+  </div>
+</li>

@@ -1,0 +1,225 @@
+{% load i18n %}
+
+{% comment %}
+  Overview: the operational state of this order, then its paperwork.
+
+  Order first, document second. Logistics context and what is still missing sit
+  above the order lines and the source metadata, because "is it moving" is the
+  question this page is opened to answer and "what currency is it in" is not.
+
+  The movement summary reads the ETAs the container workspaces already derived —
+  the earliest of them and how many boxes share it. That is not a second visibility
+  engine; it is the minimum of a list this page already has in memory.
+{% endcomment %}
+
+<div class="flex flex-col gap-4">
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+    {# ---------------------------------------------------------------- #}
+    {# Logistics context — quantities in flight, and where they are.    #}
+    {# ---------------------------------------------------------------- #}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Logistics") %}
+
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dt class="text-base-content/60">{% translate "Logistics status" %}</dt>
+        <dd><span class="badge badge-sm {{ workspace.logistics_status_tone }}">{{ workspace.logistics_status_label }}</span></dd>
+
+        <dt class="text-base-content/60">{% translate "In transit" %}</dt>
+        <dd class="tabular-nums">{{ workspace.in_transit_qty|floatformat:"-2" }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Containers" %}</dt>
+        <dd class="tabular-nums">{{ workspace.container_count }}</dd>
+
+        <dt class="text-base-content/60">{% translate "Deliveries" %}</dt>
+        <dd class="tabular-nums">{{ workspace.delivery_count }}</dd>
+
+        {% if purchase_order.expected_receipt_date %}
+          <dt class="text-base-content/60">{% translate "Expected receipt" %}</dt>
+          <dd>{{ purchase_order.expected_receipt_date|date:"j M Y" }}</dd>
+        {% endif %}
+      </dl>
+
+      {% comment %}
+        The next arrival, where the containers on this order carry an ETA. Absent
+        rather than dashed when none of them does — an order nobody has tracked
+        should not print an empty arrival card.
+      {% endcomment %}
+      {% if workspace.next_arrival %}
+        {% with arrival=workspace.next_arrival %}
+          <div class="mt-4 pt-4 border-t border-base-300">
+            <p class="text-xs uppercase tracking-wide text-base-content/50">{% translate "Next arrival" %}</p>
+            <p class="text-sm font-medium mt-1">
+              {{ arrival.0|date:"j M" }}
+              <span class="text-base-content/40 mx-1">·</span>
+              {% blocktranslate trimmed count count=arrival.1 %}
+                {{ count }} container
+              {% plural %}
+                {{ count }} containers
+              {% endblocktranslate %}
+            </p>
+            {% if workspace.next_arrival_destinations %}
+              <p class="text-xs text-base-content/60 mt-0.5">{{ workspace.next_arrival_destinations|join:" · " }}</p>
+            {% endif %}
+          </div>
+        {% endwith %}
+      {% endif %}
+    </section>
+
+    {# ---------------------------------------------------------------- #}
+    {# What is still missing, where it can be derived objectively.      #}
+    {# ---------------------------------------------------------------- #}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Completeness") count=workspace.gaps|length %}
+
+      {% if workspace.has_gaps %}
+        <ul class="divide-y divide-base-200">
+          {% for gap in workspace.gaps %}
+            <li class="py-2.5 flex items-start gap-3 text-sm">
+              <i class="fa fa-circle-info text-base-content/30 pt-1 w-4 shrink-0"></i>
+              <span>{{ gap.message }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+        <p class="text-xs text-base-content/40 mt-3 pt-3 border-t border-base-300">
+          {% blocktranslate trimmed %}
+            Derived from the order's quantities and its container and delivery links.
+            These are gaps in what has been recorded, not reported problems.
+          {% endblocktranslate %}
+        </p>
+      {% else %}
+        <p class="text-sm text-base-content/60 py-2">
+          {% translate "Nothing is missing that can be checked from the recorded quantities and links." %}
+        </p>
+      {% endif %}
+    </section>
+  </div>
+
+  {# ------------------------------------------------------------------ #}
+  {# Order lines. Which article was ordered, and how much of it is       #}
+  {# booked — the relationship the Containers tab then resolves to       #}
+  {# specific boxes.                                                     #}
+  {# ------------------------------------------------------------------ #}
+  <section class="scm-panel">
+    {% include "scm/components/section_header.html" with title=_("Order lines") count=line_summaries|length %}
+
+    {% if line_summaries %}
+      {% comment %}
+        This one keeps its horizontal overflow. It is the financial document view
+        and genuinely needs the width; the operational content on this page does
+        not scroll sideways.
+      {% endcomment %}
+      <div class="overflow-x-auto">
+        <table class="table table-zebra table-sm w-full">
+          <thead>
+            <tr>
+              <th>{% translate "Line" %}</th>
+              <th>{% translate "Article" %}</th>
+              <th>{% translate "Description" %}</th>
+              <th class="text-right">{% translate "Ordered" %}</th>
+              <th class="text-right">{% translate "Booked" %}</th>
+              <th class="text-right">{% translate "Shipped" %}</th>
+              <th class="text-right">{% translate "Received" %}</th>
+              <th class="text-right">{% translate "Unit price" %}</th>
+              <th class="text-right">{% translate "Amount" %}</th>
+              <th>{% translate "Expected" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for summary in line_summaries %}
+              {% with line=summary.line %}
+                <tr>
+                  <td class="text-base-content/60">{{ line.line_no }}</td>
+                  <td class="font-mono text-xs">{{ line.item_no }}</td>
+                  <td>{{ line.description }}</td>
+                  <td class="text-right tabular-nums">{{ line.ordered_qty|floatformat:"-2" }}</td>
+                  <td class="text-right tabular-nums">
+                    {{ summary.booked_qty|floatformat:"-2" }}
+                    {% comment %}
+                      Spelled out rather than shown as a signed number: "0 (−1)"
+                      reads as if minus one had been booked. And only once the order
+                      has started — every line of a brand-new order is short by its
+                      whole quantity, which is not news.
+                    {% endcomment %}
+                    {% if workspace.has_started and summary.unbooked_qty %}
+                      <span class="text-warning text-xs whitespace-nowrap">
+                        {% blocktranslate trimmed with qty=summary.unbooked_qty|floatformat:"-2" %}{{ qty }} short{% endblocktranslate %}
+                      </span>
+                    {% endif %}
+                  </td>
+                  <td class="text-right tabular-nums">{{ line.shipped_qty|floatformat:"-2" }}</td>
+                  <td class="text-right tabular-nums">{{ line.received_qty|floatformat:"-2" }}</td>
+                  {% comment %}
+                    Money to two places. The columns multiply a 4-decimal price by a
+                    3-decimal quantity, so an unformatted amount prints seven
+                    decimals — arithmetic precision shown as if it were currency.
+                  {% endcomment %}
+                  <td class="text-right tabular-nums">{{ line.unit_price|floatformat:2|default:"—" }}</td>
+                  <td class="text-right tabular-nums">{{ line.line_amount|floatformat:2|default:"—" }}</td>
+                  <td class="text-xs text-base-content/60">{{ line.expected_receipt_date|default:"—" }}</td>
+                </tr>
+              {% endwith %}
+            {% endfor %}
+          </tbody>
+          {% if workspace.total_order_amount is not None %}
+            <tfoot>
+              <tr class="font-semibold">
+                <td colspan="8" class="text-right text-base-content/60 text-xs uppercase tracking-wide">
+                  {% blocktranslate trimmed with currency=purchase_order.currency %}Total {{ currency }}{% endblocktranslate %}
+                </td>
+                <td class="text-right tabular-nums">{{ workspace.total_order_amount|floatformat:2 }}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          {% endif %}
+        </table>
+      </div>
+      <p class="text-xs text-base-content/40 mt-3">
+        {% translate "“Booked” is the quantity placed on a supplier delivery. A shortfall is shown beside it." %}
+      </p>
+    {% else %}
+      <p class="text-sm text-base-content/60 py-2">{% translate "No lines on this purchase order." %}</p>
+    {% endif %}
+  </section>
+
+  {# ------------------------------------------------------------------ #}
+  {# Order details. Source metadata and the document status — secondary  #}
+  {# on purpose, and clearly labelled as the source system's own view.   #}
+  {# ------------------------------------------------------------------ #}
+  <section class="scm-panel">
+    {% include "scm/components/section_header.html" with title=_("Order details") %}
+    <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+      <div class="flex justify-between gap-3 border-b border-base-200 py-1">
+        <dt class="text-base-content/60" title="{% translate 'The source system’s document status. Not the SCM logistics status.' %}">
+          {% translate "Document status" %}
+        </dt>
+        <dd><span class="badge badge-outline badge-sm">{{ purchase_order.get_status_display }}</span></dd>
+      </div>
+      <div class="flex justify-between gap-3 border-b border-base-200 py-1">
+        <dt class="text-base-content/60">{% translate "Source" %}</dt>
+        <dd>{{ workspace.source_label }}</dd>
+      </div>
+      <div class="flex justify-between gap-3 border-b border-base-200 py-1">
+        <dt class="text-base-content/60">{% translate "Supplier no" %}</dt>
+        <dd>{{ purchase_order.supplier_no|default:"—" }}</dd>
+      </div>
+      <div class="flex justify-between gap-3 border-b border-base-200 py-1">
+        <dt class="text-base-content/60">{% translate "Currency" %}</dt>
+        <dd>{{ purchase_order.currency }}</dd>
+      </div>
+      <div class="flex justify-between gap-3 border-b border-base-200 py-1">
+        <dt class="text-base-content/60">{% translate "Order date" %}</dt>
+        <dd>{{ purchase_order.order_date|default:"—" }}</dd>
+      </div>
+      <div class="flex justify-between gap-3 border-b border-base-200 py-1">
+        <dt class="text-base-content/60">{% translate "Expected receipt" %}</dt>
+        <dd>{{ purchase_order.expected_receipt_date|default:"—" }}</dd>
+      </div>
+      {% if purchase_order.last_synced_at %}
+        <div class="flex justify-between gap-3 border-b border-base-200 py-1">
+          <dt class="text-base-content/60">{% translate "Last synced" %}</dt>
+          <dd>{{ purchase_order.last_synced_at|date:"j M Y H:i" }}</dd>
+        </div>
+      {% endif %}
+    </dl>
+  </section>
+</div>

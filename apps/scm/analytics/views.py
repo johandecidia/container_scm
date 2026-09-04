@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
 from apps.scm.decorators import scm_login_required
-from apps.scm.search import search_scm
+from apps.scm.search import group_search_results, search_scm
 
 from .alerts import get_scm_alerts
 from .models import SavedFilter
@@ -61,14 +61,19 @@ def analytics_dashboard(request):
 
 @scm_login_required
 def scm_search(request):
-    """HTMX-friendly global SCM search endpoint."""
+    """HTMX-friendly global SCM search endpoint.
+
+    Renders the results partial for the search widget in the SCM shell. Grouped by
+    kind for display; the flat list stays in the context because it is the shape
+    `search_scm` returns and callers reading it should not have to unpack groups.
+    """
     team = request.default_team
     query = request.GET.get("q", "").strip()
     results = search_scm(team=team, query=query) if query else []
     return render(
         request,
         "scm/partials/search_results.html",
-        {"results": results, "query": query},
+        {"results": results, "groups": group_search_results(results), "query": query},
     )
 
 

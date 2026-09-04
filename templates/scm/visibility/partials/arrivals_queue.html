@@ -1,0 +1,153 @@
+{% load i18n %}
+
+{% comment %}
+  The Arrivals work queue: the count, the window, the filters and the days.
+
+  Grouped by day rather than listed flat, because this is a planning view — the
+  question is "what lands on Thursday", and a flat list makes the reader do the
+  grouping. Days are ordered earliest first, which puts the most overdue day at the
+  top of an Overdue window.
+
+  Swapped whole by HTMX, so the count and the window buttons reflect the current
+  selection.
+{% endcomment %}
+
+{% url 'visibility:arrivals' as queue_url %}
+
+<div id="arrivals-queue" class="flex flex-col gap-4">
+
+  {# 1. How much is coming, in the window that is actually being shown. #}
+  <p class="text-sm text-base-content/60">
+    {% if queue.total %}
+      {% if filters.window == "overdue" %}
+        {% blocktranslate trimmed count count=queue.total %}
+          {{ count }} arrival is overdue
+        {% plural %}
+          {{ count }} arrivals are overdue
+        {% endblocktranslate %}
+      {% elif filters.window == "today" %}
+        {% blocktranslate trimmed count count=queue.total %}
+          {{ count }} arriving today
+        {% plural %}
+          {{ count }} arriving today
+        {% endblocktranslate %}
+      {% else %}
+        {% blocktranslate trimmed count count=queue.total with days=filters.window %}
+          {{ count }} arriving in the next {{ days }} days
+        {% plural %}
+          {{ count }} arriving in the next {{ days }} days
+        {% endblocktranslate %}
+      {% endif %}
+      · {% blocktranslate trimmed count count=queue.container_count %}
+          {{ count }} container
+        {% plural %}
+          {{ count }} containers
+        {% endblocktranslate %}
+    {% else %}
+      {% translate "Nothing expected in this period." %}
+    {% endif %}
+  </p>
+
+  {% comment %}
+    2. The window. Its own control rather than one more dropdown: "when" is the
+    question this page is organised around, and the answer should be one tap.
+  {% endcomment %}
+  <div class="flex flex-wrap items-center gap-2">
+    <div class="join" role="group" aria-label="{% translate 'Arrival window' %}">
+      {% for value, label in queue.windows %}
+        <a href="{{ queue_url }}?window={{ value }}"
+           hx-get="{{ queue_url }}?window={{ value }}"
+           hx-target="#arrivals-queue"
+           hx-swap="outerHTML"
+           hx-push-url="true"
+           class="btn btn-sm join-item {% if filters.window == value %}btn-active btn-primary{% endif %}"
+           {% if filters.window == value %}aria-current="true"{% endif %}>
+          {{ label }}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% comment %}
+    3. The rest of the filters. The window travels with them as a hidden field, so
+    changing a carrier keeps the day range the user chose.
+  {% endcomment %}
+  <form
+    class="scm-panel flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5"
+    hx-get="{{ queue_url }}"
+    hx-target="#arrivals-queue"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+    hx-trigger="change, keyup changed delay:400ms from:input[name='search']"
+  >
+    <input type="hidden" name="window" value="{{ filters.window }}">
+
+    <select name="destination" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Destination' %}">
+      <option value="">{% translate "Any destination" %}</option>
+      {% for destination in queue.destination_choices %}
+        <option value="{{ destination }}" {% if filters.destination == destination %}selected{% endif %}>{{ destination }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="carrier" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Carrier' %}">
+      <option value="">{% translate "Any carrier" %}</option>
+      {% for carrier in queue.carrier_choices %}
+        <option value="{{ carrier }}" {% if filters.carrier == carrier %}selected{% endif %}>{{ carrier }}</option>
+      {% endfor %}
+    </select>
+
+    {% comment %}
+      Health, from the visibility layer's own four states. There is no "at risk":
+      nothing in the domain distinguishes likely-to-slip from on-time.
+    {% endcomment %}
+    <select name="health" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Condition' %}">
+      <option value="">{% translate "Any condition" %}</option>
+      {% for value, label in queue.health_choices %}
+        <option value="{{ value }}" {% if filters.health == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="kind" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Object type' %}">
+      <option value="">{% translate "Any object" %}</option>
+      {% for value, label in queue.kind_choices %}
+        <option value="{{ value }}" {% if filters.kind == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <input
+      type="search"
+      name="search"
+      value="{{ filters.search }}"
+      placeholder="{% translate 'Filter by container, shipment, vessel…' %}"
+      class="input input-sm input-bordered grow min-w-48"
+      aria-label="{% translate 'Filter this queue' %}"
+    >
+
+    {% if filters.is_active %}
+      <a href="{{ queue_url }}" class="btn btn-ghost btn-sm shrink-0">{% translate "Clear" %}</a>
+    {% endif %}
+  </form>
+
+  {# 4. The days. #}
+  {% if queue.groups %}
+    <div class="flex flex-col gap-4">
+      {% for group in queue.groups %}
+        {% include "scm/visibility/partials/arrival_group.html" with group=group %}
+      {% endfor %}
+    </div>
+  {% else %}
+    {% comment %}
+      An empty period and an empty filter are different problems: telling somebody
+      to widen the date range when the carrier they picked is what excluded
+      everything sends them the wrong way. Hence `has_narrowing_filters` rather than
+      `is_active` — the window on its own is a period, not a filter.
+    {% endcomment %}
+    <section class="scm-panel">
+      {% if filters.has_narrowing_filters %}
+        {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("No arrivals match these filters") message=_("Clear a filter, or try a wider date range.") %}
+      {% else %}
+        {% include "scm/components/empty_state.html" with icon="fa-anchor" title=_("No arrivals in this period") message=_("Try a wider date range.") %}
+      {% endif %}
+    </section>
+  {% endif %}
+</div>
