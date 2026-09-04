@@ -167,10 +167,12 @@ class WorkspaceTabsTest(WorkspacePageTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "tab === 'journey'")
 
+    @override_settings(MAPBOX_PUBLIC_TOKEN="pk.test-token")
     def test_the_map_is_on_the_default_tab(self):
         """A map that started hidden would fit its bounds to a zero-height canvas."""
         self.assertIn("data-scm-map", self._panel("overview"))
 
+    @override_settings(MAPBOX_PUBLIC_TOKEN="pk.test-token")
     def test_there_is_only_one_map_on_the_page(self):
         self.assertEqual(self._get().content.decode().count("data-scm-map"), 1)
 
