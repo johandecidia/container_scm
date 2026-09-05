@@ -184,6 +184,25 @@
     {% if filters.is_active %}
       <a href="{{ queue_url }}" class="btn btn-ghost btn-sm shrink-0">{% translate "Clear" %}</a>
     {% endif %}
+
+    {% comment %}
+      A way through to the map rather than a map of its own.
+
+      A second Mapbox instance on this page would double the implementation to
+      maintain and answer a question this page is not asking: Arrivals is a
+      planning queue ordered by date, and geography is a different cut of the same
+      data. The Control Tower already draws it, so the link switches its
+      destination overlay on — "where is this inbound volume heading" — and the one
+      map stays the one map.
+    {% endcomment %}
+    <a
+      href="{% url 'visibility:overview' %}?destinations=1"
+      class="btn btn-ghost btn-sm shrink-0"
+      title="{% translate 'Show where inbound volume is heading, on the Control Tower map' %}"
+    >
+      <i class="fa fa-map"></i>
+      {% translate "On the map" %}
+    </a>
   </form>
 
   {# 4. The days. #}

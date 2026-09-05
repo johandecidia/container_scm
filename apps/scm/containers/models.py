@@ -162,8 +162,10 @@ class ContainerLocation(BaseTeamModel):
         return ", ".join(parts)
 
     def clean(self) -> None:
-        """Reject a hierarchy that is not one, and a parent from another tenant."""
+        """Reject a hierarchy that is not one, a foreign parent, and impossible coordinates."""
         super().clean()
+        self._validate_coordinates()
+
         parent_id = self.parent_location_id
         if parent_id is None:
             return
@@ -189,6 +191,28 @@ class ContainerLocation(BaseTeamModel):
             seen.add(current.pk)
             current = current.parent_location
         raise ValidationError({"parent_location": _("The location hierarchy is nested too deeply.")})
+
+    def _validate_coordinates(self) -> None:
+        """Reject a latitude or longitude that is not on the planet.
+
+        Null stays valid, and deliberately so: a canonical place MCR has not
+        surveyed is a normal state of the master data, and requiring coordinates
+        would push somebody into inventing them. What is rejected is a *wrong*
+        number — the column holds three integer digits, so 200 fits happily and
+        would put a marker nowhere at all.
+
+        Declared here rather than as field validators so it holds for every writer
+        — the form, the admin, an importer, a shell session — and so adding it
+        needs no migration. A message per field, keyed by field, so a form shows
+        the error against the box that was typed into.
+        """
+        errors = {}
+        if self.latitude is not None and not -90 <= self.latitude <= 90:
+            errors["latitude"] = _("Latitude must be between -90 and 90.")
+        if self.longitude is not None and not -180 <= self.longitude <= 180:
+            errors["longitude"] = _("Longitude must be between -180 and 180.")
+        if errors:
+            raise ValidationError(errors)
 
     def _canonicalise(self) -> None:
         """Put the identifying fields into their canonical form.

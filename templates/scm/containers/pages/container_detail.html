@@ -96,10 +96,21 @@
       </div>
 
       {% comment %}
-        The one map on the page. Clicking a step of the journey summary above flies
-        it, through the data-map-event-id contract map.js already implements.
+        The one map on the page. It draws two different things and says which is
+        which: the journey — where carriers reported this box, joined in order —
+        and, since LOC-4, canonical markers for where MCR has accepted it to be
+        and where it is going.
+
+        No line is drawn between the container and its destination. A straight
+        line between two places is not a shipping route, and the same refusal
+        already governs the event connections.
+
+        Clicking a step of the journey summary above flies to it, through the
+        data-map-event-id contract map.js already implements.
       {% endcomment %}
-      {% include "scm/visibility/components/map_card.html" with map_title=_("Where it has been") map_height="h-64 lg:h-[24rem]" map_card_class="scm-panel" map_note=_("Where the carrier reported this container. Click a journey entry to fly to it.") %}
+      {% include "scm/visibility/components/map_card.html" with map_title=_("Where it is, and where it has been") map_height="h-64 lg:h-[24rem]" map_card_class="scm-panel" map_note=_("Canonical markers for where it is and where it is going, over the places its carriers reported.") %}
+
+      {% include "scm/containers/partials/container_map_positions.html" %}
 
       {% include "scm/containers/partials/container_business_context.html" %}
     </div>

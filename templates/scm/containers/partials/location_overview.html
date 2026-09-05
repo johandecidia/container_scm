@@ -12,9 +12,16 @@
   first one is now the true one: the set comes from canonical destinations, so an
   empty list means nothing is routed here rather than that the question is
   unanswerable.
+
+  Since LOC-4 the place itself is on a map when its coordinates are recorded, and
+  says so plainly when they are not. One marker for the location, carrying the
+  inventory count — not one per container, because they all share the location's
+  single coordinate and eighty stacked discs would say nothing eighty times.
 {% endcomment %}
 
 <div class="flex flex-col gap-4">
+  {% include "scm/containers/partials/location_map.html" %}
+
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
     {# ---------------------------------------------------------------- #}
     {# Current inventory.                                               #}

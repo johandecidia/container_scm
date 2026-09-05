@@ -13,7 +13,7 @@ from apps.scm.analytics.models import SavedFilter
 from apps.scm.analytics.selectors import get_saved_filters
 from apps.scm.decorators import scm_login_required
 from apps.scm.tracking.manual_refresh import refresh_container_tracking
-from apps.scm.visibility.context import get_container_map_context
+from apps.scm.visibility.context import get_container_map_context, get_location_map_context
 
 from .activity import get_container_activity
 from .choices import ContainerStatus, MovementType
@@ -451,6 +451,10 @@ def container_location_detail(request, location_id):
         "inventory": page_obj,
         "page_obj": page_obj,
         "overview_movements": get_location_overview_movements(workspace),
+        # The map card, when this location has coordinates. Built here rather than
+        # in the template so the page does not learn a Mapbox detail — the same
+        # arrangement the container and shipment workspaces use.
+        **get_location_map_context(location),
         # The workspace already loaded the aliases; the panel is included with them
         # rather than the page asking a second time.
         "alias_source_suggestions": get_alias_source_suggestions(team),
