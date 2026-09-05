@@ -1,0 +1,108 @@
+{% load i18n %}
+
+{% comment %}
+  Where MCR has accepted this container to be.
+
+  Deliberately not the tracking summary beside it, and never merged with it. The
+  Journey panel shows what carriers report; this shows what somebody accepted as
+  having physically happened. A carrier discharging a box at a port is not a depot
+  receiving it into a yard, and one panel showing both would let the first read as
+  the second.
+
+  Three answers are possible and all three are real:
+
+    a location    somebody put the box here and nothing has moved it since
+    departed      it was gated out and the onward destination was not recorded
+    unknown       nothing has ever recorded a physical position
+
+  "Unknown" is printed rather than filled in from the carrier's last report. The
+  gap is the useful fact: it is what tells a depot that this box needs gating in.
+{% endcomment %}
+
+<section class="scm-panel">
+  <div class="flex items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
+      {% translate "Physical location" %}
+    </h2>
+    <div class="flex items-center gap-2 shrink-0">
+      <button
+        type="button"
+        class="btn btn-xs btn-outline"
+        hx-get="{% url 'containers:record_movement' container.pk %}?type=gate_in"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-arrow-right-to-bracket text-xs"></i>
+        {% translate "Gate in" %}
+      </button>
+      {% if workspace.has_physical_location %}
+        <button
+          type="button"
+          class="btn btn-xs btn-outline"
+          hx-get="{% url 'containers:record_movement' container.pk %}?type=gate_out"
+          hx-target="#modal-container"
+          hx-swap="innerHTML"
+        >
+          <i class="fa fa-arrow-right-from-bracket text-xs"></i>
+          {% translate "Gate out" %}
+        </button>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if workspace.has_physical_location %}
+    <p class="text-sm font-medium">
+      <a href="{% url 'containers:location_detail' workspace.physical_location.pk %}" class="link link-hover">
+        {{ workspace.physical_location.full_name }}
+      </a>
+    </p>
+    {% if workspace.physical_location.city or workspace.physical_location.country %}
+      <p class="text-xs text-base-content/60 mt-0.5">
+        {{ workspace.physical_location.city }}{% if workspace.physical_location.city and workspace.physical_location.country %}, {% endif %}{{ workspace.physical_location.country }}
+      </p>
+    {% endif %}
+  {% elif workspace.has_left_last_location %}
+    <p class="text-sm font-medium">{% translate "Departed — onward location not recorded" %}</p>
+    {% if workspace.state_movement.from_location %}
+      <p class="text-xs text-base-content/60 mt-0.5">
+        {% blocktranslate trimmed with place=workspace.state_movement.from_location.name %}
+          Last at {{ place }}
+        {% endblocktranslate %}
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="text-sm text-base-content/60">
+      {% translate "No physical location has been recorded for this container." %}
+    </p>
+  {% endif %}
+
+  {% comment %}
+    The movement the answer above rests on. Printed so the panel can always be
+    interrogated: a reader who disagrees with the location can see which movement
+    produced it, who claimed it, and when.
+  {% endcomment %}
+  <dl class="mt-4 pt-4 border-t border-base-300 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+    <dt class="text-base-content/50">{% translate "Last movement" %}</dt>
+    <dd>{{ workspace.physical_movement_label|default:"—" }}</dd>
+
+    <dt class="text-base-content/50">{% translate "Occurred at" %}</dt>
+    <dd>{% if workspace.physical_location_at %}{{ workspace.physical_location_at|date:"d M Y H:i" }}{% else %}—{% endif %}</dd>
+
+    <dt class="text-base-content/50">{% translate "Source" %}</dt>
+    <dd>
+      {{ workspace.physical_location_source|default:"—" }}
+      {% if workspace.state_movement.is_tracking_derived %}
+        <span class="badge badge-ghost badge-xs ml-1">{% translate "Carrier-derived" %}</span>
+      {% endif %}
+    </dd>
+
+    {% if workspace.state_movement.gate_name %}
+      <dt class="text-base-content/50">{% translate "Gate" %}</dt>
+      <dd>{{ workspace.state_movement.gate_name }}</dd>
+    {% endif %}
+  </dl>
+
+  <p class="text-xs text-base-content/40 mt-3">
+    {% translate "Accepted physical state. Carrier reports appear under Journey and do not move this on their own." %}
+  </p>
+</section>

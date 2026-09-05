@@ -97,9 +97,10 @@
 
     {% comment %}
       Actions. Editing a location and toggling it active are real endpoints and are
-      offered. Gate in, gate out and move are not: `set_container_location` exists as
-      a service but nothing exposes it over HTTP, so there is no workflow behind
-      those buttons. A menu entry that opened nothing would misdescribe the platform.
+      offered. Gate in and gate out are not offered *here*: a movement is about one
+      container, and there is nothing on this page to say which. They live on the
+      container workspace, where the subject is unambiguous, and this page's Activity
+      tab shows the result.
     {% endcomment %}
     <div class="dropdown dropdown-end shrink-0">
       <div tabindex="0" role="button" class="btn btn-outline btn-sm">

@@ -73,6 +73,14 @@
     {# Overview — the current state of this container.                    #}
     {# ------------------------------------------------------------------ #}
     <div x-show="tab === 'overview'" role="tabpanel" class="flex flex-col gap-4">
+      {% comment %}
+        Physical state first, and on its own row. It is the one thing on this page
+        MCR is responsible for: where somebody accepted the box to be. The journey
+        and the tracking panel below it are what carriers say, which is a different
+        kind of claim and is kept visually separate for exactly that reason.
+      {% endcomment %}
+      {% include "scm/containers/partials/container_physical_state.html" %}
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {% include "scm/containers/partials/container_journey_summary.html" %}
         {% include "scm/containers/partials/container_tracking_panel.html" with panel_section="summary" %}

@@ -21,6 +21,15 @@ questions and are presented separately.
 **Position quality is part of the position.** The last known place carries how it
 was obtained, so a terminal coordinate is never shown as a live GPS fix.
 
+**Physical state and tracking are different answers.** ``physical_location`` is
+where MCR has accepted the box to be — the projection of the movement history, from
+gate moves and depot receipts. ``position`` and ``derived_current_location`` are
+what the carriers report. They are presented separately and never substituted for
+one another: a carrier discharging a box at a port is not somebody receiving it into
+a yard, and a workspace that blurred the two would make the second look as though it
+had happened. ``state_movement`` is the single movement the physical answer rests
+on, so the page can always say why it says what it says.
+
 **Several tracking sources, one journey.** A container can have more than one
 verified source — carriers that covered different legs, plus our own physical
 record — so freshness spans all of them and the journey is assembled from all of
@@ -39,6 +48,7 @@ from apps.teams.models import Team
 from .models import Container
 
 if TYPE_CHECKING:
+    from apps.scm.containers.models import ContainerMovement
     from apps.scm.tracking.gaps import TrackingGap
     from apps.scm.tracking.journey import ContainerJourney, DerivedCurrentLocation, JourneyPoint, JourneySource
     from apps.scm.tracking.models import TrackingEvent
@@ -69,6 +79,12 @@ class ContainerWorkspace:
     movements: list = field(default_factory=list)
     purchase_order_lines: list = field(default_factory=list)
     supplier_delivery_lines: list = field(default_factory=list)
+
+    # The movement `Container.current_location` reflects. None means no movement has
+    # ever claimed a position — either the box has never been recorded anywhere, or
+    # its location predates the movement history and nothing has moved it since.
+    # A bulk-built workspace leaves it None because it never loaded it.
+    state_movement: ContainerMovement | None = None
 
     # Tracking
     latest_tracking_event: TrackingEvent | None = None
@@ -179,6 +195,58 @@ class ContainerWorkspace:
         """
         current = self.derived_current_location
         return current.position if current is not None else self.position
+
+    # -- physical state ----------------------------------------------------
+    #
+    # Where MCR has accepted the box to be, as opposed to where a carrier says it
+    # is. Everything here reads the projection and the movement behind it; nothing
+    # falls back to tracking, because "no accepted physical location" is a true and
+    # useful answer and filling it with a carrier's report would erase it.
+
+    @property
+    def physical_location(self):
+        """The canonical location the container has been accepted into, or None."""
+        return self.container.current_location
+
+    @property
+    def has_physical_location(self) -> bool:
+        return self.container.current_location_id is not None
+
+    @property
+    def physical_location_at(self):
+        """When the accepted physical position was established."""
+        return self.container.last_location_update
+
+    @property
+    def physical_location_source(self) -> str:
+        """Who claimed the accepted position, as a label.
+
+        The movement's own source when there is one, falling back to the container's
+        ``location_source`` for a position that predates the movement history.
+        """
+        from .choices import LocationSource
+
+        movement = self.state_movement
+        source = movement.source if movement is not None else self.container.location_source
+        return str(LocationSource(source).label) if source else ""
+
+    @property
+    def physical_movement_label(self) -> str:
+        """What the last accepted movement was, e.g. "Gate In"."""
+        movement = self.state_movement
+        return str(movement.get_movement_type_display()) if movement is not None else ""
+
+    @property
+    def has_left_last_location(self) -> bool:
+        """True when the box was gated out and we do not know where it went.
+
+        A distinct state from never having been recorded anywhere, and the reason
+        the physical panel can say "departed" rather than showing a blank that reads
+        as ignorance. Only a movement can produce it — a container with no history
+        is unknown, not departed.
+        """
+        movement = self.state_movement
+        return movement is not None and movement.to_location_id is None
 
     @property
     def tracking_gap(self) -> TrackingGap | None:
@@ -482,7 +550,7 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
     from apps.scm.tracking.positions import get_latest_container_position
     from apps.scm.tracking.selectors import get_container_tracking_eta_event, get_latest_meaningful_actual_event
 
-    from .models import ContainerMovement
+    from .movements import get_container_movements, get_current_state_movement
 
     shipment_containers = list(
         ShipmentContainer.objects.filter(container=container, shipment__team=team)
@@ -512,11 +580,10 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
         .values_list("event_type", flat=True)
     )
 
-    movements = list(
-        ContainerMovement.objects.filter(team=team, container=container)
-        .select_related("from_location", "to_location")
-        .order_by("-occurred_at")[:_MOVEMENT_LIMIT]
-    )
+    # The whole history, winners and losers alike: the Activity tab has to be able
+    # to show the late carrier event that did *not* move the container, which is
+    # half of explaining why the current location is what it is.
+    movements = list(get_container_movements(team=team, container=container, limit=_MOVEMENT_LIMIT))
 
     delivery_lines = list(
         SupplierDeliveryLine.objects.filter(team=team, container=container)
@@ -543,6 +610,7 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
         shipment_containers=shipment_containers,
         tracking_subscriptions=tracking_subscriptions,
         movements=movements,
+        state_movement=get_current_state_movement(team=team, container=container),
         purchase_order_lines=purchase_order_lines,
         supplier_delivery_lines=delivery_lines,
         latest_tracking_event=latest_event,

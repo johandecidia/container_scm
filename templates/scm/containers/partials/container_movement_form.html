@@ -1,0 +1,111 @@
+{% load i18n %}
+
+{% comment %}
+  Record a physical movement: gate in, gate out, receive, transfer.
+
+  One modal for all four. Changing the movement type re-labels the two location
+  fields and shows only the ends that movement has — Alpine, because it is pure
+  presentation. It is not validation: the server decides what a movement needs, and
+  a form posted with JavaScript off is checked exactly as strictly.
+
+  The time field is deliberately the physical time, not the entry time, and says so.
+  Movement precedence is decided on when the box moved, so a gate-in typed up an
+  hour late must carry the hour it happened or it will outrank things it should not.
+
+  On success the response asks HTMX to reload the page. A movement changes the
+  header, the physical state panel and the Activity tab together, and swapping one
+  of them would leave the other two describing the container as it was.
+{% endcomment %}
+
+<div class="modal modal-open">
+  <div
+    class="modal-box max-w-xl"
+    x-data="{ type: '{{ form.movement_type.value|default:'gate_in' }}' }"
+  >
+    <h3 class="font-bold text-lg mb-1">{{ modal_title }}</h3>
+    <p class="text-sm text-base-content/60 font-mono mb-4">{{ container.container_id }}</p>
+
+    <form method="post" action="{{ form_action }}" hx-post="{{ form_action }}">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div role="alert" class="alert alert-error mb-4 text-sm">
+          <i class="fa fa-circle-exclamation"></i>
+          <span>{{ form.non_field_errors|join:" " }}</span>
+        </div>
+      {% endif %}
+
+      <div class="space-y-4">
+        <div class="form-control">
+          <label class="label" for="{{ form.movement_type.id_for_label }}">
+            <span class="label-text">{{ form.movement_type.label }}</span>
+          </label>
+          <select
+            name="{{ form.movement_type.html_name }}"
+            id="{{ form.movement_type.id_for_label }}"
+            class="select select-bordered w-full"
+            x-model="type"
+          >
+            {% for value, label in form.fields.movement_type.choices %}
+              <option value="{{ value }}" {% if value == form.movement_type.value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          {% if form.movement_type.errors %}<p class="text-error text-xs mt-1">{{ form.movement_type.errors|join:" " }}</p>{% endif %}
+        </div>
+
+        {# Gate out and transfer are the movements that have somewhere to leave. #}
+        <div class="form-control" x-show="type === 'gate_out' || type === 'transfer'" x-cloak>
+          <label class="label" for="{{ form.from_location.id_for_label }}">
+            <span class="label-text">{{ form.from_location.label }}</span>
+          </label>
+          {{ form.from_location }}
+          <p class="text-xs text-base-content/50 mt-1">
+            {% translate "Defaults to where the container is currently recorded." %}
+          </p>
+          {% if form.from_location.errors %}<p class="text-error text-xs mt-1">{{ form.from_location.errors|join:" " }}</p>{% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.to_location.id_for_label }}">
+            <span class="label-text">{{ form.to_location.label }}</span>
+          </label>
+          {{ form.to_location }}
+          <p class="text-xs text-base-content/50 mt-1" x-show="type === 'gate_out'" x-cloak>
+            {% translate "Leave blank when the onward destination is not known — the container's location is cleared rather than left stale." %}
+          </p>
+          {% if form.to_location.errors %}<p class="text-error text-xs mt-1">{{ form.to_location.errors|join:" " }}</p>{% endif %}
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label" for="{{ form.occurred_at.id_for_label }}">
+              <span class="label-text">{{ form.occurred_at.label }}</span>
+            </label>
+            {{ form.occurred_at }}
+            <p class="text-xs text-base-content/50 mt-1">{{ form.occurred_at.help_text }}</p>
+            {% if form.occurred_at.errors %}<p class="text-error text-xs mt-1">{{ form.occurred_at.errors|join:" " }}</p>{% endif %}
+          </div>
+          <div class="form-control" x-show="type === 'gate_in' || type === 'gate_out'" x-cloak>
+            <label class="label" for="{{ form.gate_name.id_for_label }}">
+              <span class="label-text">{{ form.gate_name.label }}</span>
+            </label>
+            {{ form.gate_name }}
+            {% if form.gate_name.errors %}<p class="text-error text-xs mt-1">{{ form.gate_name.errors|join:" " }}</p>{% endif %}
+          </div>
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.notes.id_for_label }}">
+            <span class="label-text">{{ form.notes.label }}</span>
+          </label>
+          {{ form.notes }}
+        </div>
+      </div>
+
+      <div class="modal-action">
+        <button type="button" class="btn btn-ghost" onclick="this.closest('.modal').remove()">{% translate "Cancel" %}</button>
+        <button type="submit" class="btn btn-primary">{% translate "Record movement" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
@@ -15,15 +16,22 @@ from apps.scm.tracking.manual_refresh import refresh_container_tracking
 from apps.scm.visibility.context import get_container_map_context
 
 from .activity import get_container_activity
-from .choices import ContainerStatus
+from .choices import ContainerStatus, MovementType
 from .discovery import (
     add_planned_container,
     cancel_planned_container,
     get_planned_containers,
     run_discovery_for_team,
 )
-from .forms import ContainerForm, ContainerLocationForm, LocationAliasForm, PlannedContainerForm
+from .forms import (
+    ContainerForm,
+    ContainerLocationForm,
+    ContainerMovementForm,
+    LocationAliasForm,
+    PlannedContainerForm,
+)
 from .models import Container, ContainerLocation, LocationAlias, PlannedContainer, PlannedContainerStatus
+from .movements import record_container_movement
 from .selectors import (
     filter_containers,
     get_active_equipment_types,
@@ -219,6 +227,61 @@ def container_refresh_tracking(request, container_id):
 
     _MESSAGE_LEVELS[result.level](request, result.message)
     return redirect("containers:detail", container_id=container.pk)
+
+
+@scm_login_required
+def container_record_movement(request, container_id):
+    """Record a gate in, gate out, receipt or transfer for this container.
+
+    The view does no state logic at all: it validates the form, hands the values to
+    ``record_container_movement`` and re-renders. Which movement wins, whether the
+    current location changes, and what a gate-out leaves behind are decided in
+    ``movements.py`` — a view that reimplemented any of that would be a second
+    opinion about where containers are.
+
+    Domain validation surfaces as a form error rather than a 500: "a gate-out needs
+    an origin" is something the person filling the form can fix.
+    """
+    team = request.default_team
+    container = get_object_or_404(Container, pk=container_id, team=team)
+    requested_type = request.GET.get("type") or MovementType.GATE_IN
+
+    if request.method == "POST":
+        form = ContainerMovementForm(request.POST, team=team, container=container)
+        if form.is_valid():
+            try:
+                record_container_movement(team=team, container=container, **form.movement_data())
+            except ValidationError as error:
+                form.add_error(None, error)
+            else:
+                if request.htmx:
+                    # The whole page: a movement changes the header's physical state,
+                    # the Overview panel and the Activity tab at once, and swapping
+                    # one of them would leave the other two contradicting it.
+                    response = HttpResponse(status=204)
+                    response["HX-Refresh"] = "true"
+                    return response
+                messages.success(request, _("Movement recorded."))
+                return redirect("containers:detail", container_id=container.pk)
+    else:
+        form = ContainerMovementForm(
+            team=team,
+            container=container,
+            movement_type=requested_type,
+            initial={"occurred_at": timezone.localtime().strftime("%Y-%m-%dT%H:%M")},
+        )
+
+    return render(
+        request,
+        "scm/containers/partials/container_movement_form.html",
+        {
+            "form": form,
+            "container": container,
+            "modal_title": _("Record movement"),
+            "form_action": request.path,
+            "team_slug": team.slug,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

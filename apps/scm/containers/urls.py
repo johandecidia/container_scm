@@ -15,6 +15,10 @@ urlpatterns = [
     path("<int:container_id>/", views.container_detail, name="detail"),
     path("<int:container_id>/edit/", views.container_update, name="update"),
     path("<int:container_id>/refresh-tracking/", views.container_refresh_tracking, name="refresh_tracking"),
+    # Physical movement. `?type=gate_in` opens the modal on a movement; the form
+    # accepts any of the four operational types, so the query string chooses the
+    # starting point rather than restricting what may be recorded.
+    path("<int:container_id>/movements/record/", views.container_record_movement, name="record_movement"),
     path("<int:container_id>/delete/", views.container_delete, name="delete"),
     # Container discovery
     path("discovery/", views.planned_container_dashboard, name="discovery_dashboard"),

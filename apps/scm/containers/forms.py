@@ -3,6 +3,7 @@ from typing import cast
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
+from .choices import MovementType
 from .intake import carrier_choices, parse_and_validate_container_number
 from .location_identity import (
     normalize_alias_source,
@@ -230,6 +231,119 @@ class ContainerForm(forms.Form):
             "manufacturer": self.cleaned_data.get("manufacturer", ""),
             "manufacturer_id": self.cleaned_data.get("manufacturer_id", ""),
             "current_location": self.cleaned_data.get("current_location"),
+            "notes": self.cleaned_data.get("notes", ""),
+        }
+
+
+class ContainerMovementForm(forms.Form):
+    """Record a physical movement of one container: gate in, gate out, receive, transfer.
+
+    One form for all four rather than four near-identical ones, because they differ
+    only in which ends of the move are required — and that difference is a domain
+    rule, not a presentation one. It is imported from ``movements`` and applied to
+    the fields here, so the form and the service cannot come to disagree about
+    whether a gate-out needs an origin.
+
+    The form validates shape; it does not decide state. Whether the movement becomes
+    ``Container.current_location`` is settled by ``record_container_movement``, and
+    a movement that loses to a newer one is still a valid thing to have submitted.
+    """
+
+    movement_type = forms.ChoiceField(
+        label=_("Movement"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    from_location = forms.ModelChoiceField(
+        label=_("From"),
+        queryset=ContainerLocation.objects.none(),
+        required=False,
+        empty_label=_("— Not recorded —"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    to_location = forms.ModelChoiceField(
+        label=_("To"),
+        queryset=ContainerLocation.objects.none(),
+        required=False,
+        empty_label=_("— Not recorded —"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    occurred_at = forms.DateTimeField(
+        label=_("Occurred at"),
+        help_text=_("When the container physically moved — not when it is being entered."),
+        widget=forms.DateTimeInput(
+            attrs={"type": "datetime-local", "class": "input input-bordered w-full"},
+            format="%Y-%m-%dT%H:%M",
+        ),
+    )
+    gate_name = forms.CharField(
+        label=_("Gate"),
+        max_length=100,
+        required=False,
+        help_text=_("The gate the container passed through, if it is worth recording."),
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "placeholder": "John Evans"}),
+    )
+    notes = forms.CharField(
+        label=_("Notes"),
+        required=False,
+        widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
+    )
+
+    def __init__(self, *args, team=None, container=None, movement_type=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .movements import OPERATIONAL_MOVEMENT_TYPES, requires_destination, requires_origin
+
+        self.container = container
+        self.fields["movement_type"].choices = [
+            (value, MovementType(value).label) for value in OPERATIONAL_MOVEMENT_TYPES
+        ]
+
+        locations = (
+            ContainerLocation.objects.none()
+            if team is None
+            else ContainerLocation.objects.filter(team=team, is_active=True).order_by("name")
+        )
+        cast(forms.ModelChoiceField, self.fields["from_location"]).queryset = locations
+        cast(forms.ModelChoiceField, self.fields["to_location"]).queryset = locations
+
+        # The chosen type decides what the form insists on. Read from the submitted
+        # data when there is some, so validation applies the rules for the movement
+        # actually being recorded rather than the one the modal opened with.
+        chosen = (self.data.get("movement_type") if self.is_bound else None) or movement_type
+        if chosen in MovementType.values:
+            self.fields["movement_type"].initial = chosen
+            self.fields["to_location"].required = requires_destination(chosen)
+            # A gate-out's origin may be left blank and taken from where the
+            # container currently is; it is only mandatory when there is nothing to
+            # take it from, which the service is the one able to judge.
+            self.fields["from_location"].required = requires_origin(chosen) and (
+                container is None or container.current_location_id is None
+            )
+
+        if container is not None and not self.is_bound:
+            self.fields["from_location"].initial = container.current_location_id
+
+    def clean_occurred_at(self):
+        """Make a naive datetime from the browser aware, in the active timezone.
+
+        ``datetime-local`` has no offset, so what arrives is naive. Storing it
+        without a zone would make the movement's position in the ordering depend on
+        the server's idea of the time — and the ordering is what decides state.
+        """
+        from django.utils import timezone as tz
+
+        value = self.cleaned_data["occurred_at"]
+        if value is not None and tz.is_naive(value):
+            value = tz.make_aware(value)
+        return value
+
+    def movement_data(self) -> dict:
+        """The cleaned values, for ``record_container_movement``."""
+        return {
+            "movement_type": self.cleaned_data["movement_type"],
+            "from_location": self.cleaned_data.get("from_location"),
+            "to_location": self.cleaned_data.get("to_location"),
+            "occurred_at": self.cleaned_data["occurred_at"],
+            "gate_name": self.cleaned_data.get("gate_name", ""),
             "notes": self.cleaned_data.get("notes", ""),
         }
 
