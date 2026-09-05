@@ -30,9 +30,43 @@ class Shipment(BaseTeamModel):
     carrier_booking_reference = models.CharField(_("carrier booking reference"), max_length=100, blank=True)
     bill_of_lading_number = models.CharField(_("bill of lading number"), max_length=100, blank=True)
 
-    # Routing
+    # Routing.
+    #
+    # Recorded twice on purpose, and the two are not versions of each other:
+    #
+    #   origin_port / destination_port      what was booked or what a provider said
+    #   origin_location / destination_location   what Container SCM believes the place is
+    #
+    # The text fields stay because they are the evidence — the words on the booking.
+    # They are also read by global search, the procurement workspace and the
+    # container workspace, and overwriting them with a canonical name would lose the
+    # only record of what the carrier actually called the place.
+    #
+    # The canonical FKs are what operations should be planned on: they survive a
+    # carrier spelling "Goteborg" and they distinguish two terminals in one city.
+    # Nothing in the tracking pipeline writes them — a provider refresh updates
+    # status and ETA only — so an explicitly chosen internal destination cannot be
+    # replaced by a sync. See apps/scm/tracking/sync.py.
     origin_port = models.CharField(_("origin port"), max_length=200, blank=True)
     destination_port = models.CharField(_("destination port"), max_length=200, blank=True)
+    origin_location = models.ForeignKey(
+        "scm_containers.ContainerLocation",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="origin_shipments",
+        verbose_name=_("origin location"),
+        help_text=_("The canonical location this shipment departs from."),
+    )
+    destination_location = models.ForeignKey(
+        "scm_containers.ContainerLocation",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="destination_shipments",
+        verbose_name=_("destination location"),
+        help_text=_("The canonical location this shipment is bound for."),
+    )
 
     # Dates
     etd = models.DateField(_("estimated departure"), null=True, blank=True)
@@ -68,6 +102,8 @@ class Shipment(BaseTeamModel):
             models.Index(fields=["team", "status"]),
             models.Index(fields=["team", "eta"]),
             models.Index(fields=["team", "etd"]),
+            # "What is expected at this location, and when" — the arrivals question.
+            models.Index(fields=["team", "destination_location", "eta"]),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -79,6 +115,16 @@ class Shipment(BaseTeamModel):
 
     def __str__(self) -> str:
         return self.shipment_number or self.reference or f"Shipment #{self.pk}"
+
+    def clean(self) -> None:
+        """A shipment may only point at its own team's canonical locations."""
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        for name in ("origin_location", "destination_location"):
+            location = getattr(self, name)
+            if location is not None and self.team_id and location.team_id != self.team_id:
+                raise ValidationError({name: _("The location must belong to the same team as the shipment.")})
 
     @property
     def route_label(self) -> str:

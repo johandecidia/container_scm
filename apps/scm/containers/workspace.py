@@ -486,12 +486,12 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
 
     shipment_containers = list(
         ShipmentContainer.objects.filter(container=container, shipment__team=team)
-        .select_related("shipment")
+        .select_related("shipment", "shipment__origin_location", "shipment__destination_location")
         .order_by("-created_at")
     )
     tracking_subscriptions = list(
         TrackingSubscription.objects.filter(team=team, container=container)
-        .select_related("provider", "shipment")
+        .select_related("provider", "shipment", "shipment__origin_location", "shipment__destination_location")
         .order_by("-created_at")
     )
 
@@ -613,12 +613,15 @@ def get_container_workspaces(team: Team, containers) -> dict[int, ContainerWorks
 
     links = _group_by_container(
         ShipmentContainer.objects.filter(container_id__in=container_ids, shipment__team=team)
-        .select_related("shipment")
+        # The shipment's canonical locations travel with it: the visibility layer
+        # reads a destination for every container it lists, and following the FK per
+        # container would make that page's query count grow with the list.
+        .select_related("shipment", "shipment__origin_location", "shipment__destination_location")
         .order_by("-created_at")
     )
     subscriptions = _group_by_container(
         TrackingSubscription.objects.filter(team=team, container_id__in=container_ids)
-        .select_related("provider", "shipment")
+        .select_related("provider", "shipment", "shipment__origin_location", "shipment__destination_location")
         .order_by("-created_at")
     )
 

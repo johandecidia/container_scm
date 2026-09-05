@@ -3,6 +3,23 @@
 Grouped by day, because a date is what the domain actually holds. Shipments and
 standalone containers are both first class — a container that belongs to no shipment
 is not wrapped in an invented one to make the list uniform.
+
+Destination can be asked two ways, and they are not the same question:
+
+``destination``
+    The reported text — "Gothenburg", whatever was on the booking. An exact string
+    match, offered because it is what most shipments have.
+
+``destination_location``
+    A canonical :class:`~apps.scm.containers.models.ContainerLocation`. This is the
+    one that can answer "what is expected at Oceanterminalen" without hoping that
+    every carrier spells Göteborg the same way, and without a depot inheriting the
+    arrivals of its neighbours. A location's own subtree is included, because a
+    shipment bound for a terminal is arriving at the port that contains it.
+
+A shipment with no canonical destination is simply absent from a canonical filter.
+It is not guessed into one by comparing its text against location names — that is
+the false positive the canonical layer exists to prevent.
 """
 
 from __future__ import annotations
@@ -40,6 +57,7 @@ class ArrivalQueueFilters:
 
     window: str = DEFAULT_ARRIVAL_WINDOW
     destination: str = ""
+    destination_location: str = ""
     carrier: str = ""
     health: str = ""
     kind: str = ""
@@ -55,7 +73,22 @@ class ArrivalQueueFilters:
         filters". Telling somebody to widen the date range when the problem is the
         carrier they picked sends them the wrong way.
         """
-        return bool(self.destination or self.carrier or self.health or self.kind or self.search)
+        return bool(
+            self.destination or self.destination_location or self.carrier or self.health or self.kind or self.search
+        )
+
+    @property
+    def destination_location_id(self) -> int | None:
+        """The chosen canonical destination as an id, or None.
+
+        A hand-edited value that is not a number narrows nothing rather than
+        erroring: the filter arrives from a query string, and a broken link should
+        show the unfiltered queue, not a 500.
+        """
+        try:
+            return int(self.destination_location)
+        except TypeError, ValueError:
+            return None
 
     @property
     def is_active(self) -> bool:
@@ -116,6 +149,7 @@ class ArrivalQueue:
     filters: ArrivalQueueFilters = field(default_factory=ArrivalQueueFilters)
     carrier_choices: list[str] = field(default_factory=list)
     destination_choices: list[str] = field(default_factory=list)
+    destination_location_choices: list = field(default_factory=list)
 
     @property
     def objects(self) -> list[VisibilityObject]:
@@ -154,6 +188,7 @@ def parse_arrival_queue_filters(params) -> ArrivalQueueFilters:
     return ArrivalQueueFilters(
         window=window,
         destination=(params.get("destination") or "").strip(),
+        destination_location=(params.get("destination_location") or "").strip(),
         carrier=(params.get("carrier") or "").strip(),
         health=(params.get("health") or "").strip(),
         kind=(params.get("kind") or "").strip(),
@@ -168,7 +203,7 @@ def get_arrival_queue(team: Team, filters: ArrivalQueueFilters | None = None) ->
     in_window = filter_by_eta_window(objects, filters.window)
 
     return ArrivalQueue(
-        groups=_group_by_day(_filter_arrivals(in_window, filters)),
+        groups=_group_by_day(_filter_arrivals(in_window, filters, team=team)),
         filters=filters,
         # Offered from everything in the window rather than from the filtered
         # result, so choosing a carrier does not remove the other carriers from the
@@ -177,13 +212,19 @@ def get_arrival_queue(team: Team, filters: ArrivalQueueFilters | None = None) ->
         destination_choices=text_choices(
             {obj.destination for obj in in_window if obj.destination}, filters.destination
         ),
+        destination_location_choices=_destination_location_choices(team, in_window, filters),
     )
 
 
-def _filter_arrivals(objects: list[VisibilityObject], filters: ArrivalQueueFilters) -> list[VisibilityObject]:
+def _filter_arrivals(
+    objects: list[VisibilityObject], filters: ArrivalQueueFilters, *, team: Team
+) -> list[VisibilityObject]:
     result = objects
     if filters.destination:
         result = [obj for obj in result if obj.destination == filters.destination]
+    if (location_id := filters.destination_location_id) is not None:
+        wanted = _destination_subtree_ids(team, location_id)
+        result = [obj for obj in result if obj.destination_location_id in wanted]
     if filters.carrier:
         result = [obj for obj in result if obj.carrier_name == filters.carrier]
     if filters.health:
@@ -194,6 +235,41 @@ def _filter_arrivals(objects: list[VisibilityObject], filters: ArrivalQueueFilte
         needle = filters.search.lower()
         result = [obj for obj in result if matches_search(obj, needle)]
     return result
+
+
+def _destination_subtree_ids(team: Team, location_id: int) -> set[int]:
+    """The chosen location together with everything inside it, as ids.
+
+    Team-scoped by the lookup itself, so a location id belonging to another tenant
+    matches nothing rather than that tenant's subtree.
+    """
+    from apps.scm.containers.models import ContainerLocation
+    from apps.scm.containers.selectors import get_location_subtree_ids
+
+    location = ContainerLocation.objects.filter(team=team, pk=location_id).first()
+    if location is None:
+        return set()
+    return set(get_location_subtree_ids(team=team, location=location))
+
+
+def _destination_location_choices(team: Team, in_window: list[VisibilityObject], filters: ArrivalQueueFilters) -> list:
+    """The canonical destinations the dropdown offers.
+
+    Only locations something in the window is actually routed to, plus whatever is
+    currently selected — a filtered link can outlive the shipment that justified it,
+    and a page reading "Any destination" while showing an empty filtered list would
+    leave nothing for the empty state to point at.
+    """
+    from apps.scm.containers.models import ContainerLocation
+
+    ids = {obj.destination_location_id for obj in in_window if obj.destination_location_id}
+    if (selected := filters.destination_location_id) is not None:
+        ids.add(selected)
+    if not ids:
+        return []
+    return list(
+        ContainerLocation.objects.filter(team=team, pk__in=ids).select_related("parent_location").order_by("name")
+    )
 
 
 def _group_by_day(objects: list[VisibilityObject]) -> list[ArrivalGroup]:

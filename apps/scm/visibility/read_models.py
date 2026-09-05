@@ -202,6 +202,42 @@ class VisibilityObject:
     def route_label(self) -> str:
         return self.shipment.route_label if self.shipment else ""
 
+    # The canonical destination, kept strictly separate from the text above. Where a
+    # shipment has both, they are two different statements — what the carrier called
+    # the place and which place MCR decided that is — and neither stands in for the
+    # other. Where it has only text, the canonical accessors are empty rather than
+    # matched by name, which is the false positive the canonical layer prevents.
+
+    @property
+    def destination_location(self):
+        return self.shipment.destination_location if self.shipment else None
+
+    @property
+    def destination_location_id(self) -> int | None:
+        return self.shipment.destination_location_id if self.shipment else None
+
+    @property
+    def origin_location(self):
+        return self.shipment.origin_location if self.shipment else None
+
+    @property
+    def destination_label(self) -> str:
+        """The best available name for where this is going.
+
+        The canonical location wins when there is one: it is the place operations
+        will act on, and it is the name that distinguishes two terminals in one
+        city. The reported text is the fallback, not a supplement — printing both
+        would read as two destinations.
+        """
+        location = self.destination_location
+        if location is not None:
+            return location.name
+        return self.destination
+
+    @property
+    def has_canonical_destination(self) -> bool:
+        return self.destination_location_id is not None
+
     # -- carrier and carriage ---------------------------------------------
 
     @property

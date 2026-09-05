@@ -8,9 +8,15 @@
   Same reflowing grid as the exceptions queue — dense from `sm` up, stacked below —
   and the same single link per row, to the object's own page.
 
-  Destination is the shipment's destination port, which is what was booked. Where
-  there is no shipment there is no destination, and the row says so rather than
-  printing where the box is now: current location is not a destination.
+  Destination is the canonical location where the shipment has one, and the booked
+  destination text otherwise — `destination_label` decides, so this template holds
+  no rule about which. A canonical destination also gets a marker, because "bound
+  for the place we call Oceanterminalen" and "bound for somewhere a carrier spelled
+  Gothenburg" are different degrees of certainty and the row should not flatten
+  them.
+
+  Where there is no shipment there is no destination, and the row says so rather
+  than printing where the box is now: current location is not a destination.
 {% endcomment %}
 
 <li>
@@ -29,8 +35,11 @@
     <div class="min-w-0 sm:col-span-3">
       <span class="block truncate text-xs text-base-content/70">
         <span class="sm:hidden text-base-content/40">{% translate "To" %}: </span>
-        {% if object.destination %}
-          {{ object.destination }}
+        {% if object.destination_label %}
+          {{ object.destination_label }}
+          {% if object.has_canonical_destination %}
+            <i class="fa fa-location-dot text-[0.6rem] text-base-content/30" title="{% translate 'A canonical location, not carrier text' %}"></i>
+          {% endif %}
         {% else %}
           <span class="text-base-content/40">{% translate "No destination recorded" %}</span>
         {% endif %}

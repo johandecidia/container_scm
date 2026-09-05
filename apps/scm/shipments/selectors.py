@@ -40,11 +40,13 @@ _SORT_MAP = {
 
 
 def get_team_shipments(team: Team) -> QuerySet[Shipment]:
-    return Shipment.objects.filter(team=team).select_related("created_by")
+    return Shipment.objects.filter(team=team).select_related("created_by", "origin_location", "destination_location")
 
 
 def get_team_shipment(team: Team, shipment_id: int) -> Shipment:
-    return Shipment.objects.select_related("created_by").get(team=team, pk=shipment_id)
+    return Shipment.objects.select_related("created_by", "origin_location", "destination_location").get(
+        team=team, pk=shipment_id
+    )
 
 
 def filter_shipments(
@@ -66,6 +68,12 @@ def filter_shipments(
             | Q(carrier__icontains=search)
             | Q(origin_port__icontains=search)
             | Q(destination_port__icontains=search)
+            # The canonical destination is searchable too: once a shipment has one,
+            # that is the name operations use for it, and a search that only saw the
+            # carrier's text would fail to find a shipment routed to Oceanterminalen
+            # by the name the depot calls itself.
+            | Q(origin_location__name__icontains=search)
+            | Q(destination_location__name__icontains=search)
         )
 
     order_by = _SORT_MAP.get(sort or "newest", "-created_at")

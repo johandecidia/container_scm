@@ -171,7 +171,12 @@ def list_visibility_objects(team: Team) -> list[VisibilityObject]:
     own, because the carrier is telling us about it either way.
     """
     shipments = list(
-        Shipment.objects.filter(team=team, status__in=ACTIVE_SHIPMENT_STATUSES).order_by("eta", "-created_at")
+        Shipment.objects.filter(team=team, status__in=ACTIVE_SHIPMENT_STATUSES)
+        # The canonical locations come with the shipment: the arrivals queue reads a
+        # destination for every row, and following the FK per object would make the
+        # page's query count grow with the number of shipments on it.
+        .select_related("origin_location", "destination_location")
+        .order_by("eta", "-created_at")
     )
     shipment_ids = [shipment.pk for shipment in shipments]
 

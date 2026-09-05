@@ -14,6 +14,11 @@ from .models import Container, ContainerLocation, EquipmentType
 from .utils import container_number_query
 from .workspace import ContainerWorkspace, get_container_workspace
 
+# How many levels of location containment `get_location_subtree_ids` will walk. A
+# port inside a port inside a port is already past anything the domain describes;
+# the bound stops a cycle written straight to the database from looping.
+_MAX_SUBTREE_DEPTH = 10
+
 _SORT_MAP = {
     "newest": "-created_at",
     "oldest": "created_at",
@@ -90,6 +95,33 @@ def get_team_locations_with_counts(team: Team) -> QuerySet[ContainerLocation]:
     return ContainerLocation.objects.filter(team=team).annotate(container_count=Count("containers")).order_by("name")
 
 
+def get_location_subtree_ids(team: Team, location: ContainerLocation) -> list[int]:
+    """Return *location*'s id together with every location beneath it.
+
+    What "expected at Göteborg" has to mean: a shipment bound for Oceanterminalen is
+    arriving at the port that contains it, and a port whose terminals were invisible
+    to it would under-report its own arrivals. This is not inference — the
+    containment is a relation MCR recorded itself.
+
+    Walked level by level rather than with a recursive CTE. The hierarchy the domain
+    describes is a port with terminals in it, so this is two or three cheap queries
+    and stays readable; ``_MAX_SUBTREE_DEPTH`` bounds it against corrupt data.
+    """
+    ids = [location.pk]
+    frontier = [location.pk]
+    for _level in range(_MAX_SUBTREE_DEPTH):
+        children = list(
+            ContainerLocation.objects.filter(team=team, parent_location_id__in=frontier)
+            .exclude(pk__in=ids)
+            .values_list("pk", flat=True)
+        )
+        if not children:
+            break
+        ids.extend(children)
+        frontier = children
+    return ids
+
+
 def filter_containers(
     team: Team,
     status: str | None = None,
@@ -153,6 +185,7 @@ __all__ = [
     "get_default_equipment_type",
     "get_equipment_types",
     "get_location_inventory",
+    "get_location_subtree_ids",
     "get_location_movements",
     "get_location_overview_movements",
     "get_location_workspace",

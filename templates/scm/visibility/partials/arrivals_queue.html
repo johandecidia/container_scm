@@ -82,6 +82,27 @@
   >
     <input type="hidden" name="window" value="{{ filters.window }}">
 
+    {% comment %}
+      Two destination filters, because there are two different questions.
+
+      "Place" is the canonical one: it asks which of MCR's own locations something
+      is routed to, so choosing Oceanterminalen means the terminal and not every
+      shipment a carrier labelled "Gothenburg". It is offered first because it is
+      the one that gives a dependable answer, and it only appears when the team has
+      canonical destinations to choose between.
+
+      "Any destination" below it is the reported text, kept because most shipments
+      have that and nothing else. The two narrow independently.
+    {% endcomment %}
+    {% if queue.destination_location_choices %}
+      <select name="destination_location" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Place' %}">
+        <option value="">{% translate "Any place" %}</option>
+        {% for location in queue.destination_location_choices %}
+          <option value="{{ location.pk }}" {% if filters.destination_location_id == location.pk %}selected{% endif %}>{{ location.full_name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
+
     <select name="destination" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Destination' %}">
       <option value="">{% translate "Any destination" %}</option>
       {% for destination in queue.destination_choices %}
