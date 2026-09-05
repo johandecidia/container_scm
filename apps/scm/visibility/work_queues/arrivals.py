@@ -20,13 +20,25 @@ Destination can be asked two ways, and they are not the same question:
 A shipment with no canonical destination is simply absent from a canonical filter.
 It is not guessed into one by comparing its text against location names — that is
 the false positive the canonical layer exists to prevent.
+
+**Arrived is not expected.** Something whose containers have all been accepted into
+their canonical destination has stopped being an arrival to plan for, and drops out
+of the queue. That is decided from :class:`ContainerMovement` evidence — a gate-in
+or a receipt at the destination or somewhere inside it — and specifically *not*
+from ``current_location == destination``, which answers a different question. A box
+gated in last Tuesday and trucked onward since has arrived, and comparing current
+location would put it back on the list; a box a carrier merely reports near
+Gothenburg has not, and comparing current location could take it off.
+
+The full arrival lifecycle — receiving, discrepancies, closing out — is LOC-3. This
+is only the point at which an expectation is satisfied.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -200,7 +212,7 @@ def get_arrival_queue(team: Team, filters: ArrivalQueueFilters | None = None) ->
     """Return what is expected to arrive for *team*, grouped by day."""
     filters = filters or ArrivalQueueFilters()
     objects = list_visibility_objects(team)
-    in_window = filter_by_eta_window(objects, filters.window)
+    in_window = drop_arrived(team, filter_by_eta_window(objects, filters.window))
 
     return ArrivalQueue(
         groups=_group_by_day(_filter_arrivals(in_window, filters, team=team)),
@@ -235,6 +247,50 @@ def _filter_arrivals(
         needle = filters.search.lower()
         result = [obj for obj in result if matches_search(obj, needle)]
     return result
+
+
+def drop_arrived(team: Team, objects: list[VisibilityObject]) -> list[VisibilityObject]:
+    """Remove what has physically arrived at its canonical destination.
+
+    An object stays when *any* of its containers has not yet been accepted into the
+    destination: a shipment of twenty boxes with nineteen gated in is still an
+    arrival somebody is waiting on, and dropping it at the first gate-in would hide
+    the one that matters. Only when every container has arrived does the whole thing
+    stop being expected.
+
+    An object with no canonical destination is untouched. There is nothing to have
+    arrived *at*, and inferring one from the reported text is the guess this layer
+    refuses to make.
+
+    Two queries plus the subtree walks, whatever the size of the queue: the arrival
+    lookup is done once for every container and every destination together.
+    """
+    from apps.scm.containers.movements import arrivals_by_location
+
+    routed = [obj for obj in objects if obj.destination_location_id is not None]
+    if not routed:
+        return objects
+
+    # A destination's own subtree counts, for the same reason it does when filtering:
+    # a box gated into Oceanterminalen has arrived at the Göteborg port it sits in.
+    # Non-NULL: `routed` is exactly the objects that have one.
+    destination_ids = {cast(int, obj.destination_location_id) for obj in routed}
+    subtrees = {location_id: _destination_subtree_ids(team, location_id) for location_id in destination_ids}
+    container_ids = [container.pk for obj in routed for container in obj.containers]
+    all_location_ids = set().union(*subtrees.values()) if subtrees else set()
+
+    arrived_by_location = arrivals_by_location(team, container_ids, all_location_ids)
+
+    def has_arrived(obj: VisibilityObject) -> bool:
+        wanted = subtrees.get(cast(int, obj.destination_location_id)) or set()
+        containers = obj.containers
+        if not containers:
+            # Nothing to have arrived. A shipment with no containers linked yet is
+            # still an expectation.
+            return False
+        return all(arrived_by_location.get(container.pk, set()) & wanted for container in containers)
+
+    return [obj for obj in objects if obj.destination_location_id is None or not has_arrived(obj)]
 
 
 def _destination_subtree_ids(team: Team, location_id: int) -> set[int]:
