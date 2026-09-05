@@ -33,12 +33,20 @@
 
     Delayed goes to the same queue as Exceptions with its issue filter applied — a
     delay is one of the things that queue is about, not a separate destination.
+
+    Since LOC-3 the two arrival cards are the arrival lifecycle's own numbers rather
+    than an ETA comparison of their own. "Arriving ≤7d" counts what is still
+    outstanding, so a shipment gated in on Monday stops being counted as Wednesday's
+    work; "Awaiting receipt" is the gap between a box landing and somebody taking it
+    into their records, which nothing on this board could say before. Both link into
+    the Arrivals queue with the matching lifecycle state applied.
   {% endcomment %}
-  <div class="order-1 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-1 lg:grid-cols-5">
+  <div class="order-1 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-1 lg:grid-cols-6">
     {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" href=shipments_url %}
     {# Short label on purpose: a longer one pushes the card's icon past its edge at phone width. #}
     {% include "scm/components/metric_card.html" with label=_("Containers") value=overview.tracked_containers icon="fa-box" href=containers_url %}
     {% include "scm/components/metric_card.html" with label=_("Arriving ≤7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" href=arrivals_url %}
+    {% include "scm/components/metric_card.html" with label=_("Awaiting receipt") value=overview.awaiting_receipt|length icon="fa-clipboard-check" color="info" href=arrivals_url|add:"?window=30&state=arrived" %}
     {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed|length icon="fa-clock" color="warning" href=exceptions_url|add:"?issue=delay" %}
     {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exceptions|length icon="fa-triangle-exclamation" color="error" href=exceptions_url %}
   </div>

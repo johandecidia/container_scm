@@ -22,6 +22,18 @@ if TYPE_CHECKING:
 # the exception engine's. It is not an exception code and the engine never emits it.
 DELAY_ISSUE = "delay"
 
+# The arrival lifecycle's finding: the ETA has passed and nothing has physically
+# arrived at the canonical destination. Like DELAY_ISSUE it is an issue type rather
+# than an exception code, and the exception engine never emits it.
+#
+# It is not the delay engine's "no arrival recorded after the original ETA" said
+# twice. That one reads ``shipment.actual_arrival_at``, which
+# ``apps.scm.shipments.transport_status`` sets from a carrier's vessel arrival or
+# discharge — so a shipment whose ship docked on time is not delayed by it, while
+# its boxes may still be nowhere near the depot. This issue is about that second
+# fact, and only ever raised where there is a canonical destination to check.
+ARRIVAL_OVERDUE_ISSUE = "arrival_overdue"
+
 
 class IssueBand(TextChoices):
     """How much of a claim an issue is, by where the finding came from.
@@ -43,6 +55,7 @@ ISSUE_LABELS: dict[str, StrOrPromise] = {
     "rolled": _("Rolled"),
     "port_congestion": _("Port congestion"),
     DELAY_ISSUE: _("Delayed"),
+    ARRIVAL_OVERDUE_ISSUE: _("Arrival overdue"),
     "missing_event": _("Tracking stale"),
 }
 
@@ -51,6 +64,10 @@ _BAND_BY_ISSUE: dict[str, str] = {
     "rolled": IssueBand.EXCEPTION,
     "port_congestion": IssueBand.EXCEPTION,
     DELAY_ISSUE: IssueBand.DELAY,
+    # A date that has passed with nothing to show for it. The same band as a delay
+    # for the same reason: it is a finding about time, not a carrier event, and it
+    # is a stronger claim than the absence of tracking below it.
+    ARRIVAL_OVERDUE_ISSUE: IssueBand.DELAY,
     "missing_event": IssueBand.TRACKING,
 }
 
@@ -137,14 +154,17 @@ class QueueItem:
 
 
 def build_queue_item(obj: VisibilityObject) -> QueueItem:
-    """Turn one object's exception and delay findings into a queue row.
+    """Turn one object's exception, delay and arrival findings into a queue row.
 
-    Both engines are read, neither is re-implemented. The delay is only listed when
-    the delay engine says so, and its wording is the engine's own reason.
+    Three engines are read and none is re-implemented. The delay is only listed when
+    the delay engine says so, and its wording is the engine's own reason; the overdue
+    arrival is only listed when the arrival lifecycle says so.
     """
     issues = [QueueIssue(issue_type=issue.exception_type, detail=issue.detail) for issue in obj.exception_issues]
     if obj.is_delayed:
         issues.append(QueueIssue(issue_type=DELAY_ISSUE, detail=_delay_detail(obj)))
+    if obj.is_arrival_overdue and obj.can_detect_arrival:
+        issues.append(QueueIssue(issue_type=ARRIVAL_OVERDUE_ISSUE, detail=_arrival_detail(obj)))
     issues.sort(key=lambda issue: BAND_ORDER.get(issue.band, len(BAND_ORDER)))
     return QueueItem(object=obj, issues=issues)
 
@@ -155,3 +175,20 @@ def _delay_detail(obj: VisibilityObject) -> str:
     if obj.delay_days > 0 and reason:
         return f"{reason} · +{obj.delay_days}d"
     return reason
+
+
+def _arrival_detail(obj: VisibilityObject) -> str:
+    """What is missing, and where it was due.
+
+    Names the canonical destination because that is what was checked: "no arrival
+    recorded" is only a finding against a specific place, and a row that omitted it
+    would read as a claim about the whole journey.
+    """
+    place = obj.destination_label
+    progress = obj.arrival
+    outstanding = progress.outstanding if progress is not None else 0
+    if outstanding > 1:
+        return str(
+            _("ETA passed · %(count)s containers not yet arrived at %(place)s") % {"count": outstanding, "place": place}
+        )
+    return str(_("ETA passed · no arrival recorded at %(place)s") % {"place": place})

@@ -1,10 +1,10 @@
 """The operational work queues: what needs attention, and what is arriving.
 
 Both queues are compositions over :func:`~apps.scm.visibility.selectors.list_visibility_objects`.
-Nothing here decides that something is wrong, that a date has moved, or that a box
-is late: the exception engine and the delay engine remain the only things that
-decide those, and this package turns their findings into rows, bands, groups and a
-sort order.
+Nothing here decides that something is wrong, that a date has moved, that a box is
+late or that it has arrived: the exception engine, the delay engine and the arrival
+lifecycle remain the only things that decide those, and this package turns their
+findings into rows, bands, groups and a sort order.
 
 **Why there is no severity.** The domain has no SLA, no cargo value and no impact
 model, so ranking a customs hold "high" against port congestion "medium" would be
@@ -13,7 +13,8 @@ distinguish is where a finding came from, and that turns out to be the useful
 split:
 
 * ``EXCEPTION`` — a carrier reported an event: a hold, a rollover, congestion.
-* ``DELAY`` — a date moved, or an arrival is missing. The delay engine's verdict.
+* ``DELAY`` — a date moved, or an arrival that was due has not happened. The delay
+  engine's verdict and the arrival lifecycle's overdue finding.
 * ``TRACKING`` — no carrier event for days. Derived from the *absence* of data,
   which is a different kind of claim from the two above and belongs below them.
 
@@ -54,9 +55,10 @@ from .exceptions import (
     get_exception_queue,
     parse_exception_queue_filters,
 )
-from .issues import DELAY_ISSUE, ISSUE_LABELS, IssueBand, QueueIssue, QueueItem
+from .issues import ARRIVAL_OVERDUE_ISSUE, DELAY_ISSUE, ISSUE_LABELS, IssueBand, QueueIssue, QueueItem
 
 __all__ = [
+    "ARRIVAL_OVERDUE_ISSUE",
     "ARRIVAL_WINDOWS",
     "DEFAULT_ARRIVAL_WINDOW",
     "DELAY_ISSUE",
