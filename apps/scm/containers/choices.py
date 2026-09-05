@@ -45,13 +45,55 @@ class ColorSystem(TextChoices):
 
 
 class LocationType(TextChoices):
+    """What kind of place a canonical location is.
+
+    The first six values predate the canonical identity layer and are kept because
+    existing rows use them: renaming a stored value would silently reclassify every
+    location a team has already recorded. ``TERMINAL``, ``WAREHOUSE``, ``FACTORY``
+    and ``OTHER`` are the additions LOC-1 needs to describe a port's interior.
+
+    ``SUPPLIER_WAREHOUSE`` and ``WAREHOUSE`` therefore coexist on purpose — the
+    first says whose warehouse it is, the second only that it is one. Neither is a
+    synonym the other should absorb.
+
+    There is deliberately no GATE. A gate is a point a container passes through, not
+    a place it is at, and the events that would need one belong to LOC-2.
+    """
+
     MANUFACTURER = "manufacturer", _("Manufacturer")
     SUPPLIER_WAREHOUSE = "supplier_warehouse", _("Supplier Warehouse")
     PORT = "port", _("Port")
     VESSEL = "vessel", _("Vessel")
     DEPOT = "depot", _("Depot")
     CUSTOMER = "customer", _("Customer")
+    TERMINAL = "terminal", _("Terminal")
+    WAREHOUSE = "warehouse", _("Warehouse")
+    FACTORY = "factory", _("Factory")
+    OTHER = "other", _("Other")
     UNKNOWN = "unknown", _("Unknown")
+
+
+class LocationAliasSource:
+    """Who called a place by an external name.
+
+    Not a ``TextChoices``: most values are ``TrackingProvider.code`` — rows in the
+    database, added when a carrier or aggregator is configured — so a closed enum
+    here would have to be edited every time a provider is onboarded, and would go
+    stale the moment one was not.
+
+    The two constants are the sources that are *not* providers, and are reserved so
+    they cannot collide with a provider code:
+
+    ``UNLOCODE``
+        The UN/LOCODE register itself, for recording that a code names this place.
+    ``INTERNAL``
+        A name MCR uses in-house that no provider ever sends.
+    """
+
+    UNLOCODE = "unlocode"
+    INTERNAL = "internal"
+
+    RESERVED = (UNLOCODE, INTERNAL)
 
 
 class LocationSource(TextChoices):

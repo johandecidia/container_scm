@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -14,7 +15,20 @@ from .choices import (
     LocationType,
     MovementType,
 )
+from .location_identity import (
+    normalize_alias_source,
+    normalize_country_code,
+    normalize_external_code,
+    normalize_location_name,
+    normalize_unlocode,
+)
 from .utils import validate_container_id
+
+# How deep a location hierarchy may be walked when checking for a cycle. A port
+# inside a port inside a port is already past anything the domain describes; the
+# bound exists so a cycle written directly to the database cannot spin `clean()`
+# forever.
+_MAX_PARENT_DEPTH = 10
 
 
 class PlannedContainerStatus(models.TextChoices):
@@ -46,17 +60,78 @@ def equipment_type_image_path(instance, filename: str) -> str:
 
 
 class ContainerLocation(BaseTeamModel):
-    """A named location where containers can be positioned along the supply chain."""
+    """MCR's canonical identity for a real place. One row, one place.
+
+    This is the *identity* layer, and it is deliberately the only one of the three
+    location concepts that owns a name:
+
+    ``ContainerLocation``
+        Identity. What MCR considers a place to be. Owned by MCR, edited by MCR,
+        never created as a side effect of reading a carrier response.
+    :class:`LocationAlias`
+        Evidence about naming. What Traqo, Maersk or CMA CGM call this place.
+    ``Container.current_location`` / :class:`ContainerMovement`
+        State. Where a box is believed to be. LOC-2's territory.
+
+    **UN/LOCODE is not unique here, on purpose.** Göteborg the port,
+    Oceanterminalen inside it and APM Terminals Gothenburg beside that are three
+    operational places under one code, ``SEGOT``. Making the column unique would
+    force two of the three to be misfiled or invented as something else. It is
+    indexed, not constrained, and ``location_resolver`` handles the plurality by
+    refusing to guess between them.
+
+    ``normalized_name`` is derived, maintained by ``save``, and exists so a name can
+    be looked up on an index rather than by loading every location a team has and
+    comparing in Python. It is the same relationship ``TrackingEvent.event_fingerprint``
+    has to the fields it is built from: a stored form of a pure function, not a
+    second source of truth. Nothing should ever write to it directly.
+    """
 
     name = models.CharField(_("name"), max_length=200)
+    normalized_name = models.CharField(
+        _("normalised name"),
+        max_length=200,
+        blank=True,
+        editable=False,
+        help_text=_("Derived from the name on save, for matching. Not edited directly."),
+    )
     location_type = models.CharField(
         _("location type"),
         max_length=30,
         choices=LocationType.choices,
         default=LocationType.UNKNOWN,
     )
+    unlocode = models.CharField(
+        _("UN/LOCODE"),
+        max_length=5,
+        blank=True,
+        help_text=_("Stored canonically, e.g. SEGOT. Several locations may share one code."),
+    )
+    country_code = models.CharField(
+        _("country code"),
+        max_length=2,
+        blank=True,
+        help_text=_("ISO 3166-1 alpha-2, e.g. SE. Kept apart from the free-text country name."),
+    )
     country = models.CharField(_("country"), max_length=100, blank=True)
     city = models.CharField(_("city"), max_length=100, blank=True)
+    latitude = models.DecimalField(_("latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(_("longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    timezone = models.CharField(
+        _("timezone"),
+        max_length=64,
+        blank=True,
+        help_text=_("IANA name, e.g. Europe/Stockholm."),
+    )
+    parent_location = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="child_locations",
+        verbose_name=_("parent location"),
+        help_text=_("The larger place this one sits inside, e.g. the port a terminal belongs to."),
+    )
     address = models.TextField(_("address"), blank=True)
     external_reference = models.CharField(_("external reference"), max_length=100, blank=True)
     owner_name = models.CharField(_("owner name"), max_length=200, blank=True)
@@ -68,6 +143,11 @@ class ContainerLocation(BaseTeamModel):
         indexes = [
             models.Index(fields=["team", "location_type"]),
             models.Index(fields=["team", "is_active"]),
+            # The resolver's three lookup paths. None is a unique constraint: a code,
+            # a name and a parent may each legitimately be shared.
+            models.Index(fields=["team", "unlocode"]),
+            models.Index(fields=["team", "normalized_name"]),
+            models.Index(fields=["team", "parent_location"]),
         ]
         verbose_name = _("Container Location")
         verbose_name_plural = _("Container Locations")
@@ -79,6 +159,199 @@ class ContainerLocation(BaseTeamModel):
         if self.country:
             parts.append(self.country)
         return ", ".join(parts)
+
+    def clean(self) -> None:
+        """Reject a hierarchy that is not one, and a parent from another tenant."""
+        super().clean()
+        parent_id = self.parent_location_id
+        if parent_id is None:
+            return
+
+        if self.pk is not None and parent_id == self.pk:
+            raise ValidationError({"parent_location": _("A location cannot be its own parent.")})
+
+        parent = self.parent_location
+        if parent is not None and self.team_id and parent.team_id != self.team_id:
+            raise ValidationError({"parent_location": _("The parent location must belong to the same team.")})
+
+        # Walking up from the proposed parent must not arrive back here. Without
+        # this, "make A the child of B" and "make B the child of A" are each
+        # individually valid and together detach both from every query that starts
+        # at a root.
+        seen = {self.pk} if self.pk is not None else set()
+        current = parent
+        for _step in range(_MAX_PARENT_DEPTH):
+            if current is None:
+                return
+            if current.pk in seen:
+                raise ValidationError({"parent_location": _("That would make the location hierarchy circular.")})
+            seen.add(current.pk)
+            current = current.parent_location
+        raise ValidationError({"parent_location": _("The location hierarchy is nested too deeply.")})
+
+    def _canonicalise(self) -> None:
+        """Put the identifying fields into their canonical form.
+
+        Called from both ``clean_fields`` and ``save`` so validation and persistence
+        see the same values. Without the first, ``full_clean`` would reject the very
+        inputs normalisation exists to accept: "SE GOT" is six characters and the
+        column holds five, so a code somebody typed with a space would fail
+        length validation before ``save`` ever got the chance to fix it.
+        """
+        self.unlocode = normalize_unlocode(self.unlocode)
+        self.country_code = normalize_country_code(self.country_code)
+        self.normalized_name = normalize_location_name(self.name)
+
+    def clean_fields(self, exclude=None):
+        self._canonicalise()
+        super().clean_fields(exclude=exclude)
+
+    def save(self, *args, **kwargs):
+        """Canonicalise the identifying fields, then save.
+
+        Normalisation happens in the model rather than in the form so it holds for
+        every writer — the admin, the seed command, a shell session — and so the
+        stored UN/LOCODE is always in the form the resolver looks for.
+        """
+        self._canonicalise()
+        if (update_fields := kwargs.get("update_fields")) is not None:
+            # A caller updating one column must not silently drop the normalisation
+            # of the others; add only what this save actually recomputed.
+            kwargs["update_fields"] = {*update_fields, "unlocode", "country_code", "normalized_name"}
+        return super().save(*args, **kwargs)
+
+    @property
+    def full_name(self) -> str:
+        """This place inside its parent, e.g. "Göteborg / Oceanterminalen".
+
+        One level up only. A location's own name is what operators use; the parent
+        is context for the cases — a terminal name that means nothing on its own —
+        where it is needed.
+        """
+        if self.parent_location_id and self.parent_location is not None:
+            return f"{self.parent_location.name} / {self.name}"
+        return self.name
+
+
+class LocationAlias(BaseTeamModel):
+    """What somebody outside MCR calls a :class:`ContainerLocation`.
+
+    The alias layer is what keeps the canonical model clean. Without it, every
+    provider that spells Göteborg differently would want a column —
+    ``traqo_name``, ``maersk_name``, ``cma_name`` — and the canonical row would
+    become a junk drawer of other people's vocabularies, with no way to add the
+    next provider except another migration.
+
+    So instead:
+
+    .. code-block:: text
+
+        traqo      "GOTHENBURG"       ┐
+        maersk     "GOTEBORG"         ├──▶  ContainerLocation "Göteborg"  (SEGOT, PORT)
+        cma-cgm    "GOTHENBURG, SE"   │
+        unlocode   "SEGOT"            ┘
+        internal   "Oceanterminalen"  ───▶  ContainerLocation "Oceanterminalen"
+
+    **An alias must actually say something.** At least one of ``external_code`` and
+    ``external_name`` is required, so no row exists purely to satisfy the schema.
+
+    **One source cannot name two places the same thing.** The unique constraints
+    make (team, source, code) and (team, source, name) single-valued, which is what
+    lets the resolver treat an alias hit as certain rather than as one candidate
+    among several. Both are scoped to the team, so one tenant's aliases can never
+    resolve against another's locations.
+    """
+
+    location = models.ForeignKey(
+        ContainerLocation,
+        on_delete=models.CASCADE,
+        related_name="aliases",
+        verbose_name=_("location"),
+    )
+    source = models.CharField(
+        _("source"),
+        max_length=50,
+        help_text=_("A TrackingProvider code, or one of the reserved sources: unlocode, internal."),
+    )
+    external_code = models.CharField(
+        _("external code"),
+        max_length=100,
+        blank=True,
+        help_text=_("The identifier this source uses for the place, if it has one."),
+    )
+    external_name = models.CharField(
+        _("external name"),
+        max_length=200,
+        blank=True,
+        help_text=_("The place name this source reports, verbatim."),
+    )
+    normalized_name = models.CharField(
+        _("normalised name"),
+        max_length=200,
+        blank=True,
+        editable=False,
+        help_text=_("Derived from the external name on save, for matching. Not edited directly."),
+    )
+    latitude = models.DecimalField(_("latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(_("longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    metadata = models.JSONField(
+        _("metadata"),
+        default=dict,
+        blank=True,
+        help_text=_("Anything else this source published about the place, kept verbatim."),
+    )
+
+    class Meta:
+        ordering = ["source", "external_name", "external_code"]
+        indexes = [
+            models.Index(fields=["team", "source", "normalized_name"]),
+            models.Index(fields=["team", "source", "external_code"]),
+            models.Index(fields=["team", "location"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "source", "external_code"],
+                condition=models.Q(external_code__gt=""),
+                name="unique_location_alias_code_per_source",
+            ),
+            models.UniqueConstraint(
+                fields=["team", "source", "normalized_name"],
+                condition=models.Q(normalized_name__gt=""),
+                name="unique_location_alias_name_per_source",
+            ),
+        ]
+        verbose_name = _("Location Alias")
+        verbose_name_plural = _("Location Aliases")
+
+    def __str__(self) -> str:
+        return f"{self.source}: {self.external_name or self.external_code}"
+
+    def _canonicalise(self) -> None:
+        self.source = normalize_alias_source(self.source)
+        self.external_code = normalize_external_code(self.external_code)
+        self.external_name = (self.external_name or "").strip()
+        self.normalized_name = normalize_location_name(self.external_name)
+
+    def clean_fields(self, exclude=None):
+        # Before validation, so `validate_unique` compares the derived
+        # `normalized_name` this row will actually be stored with — otherwise two
+        # aliases spelling one name differently would both pass and then collide in
+        # the database.
+        self._canonicalise()
+        super().clean_fields(exclude=exclude)
+
+    def clean(self) -> None:
+        super().clean()
+        if not self.external_code and not self.normalized_name:
+            raise ValidationError(_("An alias needs an external code or an external name."))
+        if self.location_id and self.team_id and self.location.team_id != self.team_id:
+            raise ValidationError({"location": _("The alias and its location must belong to the same team.")})
+
+    def save(self, *args, **kwargs):
+        self._canonicalise()
+        if (update_fields := kwargs.get("update_fields")) is not None:
+            kwargs["update_fields"] = {*update_fields, "source", "external_code", "external_name", "normalized_name"}
+        return super().save(*args, **kwargs)
 
 
 class EquipmentType(models.Model):
