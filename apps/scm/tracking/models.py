@@ -2,6 +2,9 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+# Choices only, from a module that imports no models — the canonical location
+# vocabulary is owned by the containers app and must not be restated here.
+from apps.scm.containers.choices import LocationResolutionMethod, LocationResolutionStatus
 from apps.teams.models import BaseTeamModel
 from apps.utils.models import BaseModel
 
@@ -238,11 +241,41 @@ class TrackingEvent(BaseTeamModel):
     description = models.TextField(_("description"), blank=True)
     carrier_description = models.TextField(_("carrier description"), blank=True)
 
-    # Location
+    # Location.
+    #
+    # The four fields below are *evidence*: what the carrier said about where this
+    # happened, kept verbatim. They are never rewritten to match a canonical
+    # location, because a carrier's own wording is the record of what it reported.
+    #
+    # `location` is the canonical identity that evidence was resolved to, and the two
+    # resolution fields say whether and how. An unresolved location is normal and is
+    # not an error: the event is still valid tracking evidence and is still stored.
+    # See apps/scm/containers/location_resolver.py.
     location_name = models.CharField(_("location name"), max_length=200, blank=True)
     location_unlocode = models.CharField(_("UN/LOCODE"), max_length=10, blank=True)
     location_latitude = models.DecimalField(_("latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
     location_longitude = models.DecimalField(_("longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    location = models.ForeignKey(
+        "scm_containers.ContainerLocation",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tracking_events",
+        verbose_name=_("canonical location"),
+        help_text=_("The canonical location this event's reported place resolved to, when it did."),
+    )
+    location_resolution_status = models.CharField(
+        _("location resolution status"),
+        max_length=20,
+        choices=LocationResolutionStatus.choices,
+        blank=True,
+    )
+    location_resolution_method = models.CharField(
+        _("location resolution method"),
+        max_length=20,
+        choices=LocationResolutionMethod.choices,
+        blank=True,
+    )
 
     # Transport
     vessel_name = models.CharField(_("vessel name"), max_length=200, blank=True)
@@ -277,6 +310,9 @@ class TrackingEvent(BaseTeamModel):
             models.Index(fields=["event_datetime"]),
             models.Index(fields=["source_event_id"]),
             models.Index(fields=["team", "container", "event_time_type"]),
+            models.Index(fields=["team", "location"]),
+            # Finding the evidence that still needs an alias recorded for it.
+            models.Index(fields=["team", "location_resolution_status"]),
         ]
         constraints = [
             # The fingerprint is the single deduplication key: it is derived from the

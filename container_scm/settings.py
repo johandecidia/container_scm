@@ -639,6 +639,15 @@ SCM_TRACKING_DISPATCH_LIMIT = env.int("SCM_TRACKING_DISPATCH_LIMIT", default=500
 SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS", default=90)
 SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS", default=0)
 
+# SCM canonical locations
+# How far apart a carrier's reported coordinates and a canonical location may be and
+# still be treated as the same place. Deliberately small: terminals inside one port
+# sit a couple of kilometres apart, and coordinates are the resolver's last fallback,
+# not its identity system. Widening this does not make the resolver guess — it makes
+# it report AMBIGUOUS more often, which is the intended failure.
+# See apps/scm/containers/location_resolver.py.
+SCM_LOCATION_COORDINATE_RADIUS_KM = env.float("SCM_LOCATION_COORDINATE_RADIUS_KM", default=5.0)
+
 # SCM Traqo Ocean (external ocean tracking aggregator, evaluated alongside the direct
 # carrier integrations). Unlike a carrier, a Traqo account is one subscription for the
 # whole installation rather than an agreement each team holds, so its credential lives

@@ -96,6 +96,37 @@ class LocationAliasSource:
     RESERVED = (UNLOCODE, INTERNAL)
 
 
+class LocationResolutionStatus(TextChoices):
+    """Whether an external location could be tied to a canonical one.
+
+    ``AMBIGUOUS`` is a first-class answer, not a variety of failure: it says the
+    evidence matched several canonical locations and the resolver refused to pick.
+    Collapsing it into ``UNRESOLVED`` would lose the one fact an operator can act
+    on — that an alias needs to be recorded to break the tie.
+    """
+
+    RESOLVED = "resolved", _("Resolved")
+    UNRESOLVED = "unresolved", _("Unresolved")
+    AMBIGUOUS = "ambiguous", _("Ambiguous")
+
+
+class LocationResolutionMethod(TextChoices):
+    """Which rule produced a resolution.
+
+    Recorded rather than a confidence score. An explicit alias and a coordinate
+    match within five kilometres are both "the location", but they are believable
+    for entirely different reasons, and a number in between would invent a precision
+    the domain does not have.
+    """
+
+    ALIAS = "alias", _("Explicit alias")
+    EXTERNAL_CODE = "external_code", _("Provider code")
+    UNLOCODE = "unlocode", _("UN/LOCODE")
+    COORDINATES = "coordinates", _("Coordinates")
+    NAME = "name", _("Normalised name")
+    NONE = "none", _("None")
+
+
 class LocationSource(TextChoices):
     MANUAL = "manual", _("Manual")
     TRACKING_EVENT = "tracking_event", _("Tracking Event")

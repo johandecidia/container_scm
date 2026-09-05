@@ -15,6 +15,20 @@ Idempotent writes
     Writes go through ``get_or_create`` guarded by the unique constraint on
     (team, provider, event_fingerprint), so two workers processing the same
     payload concurrently end up with one row, not two.
+
+Location resolution
+    The reported place is handed to
+    :func:`apps.scm.containers.location_resolver.resolve_location` and the answer is
+    stored alongside the carrier's own wording. This is the right seam for it
+    because it is the *only* path carrier events take: Maersk, CMA CGM, MSC, Traqo
+    and Vizion all arrive here as a ``NormalisedTrackingEvent``, so one wiring
+    covers every provider and no adapter needs a place-name rule of its own.
+
+    Resolution never blocks ingestion. An unresolvable location is ordinary — a
+    carrier naming a facility MCR has never recorded — and the event is stored with
+    its evidence intact and no canonical link. A resolver that raised would lose
+    real tracking data over master data that is merely incomplete, so it is called
+    defensively and a failure costs the link, not the event.
 """
 
 from __future__ import annotations
@@ -26,6 +40,8 @@ from typing import TYPE_CHECKING
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+
+from apps.scm.containers.location_resolver import LocationQuery, LocationResolution, resolve_location
 
 from .models import TrackingEvent
 from .statuses import (
@@ -108,6 +124,49 @@ def build_event_fingerprint(
     return hashlib.sha256(joined.encode()).hexdigest()
 
 
+def build_location_query(normalised: NormalisedTrackingEvent, *, provider_code: str) -> LocationQuery:
+    """Describe a normalised event's place in the resolver's own terms.
+
+    The translation from a carrier DTO to a :class:`LocationQuery` happens here and
+    only here, which is what keeps the resolver free of every provider's schema.
+
+    ``facility_name`` stands in when there is no ``location_name`` — the same
+    precedence ``build_event_defaults`` uses for the stored ``location_name``, so
+    the string that gets resolved is the string that gets displayed.
+    """
+    return LocationQuery(
+        source=provider_code,
+        name=normalised.location_name or normalised.facility_name,
+        unlocode=normalised.location_unlocode,
+        latitude=_coordinate(normalised.latitude),
+        longitude=_coordinate(normalised.longitude),
+    )
+
+
+def resolve_event_location(
+    *,
+    team: Team,
+    provider_code: str,
+    normalised: NormalisedTrackingEvent,
+) -> LocationResolution:
+    """Resolve a normalised event's location, never raising.
+
+    A resolver failure must not cost the event. Tracking evidence is the thing that
+    cannot be recovered — the carrier will not re-send it — whereas a missing
+    canonical link is repaired the next time the event is refreshed or re-parsed.
+    """
+    try:
+        return resolve_location(team, build_location_query(normalised, provider_code=provider_code))
+    except Exception:  # noqa: BLE001 — a resolver fault must not lose tracking evidence
+        logger.warning(
+            "Could not resolve location %r for provider=%s; storing the event unresolved.",
+            normalised.location_name or normalised.facility_name,
+            provider_code,
+            exc_info=True,
+        )
+        return LocationResolution()
+
+
 def build_event_defaults(
     normalised: NormalisedTrackingEvent,
     *,
@@ -116,14 +175,28 @@ def build_event_defaults(
     container=None,
     raw_payload: TrackingRawPayload | None = None,
     received_at=None,
+    resolution: LocationResolution | None = None,
 ) -> dict:
     """Map a NormalisedTrackingEvent onto TrackingEvent field values.
 
     Keeps both the internal classification and the carrier's own wording, so a gap
     in the mapping tables never destroys what the carrier reported.
+
+    ``resolution`` is passed in rather than computed here so this stays a pure
+    mapper with no queries in it. Omitting it leaves the canonical location fields
+    untouched, which is what a caller that has not resolved anything should do —
+    writing "unresolved" without having looked would be a claim, not an absence.
     """
     event_time_type = normalize_event_time_type(normalised.event_classifier)
+    location_fields = {}
+    if resolution is not None:
+        location_fields = {
+            "location": resolution.location,
+            "location_resolution_status": resolution.status,
+            "location_resolution_method": resolution.method,
+        }
     return {
+        **location_fields,
         "event_type": normalize_dcsa_event_type(
             normalised.event_type,
             normalised.event_code,
@@ -194,6 +267,7 @@ def persist_normalised_event(
         shipment=shipment,
         container=container,
         raw_payload=raw_payload,
+        resolution=resolve_event_location(team=team, provider_code=provider.code, normalised=normalised),
     )
     return upsert_event(team=team, provider=provider, fingerprint=fingerprint, defaults=defaults)
 
@@ -254,6 +328,8 @@ _REFRESHABLE_FIELDS = (
     "received_at",
     "source_event_id",
     "raw_data",
+    "location_resolution_status",
+    "location_resolution_method",
 )
 _LINK_FIELDS = ("shipment", "container", "subscription", "raw_payload")
 
@@ -269,6 +345,20 @@ def _update_existing_event(event: TrackingEvent, defaults: dict) -> None:
         if defaults.get(name) is not None and getattr(event, f"{name}_id") is None:
             setattr(event, name, defaults[name])
             changed.append(name)
+
+    # The canonical location is re-derived rather than merely filled in, and it is
+    # the one link allowed to be cleared. It is a function of the event's evidence
+    # and the current alias table, so an operator who records an alias sees the next
+    # refresh pick it up — and one who removes a wrong alias sees the wrong link go,
+    # which is the whole point of having recorded it explicitly. Compared by id so a
+    # refresh does not fetch the related row to find out nothing changed.
+    if "location" in defaults:
+        new_location = defaults["location"]
+        new_location_id = new_location.pk if new_location is not None else None
+        if event.location_id != new_location_id:
+            event.location = new_location
+            changed.append("location")
+
     if changed:
         event.save(update_fields=[*changed, "updated_at"])
 

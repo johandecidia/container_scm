@@ -33,7 +33,11 @@ class TrackingSubscriptionAdmin(admin.ModelAdmin):
 class TrackingEventAdmin(admin.ModelAdmin):
     list_display = [
         "event_type",
+        # Both sides of the location: what the carrier said, and what it resolved to.
+        # Shown together so a wrong resolution is visible next to its evidence.
         "location_name",
+        "location",
+        "location_resolution_status",
         "event_datetime",
         "provider",
         "subscription",
@@ -41,7 +45,7 @@ class TrackingEventAdmin(admin.ModelAdmin):
         "source_event_id",
         "created_at",
     ]
-    list_filter = ["event_type", "provider", "team"]
+    list_filter = ["event_type", "location_resolution_status", "provider", "team"]
     search_fields = ["source_event_id", "description", "location_name", "location_unlocode"]
     readonly_fields = ["created_at", "updated_at", "raw_data"]
     date_hierarchy = "event_datetime"
