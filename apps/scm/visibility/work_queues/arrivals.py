@@ -23,28 +23,30 @@ the false positive the canonical layer exists to prevent.
 
 **Arrived is not expected.** Something whose containers have all been accepted into
 their canonical destination has stopped being an arrival to plan for, and drops out
-of the queue. That is decided from :class:`ContainerMovement` evidence — a gate-in
-or a receipt at the destination or somewhere inside it — and specifically *not*
-from ``current_location == destination``, which answers a different question. A box
-gated in last Tuesday and trucked onward since has arrived, and comparing current
-location would put it back on the list; a box a carrier merely reports near
-Gothenburg has not, and comparing current location could take it off.
+of the queue. Since LOC-3 that is not a rule of this module: it is
+:attr:`~apps.scm.visibility.arrival_lifecycle.ArrivalProgress.has_arrived`, read off
+the one arrival lifecycle interpreter, so the queue, the Control Tower, the
+workspaces and the attention list cannot disagree about whether a given box is still
+coming. This page decides only which lifecycle states belong on it.
 
-The full arrival lifecycle — receiving, discrepancies, closing out — is LOC-3. This
-is only the point at which an expectation is satisfied.
+**The default queue is what is outstanding.** EXPECTED and ARRIVING. Choosing a
+state explicitly reaches past that — ``?state=arrived`` is how somebody finds what
+has landed and still has to be received — so completed arrivals are available
+without the planning view filling up with them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.teams.models import Team
 
+from ..arrival_lifecycle import OUTSTANDING_STATES, ArrivalState, destination_subtree_ids
 from ..read_models import Health, ObjectKind, VisibilityObject
 from ..selectors import ARRIVING_SOON_DAYS, filter_by_eta_window, list_visibility_objects, matches_search
 from .choices import text_choices
@@ -73,7 +75,20 @@ class ArrivalQueueFilters:
     carrier: str = ""
     health: str = ""
     kind: str = ""
+    # A lifecycle state, when one has been chosen. Empty means the page's own
+    # default — what is still outstanding — rather than "every state".
+    state: str = ""
     search: str = ""
+
+    @property
+    def shows_completed_arrivals(self) -> bool:
+        """True when a state has been chosen that the outstanding view excludes.
+
+        The one filter that widens the queue rather than narrowing it. Asking for
+        ARRIVED or RECEIVED is asking to see past the planning view, and the queue
+        has to stop dropping them before the filter can match anything.
+        """
+        return self.state in {ArrivalState.ARRIVED, ArrivalState.RECEIVED}
 
     @property
     def has_narrowing_filters(self) -> bool:
@@ -86,7 +101,13 @@ class ArrivalQueueFilters:
         carrier they picked sends them the wrong way.
         """
         return bool(
-            self.destination or self.destination_location or self.carrier or self.health or self.kind or self.search
+            self.destination
+            or self.destination_location
+            or self.carrier
+            or self.health
+            or self.kind
+            or self.state
+            or self.search
         )
 
     @property
@@ -115,6 +136,11 @@ class ArrivalQueueFilters:
     @property
     def window_label(self) -> str:
         return str(dict(ARRIVAL_WINDOWS).get(self.window, self.window))
+
+    @property
+    def state_label(self) -> str:
+        """The chosen lifecycle state in words, or "" when none is chosen."""
+        return str(ArrivalState(self.state).label) if self.state in ArrivalState.values else ""
 
 
 @dataclass
@@ -184,8 +210,17 @@ class ArrivalQueue:
         return ObjectKind.choices
 
     @property
+    def state_choices(self):
+        return ArrivalState.choices
+
+    @property
     def windows(self):
         return ARRIVAL_WINDOWS
+
+    @property
+    def overdue_count(self) -> int:
+        """How many of these rows should already have been here."""
+        return sum(1 for obj in self.objects if obj.is_arrival_overdue)
 
 
 def parse_arrival_queue_filters(params) -> ArrivalQueueFilters:
@@ -197,6 +232,11 @@ def parse_arrival_queue_filters(params) -> ArrivalQueueFilters:
     window = (params.get("window") or "").strip()
     if window not in dict(ARRIVAL_WINDOWS):
         window = DEFAULT_ARRIVAL_WINDOW
+    # An unrecognised lifecycle state narrows nothing rather than erroring, for the
+    # same reason a broken window falls back: the value arrives from a query string.
+    state = (params.get("state") or "").strip()
+    if state not in ArrivalState.values:
+        state = ""
     return ArrivalQueueFilters(
         window=window,
         destination=(params.get("destination") or "").strip(),
@@ -204,6 +244,7 @@ def parse_arrival_queue_filters(params) -> ArrivalQueueFilters:
         carrier=(params.get("carrier") or "").strip(),
         health=(params.get("health") or "").strip(),
         kind=(params.get("kind") or "").strip(),
+        state=state,
         search=(params.get("search") or "").strip(),
     )
 
@@ -212,7 +253,7 @@ def get_arrival_queue(team: Team, filters: ArrivalQueueFilters | None = None) ->
     """Return what is expected to arrive for *team*, grouped by day."""
     filters = filters or ArrivalQueueFilters()
     objects = list_visibility_objects(team)
-    in_window = drop_arrived(team, filter_by_eta_window(objects, filters.window))
+    in_window = _outstanding(filter_by_eta_window(objects, filters.window), filters)
 
     return ArrivalQueue(
         groups=_group_by_day(_filter_arrivals(in_window, filters, team=team)),
@@ -235,7 +276,7 @@ def _filter_arrivals(
     if filters.destination:
         result = [obj for obj in result if obj.destination == filters.destination]
     if (location_id := filters.destination_location_id) is not None:
-        wanted = _destination_subtree_ids(team, location_id)
+        wanted = destination_subtree_ids(team, location_id)
         result = [obj for obj in result if obj.destination_location_id in wanted]
     if filters.carrier:
         result = [obj for obj in result if obj.carrier_name == filters.carrier]
@@ -243,69 +284,31 @@ def _filter_arrivals(
         result = [obj for obj in result if obj.health == filters.health]
     if filters.kind:
         result = [obj for obj in result if obj.kind == filters.kind]
+    if filters.state:
+        result = [obj for obj in result if obj.arrival_state == filters.state]
     if filters.search:
         needle = filters.search.lower()
         result = [obj for obj in result if matches_search(obj, needle)]
     return result
 
 
-def drop_arrived(team: Team, objects: list[VisibilityObject]) -> list[VisibilityObject]:
-    """Remove what has physically arrived at its canonical destination.
+def _outstanding(objects: list[VisibilityObject], filters: ArrivalQueueFilters) -> list[VisibilityObject]:
+    """Narrow to what is still coming — unless a completed state was asked for.
 
-    An object stays when *any* of its containers has not yet been accepted into the
-    destination: a shipment of twenty boxes with nineteen gated in is still an
-    arrival somebody is waiting on, and dropping it at the first gate-in would hide
-    the one that matters. Only when every container has arrived does the whole thing
-    stop being expected.
+    The rule itself belongs to the arrival lifecycle, which is why this reads
+    ``arrival_state`` instead of comparing movements or current locations. An object
+    stays while *any* of its containers is outstanding: a shipment of twenty boxes
+    with nineteen gated in is still an arrival somebody is waiting on, and the
+    lifecycle's roll-up already takes the least advanced container's word for it.
 
-    An object with no canonical destination is untouched. There is nothing to have
-    arrived *at*, and inferring one from the reported text is the guess this layer
-    refuses to make.
-
-    Two queries plus the subtree walks, whatever the size of the queue: the arrival
-    lookup is done once for every container and every destination together.
+    An object with no canonical destination stays too. There is nothing for it to
+    have arrived at, so its lifecycle can never leave EXPECTED or ARRIVING —
+    inferring a destination from the booking text is the guess the canonical layer
+    exists to prevent, and dropping it silently would lose a real expectation.
     """
-    from apps.scm.containers.movements import arrivals_by_location
-
-    routed = [obj for obj in objects if obj.destination_location_id is not None]
-    if not routed:
+    if filters.shows_completed_arrivals:
         return objects
-
-    # A destination's own subtree counts, for the same reason it does when filtering:
-    # a box gated into Oceanterminalen has arrived at the Göteborg port it sits in.
-    # Non-NULL: `routed` is exactly the objects that have one.
-    destination_ids = {cast(int, obj.destination_location_id) for obj in routed}
-    subtrees = {location_id: _destination_subtree_ids(team, location_id) for location_id in destination_ids}
-    container_ids = [container.pk for obj in routed for container in obj.containers]
-    all_location_ids = set().union(*subtrees.values()) if subtrees else set()
-
-    arrived_by_location = arrivals_by_location(team, container_ids, all_location_ids)
-
-    def has_arrived(obj: VisibilityObject) -> bool:
-        wanted = subtrees.get(cast(int, obj.destination_location_id)) or set()
-        containers = obj.containers
-        if not containers:
-            # Nothing to have arrived. A shipment with no containers linked yet is
-            # still an expectation.
-            return False
-        return all(arrived_by_location.get(container.pk, set()) & wanted for container in containers)
-
-    return [obj for obj in objects if obj.destination_location_id is None or not has_arrived(obj)]
-
-
-def _destination_subtree_ids(team: Team, location_id: int) -> set[int]:
-    """The chosen location together with everything inside it, as ids.
-
-    Team-scoped by the lookup itself, so a location id belonging to another tenant
-    matches nothing rather than that tenant's subtree.
-    """
-    from apps.scm.containers.models import ContainerLocation
-    from apps.scm.containers.selectors import get_location_subtree_ids
-
-    location = ContainerLocation.objects.filter(team=team, pk=location_id).first()
-    if location is None:
-        return set()
-    return set(get_location_subtree_ids(team=team, location=location))
+    return [obj for obj in objects if obj.arrival_state in OUTSTANDING_STATES]
 
 
 def _destination_location_choices(team: Team, in_window: list[VisibilityObject], filters: ArrivalQueueFilters) -> list:

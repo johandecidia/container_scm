@@ -27,7 +27,24 @@ is acted on, and it currently holds one entry.
 the resulting position is exactly what the event says. A gate-out names the facility
 it left and says nothing about where it went — acting on it would replace a location
 we know with nothing, on a carrier's word, which is the regression LOC-2 exists to
-prevent. Departures need somewhere to go, and that is LOC-3's arrival lifecycle.
+prevent.
+
+LOC-2 deferred carrier-derived gate-out to the arrival lifecycle. LOC-3 built that
+lifecycle and **left the deferral in place**, because the lifecycle turns out to
+strengthen the argument rather than weaken it. The reasons, all still true:
+
+* The normalised ``GATE_OUT`` vocabulary does not distinguish a box leaving a
+  terminal on a truck from one leaving on a vessel, from a carrier closing a leg.
+  Only the first is a departure from a place.
+* A gate-out clears ``current_location``, so acting on weak evidence *destroys*
+  state rather than adding to it — the one direction that cannot be undone by a
+  later, better event arriving.
+* The lifecycle deliberately does not read ``current_location`` at all: arrival and
+  receipt come from the movement history and survive a departure. So automatic
+  gate-out would buy the lifecycle nothing it does not already have, while risking
+  the position projection the depot screens depend on.
+
+An operator gating a box out by hand remains the only way ``GATE_OUT`` is recorded.
 
 (``GATE_IN`` is absent from ``transport_status``'s milestone tuples for an unrelated
 reason: a box is gated in on export *and* on import, so the code says nothing about

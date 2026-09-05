@@ -65,6 +65,11 @@ class ArrivalRemovesFromExpectedTest(TestCase):
         cls.elsewhere = create_location(cls.team, {"name": "MCR Depot", "location_type": LocationType.DEPOT})
 
     def _shipment(self, number: str, *, containers: int = 1) -> Shipment:
+        # An ETD, because these shipments are IN_TRANSIT and something in transit has
+        # departed. It matters since LOC-3: the arrival lifecycle only counts
+        # movements from the start of the shipment's own cycle, and where nothing
+        # records a departure that floor falls back to when the shipment was created
+        # — which would exclude the backdated gate-in below.
         shipment = Shipment.objects.create(
             team=self.team,
             shipment_number=number,
@@ -72,6 +77,7 @@ class ArrivalRemovesFromExpectedTest(TestCase):
             status=Shipment.Status.IN_TRANSIT,
             destination_port="Gothenburg",
             destination_location=self.terminal,
+            etd=timezone.localdate() - timedelta(days=10),
             eta=timezone.localdate() + timedelta(days=3),
         )
         for index in range(containers):

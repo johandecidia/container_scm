@@ -90,10 +90,17 @@ OPERATIONAL_MOVEMENT_TYPES = (
     MovementType.TRANSFER,
 )
 
-# What counts as having arrived at a destination, for Expected Arrivals. Narrow on
-# purpose: a gate-in and a receipt are somebody saying the box is here, which is the
-# fact that stops it being merely expected. A transfer into the yard from elsewhere
-# in the same port is a move, not an arrival at the destination.
+# What counts as having arrived at a destination, for the arrival lifecycle. Narrow
+# on purpose: a gate-in and a receipt are somebody saying the box is here, which is
+# the fact that stops it being merely expected. A transfer into the yard from
+# elsewhere in the same port is a move, not an arrival at the destination.
+#
+# LOC-3 reconsidered widening this to ARRIVED_AT_DEPOT and left it alone.
+# ARRIVED_AT_DEPOT is a legacy value written before canonical locations existed, by
+# importers whose idea of "depot" was a free-text place; reading those rows as
+# arrivals at a canonical destination would reinterpret history the platform never
+# recorded that precisely. Nothing produces the value now, and the two types below
+# are what the operational movements actually emit.
 ARRIVAL_MOVEMENT_TYPES = (
     MovementType.GATE_IN,
     MovementType.RECEIVED,
@@ -372,19 +379,27 @@ def project_container_state(team: Team, container: Container) -> ContainerMoveme
 # ---------------------------------------------------------------------------
 
 
-def arrivals_by_location(team: Team, container_ids, location_ids) -> dict[int, set[int]]:
-    """Which of *location_ids* each container has an accepted arrival at.
+def arrival_movements(team: Team, container_ids, location_ids) -> dict[int, list[ContainerMovement]]:
+    """Each container's accepted arrival evidence at any of *location_ids*, oldest first.
 
-    What Expected Arrivals needs, and deliberately not ``current_location ==
+    What the arrival lifecycle reads, and deliberately not ``current_location ==
     destination``. A box that was gated in at Oceanterminalen last Tuesday and has
     since been trucked onward has arrived — it is not still expected — and a box a
     carrier merely reports near Gothenburg has not, however suggestive the event.
     Only :data:`ARRIVAL_MOVEMENT_TYPES` count, and only movements that are claims
     about position.
 
-    Keyed by container rather than flattened to "these have arrived somewhere",
-    because each caller compares against its own destination: an arrival at
-    Gothenburg must not satisfy an expectation at Hamburg.
+    The movements themselves rather than a set of location ids, because the
+    lifecycle has to say *when* the box arrived and which movement said so, and
+    ordered oldest first so the first row is the arrival rather than the latest
+    handling of it. ``related_shipment`` travels with them: which shipment's arrival
+    a movement is evidence of is the lifecycle's hardest question, and it is decided
+    from that column — see
+    :func:`~apps.scm.visibility.arrival_lifecycle._relevant_movements`.
+
+    Keyed by container rather than flattened, because each caller compares against
+    its own destination: an arrival at Gothenburg must not satisfy an expectation at
+    Hamburg.
 
     One query for any number of containers and destinations.
     """
@@ -393,17 +408,23 @@ def arrivals_by_location(team: Team, container_ids, location_ids) -> dict[int, s
     if not container_ids or not location_ids:
         return {}
 
-    rows = ContainerMovement.objects.filter(
-        team=team,
-        container_id__in=container_ids,
-        to_location_id__in=location_ids,
-        movement_type__in=ARRIVAL_MOVEMENT_TYPES,
-        affects_current_state=True,
-    ).values_list("container_id", "to_location_id")
+    rows = (
+        ContainerMovement.objects.filter(
+            team=team,
+            container_id__in=container_ids,
+            to_location_id__in=location_ids,
+            movement_type__in=ARRIVAL_MOVEMENT_TYPES,
+            affects_current_state=True,
+        )
+        .select_related("to_location")
+        # `pk` breaks a tie at an identical instant, so a container with two
+        # movements written in the same microsecond still produces one stable answer.
+        .order_by("occurred_at", "pk")
+    )
 
-    arrivals: dict[int, set[int]] = {}
-    for container_id, location_id in rows:
-        arrivals.setdefault(container_id, set()).add(location_id)
+    arrivals: dict[int, list[ContainerMovement]] = {}
+    for movement in rows:
+        arrivals.setdefault(movement.container_id, []).append(movement)
     return arrivals
 
 

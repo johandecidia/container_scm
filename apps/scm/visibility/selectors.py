@@ -38,6 +38,7 @@ from apps.scm.tracking.exception_detection import (
 from apps.scm.tracking.models import ETAHistory, TrackingEvent, TrackingSubscription
 from apps.teams.models import Team
 
+from .arrival_lifecycle import ArrivalQuestion, get_arrival_progress
 from .read_models import Health, JourneyState, ObjectKind, VisibilityObject
 
 # Shipments worth watching: everything that has left draft and has not finished.
@@ -101,10 +102,38 @@ class VisibilityOverview:
 
     @property
     def arriving_soon(self) -> list[VisibilityObject]:
+        """What is still coming in the next week, soonest first.
+
+        Since LOC-3 this is what the arrival lifecycle says is outstanding, not
+        simply what has an ETA in the window. A shipment whose boxes were all gated
+        in on Monday is not something to plan for on Wednesday, and counting it here
+        made the card overstate the work — the Control Tower and the arrivals queue
+        now answer the question the same way.
+        """
         cutoff = timezone.localdate() + timedelta(days=ARRIVING_SOON_DAYS)
         today = timezone.localdate()
-        upcoming = [obj for obj in self.objects if obj.current_eta and today <= obj.current_eta <= cutoff]
+        upcoming = [
+            obj
+            for obj in self.objects
+            if obj.current_eta and today <= obj.current_eta <= cutoff and not obj.has_arrived
+        ]
         return sorted(upcoming, key=lambda obj: obj.current_eta)
+
+    @property
+    def awaiting_receipt(self) -> list[VisibilityObject]:
+        """Physically here, and not yet taken into anybody's records.
+
+        The operational gap LOC-3 makes visible: arrival and receipt are different
+        events, and the space between them is where a box sits in a yard that
+        nothing has accounted for. Reported as a fact with no threshold attached —
+        there is no SLA in the domain to say when the wait becomes a problem.
+        """
+        return [obj for obj in self.objects if obj.is_awaiting_receipt]
+
+    @property
+    def overdue_arrivals(self) -> list[VisibilityObject]:
+        """ETA passed, and nothing has physically arrived at the destination."""
+        return [obj for obj in self.objects if obj.is_arrival_overdue]
 
     @property
     def delayed(self) -> list[VisibilityObject]:
@@ -236,6 +265,36 @@ def list_visibility_objects(team: Team) -> list[VisibilityObject]:
                 exceptions=exceptions.get(container_id) or ExceptionReport(has_exception=False),
             )
         )
+
+    attach_arrival_progress(team, objects)
+    return objects
+
+
+def attach_arrival_progress(team: Team, objects: list[VisibilityObject]) -> list[VisibilityObject]:
+    """Interpret every object's inbound arrival and hang the answer on it.
+
+    Done here, once, for whatever list was just built: the arrivals queue, the
+    Control Tower, the attention queue and the workspaces all read the same
+    ``ArrivalProgress`` instances, so none of them can develop its own idea of what
+    has arrived. One extra query for the whole page, whatever its length.
+
+    The ETA is handed over rather than re-derived — ``current_eta`` is already the
+    read model's answer about which of a shipment's date and a carrier's forecast to
+    believe, anchored to *this* object's shipment.
+    """
+    if not objects:
+        return objects
+    questions = [
+        ArrivalQuestion(
+            containers=obj.containers,
+            shipment=obj.shipment,
+            eta=obj.current_eta,
+            eta_at=obj.current_eta_at,
+        )
+        for obj in objects
+    ]
+    for obj, progress in zip(objects, get_arrival_progress(team, questions), strict=True):
+        obj.arrival = progress
     return objects
 
 
@@ -252,13 +311,14 @@ def get_shipment_visibility(team: Team, shipment: Shipment) -> VisibilityObject:
     has_delay_event = TrackingEvent.objects.filter(
         team=team, shipment=shipment, event_type=TrackingEvent.EventType.DELAY
     ).exists()
-    return VisibilityObject(
+    obj = VisibilityObject(
         kind=ObjectKind.SHIPMENT,
         shipment=shipment,
         workspaces=members,
         delay=evaluate_shipment_delay(shipment, has_delay_event=has_delay_event),
         exceptions=merge_exception_reports(_exception_reports(team, container_ids).get(cid) for cid in container_ids),
     )
+    return attach_arrival_progress(team, [obj])[0]
 
 
 def get_container_visibility(team: Team, container: Container, workspace=None) -> VisibilityObject:
@@ -279,13 +339,14 @@ def get_container_visibility(team: Team, container: Container, workspace=None) -
             team=team, shipment=shipment, event_type=TrackingEvent.EventType.DELAY
         ).exists()
         delay = evaluate_shipment_delay(shipment, has_delay_event=has_delay_event)
-    return VisibilityObject(
+    obj = VisibilityObject(
         kind=ObjectKind.CONTAINER,
         shipment=shipment,
         workspaces=[workspace],
         delay=delay,
         exceptions=_exception_reports(team, [container.pk]).get(container.pk) or ExceptionReport(has_exception=False),
     )
+    return attach_arrival_progress(team, [obj])[0]
 
 
 # ---------------------------------------------------------------------------

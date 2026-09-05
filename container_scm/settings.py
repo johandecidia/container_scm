@@ -648,6 +648,17 @@ SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_DELETE_
 # See apps/scm/containers/location_resolver.py.
 SCM_LOCATION_COORDINATE_RADIUS_KM = env.float("SCM_LOCATION_COORDINATE_RADIUS_KM", default=5.0)
 
+# SCM arrival lifecycle
+# How close to its ETA an inbound container has to be before the arrival lifecycle
+# calls it ARRIVING rather than EXPECTED. Two days by default: far enough ahead to
+# be worth staffing a gate for, short enough that "arriving" still means something —
+# a week would mark almost everything in the arrivals queue as imminent.
+#
+# It only ever moves the boundary between two states that both mean "not here yet".
+# Widening or narrowing it cannot make anything read as arrived: that takes an
+# accepted physical movement. See apps/scm/visibility/arrival_lifecycle.py.
+SCM_ARRIVAL_WINDOW_HOURS = env.int("SCM_ARRIVAL_WINDOW_HOURS", default=48)
+
 # SCM Traqo Ocean (external ocean tracking aggregator, evaluated alongside the direct
 # carrier integrations). Unlike a carrier, a Traqo account is one subscription for the
 # whole installation rather than an agreement each team holds, so its credential lives
