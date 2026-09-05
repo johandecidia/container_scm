@@ -15,11 +15,12 @@ from decimal import Decimal
 from django.test import TestCase
 
 from apps.scm.containers.models import Container
+from apps.scm.tracking.journey import get_container_journey
 from apps.scm.tracking.models import TrackingEvent, TrackingProvider, TrackingSubscription
 from apps.scm.tracking.positions import PositionType, classify_position, get_latest_container_position
-from apps.scm.visibility.geojson import overview_feature_collection
+from apps.scm.visibility.geojson import container_journey_feature_collection
 from apps.scm.visibility.read_models import JourneyState
-from apps.scm.visibility.selectors import get_container_visibility, list_visibility_objects
+from apps.scm.visibility.selectors import get_container_visibility
 from apps.teams.models import Team
 
 from .factories import make_container, make_provider, make_user_and_team
@@ -55,6 +56,20 @@ class PositionSemanticsTest(TestCase):
         }
         return TrackingEvent.objects.create(**{**defaults, **kwargs})
 
+    def _journey_point(self) -> dict:
+        """The properties of the single located point on this container's map.
+
+        The journey map, not the operational one: since LOC-4 the fleet map draws
+        *canonical* positions, and a carrier event's own coordinate quality — GPS,
+        vessel, facility, estimated — is a fact about the evidence, which is what
+        the journey draws. The refusal being tested is the same either way: a
+        terminal's coordinate must never reach a map dressed as a fix of the box.
+        """
+        collection = container_journey_feature_collection(get_container_journey(self.team, self.container))
+        points = [f for f in collection["features"] if f["geometry"]["type"] == "Point"]
+        self.assertEqual(len(points), 1, "expected exactly one located point")
+        return points[0]["properties"]
+
     def test_terminal_coordinates_stay_a_facility(self):
         """SEGOT's coordinates say the box passed through, not that it is there now."""
         event = self._event(
@@ -77,10 +92,10 @@ class PositionSemanticsTest(TestCase):
             location_latitude=SEGOT_LAT,
             location_longitude=SEGOT_LON,
         )
-        feature = overview_feature_collection(list_visibility_objects(self.team))["features"][0]
-        self.assertEqual(feature["properties"]["position_type"], PositionType.FACILITY)
-        self.assertFalse(feature["properties"]["is_realtime"])
-        self.assertEqual(feature["properties"]["position_label"], "Gothenburg, Oceanterminalen")
+        properties = self._journey_point()
+        self.assertEqual(properties["position_type"], PositionType.FACILITY)
+        self.assertFalse(properties["is_realtime"])
+        self.assertEqual(properties["position_label"], "Gothenburg, Oceanterminalen")
 
     def test_a_vessel_position_is_not_the_containers_gps(self):
         """Where the ship is, not where the box is once it has been discharged."""
@@ -93,9 +108,9 @@ class PositionSemanticsTest(TestCase):
             location_longitude=Decimal("121.874470"),
         )
         self.assertEqual(classify_position(event), PositionType.VESSEL)
-        feature = overview_feature_collection(list_visibility_objects(self.team))["features"][0]
-        self.assertEqual(feature["properties"]["position_type"], PositionType.VESSEL)
-        self.assertFalse(feature["properties"]["is_realtime"])
+        properties = self._journey_point()
+        self.assertEqual(properties["position_type"], PositionType.VESSEL)
+        self.assertFalse(properties["is_realtime"])
 
     def test_an_estimated_event_stays_estimated_however_precise_it_looks(self):
         event = self._event(
@@ -106,9 +121,9 @@ class PositionSemanticsTest(TestCase):
             location_longitude=SEGOT_LON,
         )
         self.assertEqual(classify_position(event), PositionType.ESTIMATED)
-        feature = overview_feature_collection(list_visibility_objects(self.team))["features"][0]
-        self.assertEqual(feature["properties"]["position_type"], PositionType.ESTIMATED)
-        self.assertFalse(feature["properties"]["is_realtime"])
+        properties = self._journey_point()
+        self.assertEqual(properties["position_type"], PositionType.ESTIMATED)
+        self.assertFalse(properties["is_realtime"])
 
     def test_a_forecast_arrival_does_not_become_the_current_status(self):
         """The core rule: expected is not happened."""
@@ -196,8 +211,7 @@ class PositionSemanticsTest(TestCase):
             location_longitude=Decimal("11.900000"),
         )
         self.assertEqual(classify_position(event), PositionType.GPS)
-        feature = overview_feature_collection(list_visibility_objects(self.team))["features"][0]
-        self.assertTrue(feature["properties"]["is_realtime"])
+        self.assertTrue(self._journey_point()["is_realtime"])
 
 
 def _subscribe(team, container, provider):

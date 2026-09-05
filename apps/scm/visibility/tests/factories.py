@@ -12,9 +12,17 @@ from __future__ import annotations
 import json
 import pathlib
 
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.choices import (
+    LocationResolutionMethod,
+    LocationResolutionStatus,
+    LocationSource,
+    LocationType,
+    MovementType,
+)
+from apps.scm.containers.models import Container, ContainerLocation, EquipmentType
+from apps.scm.containers.movements import record_container_movement
 from apps.scm.tracking.ingestion import persist_normalised_events
-from apps.scm.tracking.models import TrackingProvider, TrackingSubscription
+from apps.scm.tracking.models import TrackingEvent, TrackingProvider, TrackingSubscription
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
 from apps.users.models import CustomUser
@@ -103,6 +111,100 @@ def make_container(team: Team, number: str = FIXTURE_CONTAINER_NUMBER) -> Contai
 
 def make_provider(code: str = "maersk", name: str = "Maersk") -> TrackingProvider:
     return TrackingProvider.objects.get_or_create(code=code, defaults={"name": name})[0]
+
+
+# ---------------------------------------------------------------------------
+# Canonical locations, physical state and resolved evidence
+#
+# LOC-4 draws canonical places, so its tests need canonical places. Coordinates are
+# passed in by each test rather than defaulted to somewhere real: a factory that
+# quietly supplied Gothenburg's latitude would make "this location has no
+# coordinates" untestable, and that is the state most of the data is actually in.
+# ---------------------------------------------------------------------------
+
+
+def make_location(
+    team: Team,
+    name: str,
+    *,
+    latitude: str | None = None,
+    longitude: str | None = None,
+    unlocode: str = "",
+    parent: ContainerLocation | None = None,
+    location_type: str = LocationType.TERMINAL,
+) -> ContainerLocation:
+    """Create one canonical location. Coordinates are omitted unless asked for."""
+    return ContainerLocation.objects.create(
+        team=team,
+        name=name,
+        location_type=location_type,
+        unlocode=unlocode,
+        parent_location=parent,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+def place_container_at(
+    team: Team,
+    container: Container,
+    location: ContainerLocation | None,
+    *,
+    occurred_at=None,
+    movement_type: str = MovementType.GATE_IN,
+    source: str = LocationSource.MANUAL,
+    related_shipment=None,
+):
+    """Record an accepted physical movement, through the real service.
+
+    Deliberately not ``Container.objects.update(current_location=...)``: the whole
+    point of a PHYSICAL position is that it is the *projection* of the movement
+    history, and a test that set the column directly would prove the map can read a
+    column rather than that it agrees with LOC-2.
+    """
+    return record_container_movement(
+        team=team,
+        container=container,
+        movement_type=movement_type,
+        to_location=location,
+        occurred_at=occurred_at,
+        source=source,
+        related_shipment=related_shipment,
+    )
+
+
+def resolve_tracking_to(
+    team: Team,
+    container: Container,
+    location: ContainerLocation,
+    *,
+    event_type: str | None = None,
+    status: str = LocationResolutionStatus.RESOLVED,
+) -> TrackingEvent | None:
+    """Point the container's newest observed located event at a canonical location.
+
+    Stands in for the resolver having succeeded, which in production happens during
+    ingestion. Takes ``status`` so a test can produce the states the resolver really
+    does produce — AMBIGUOUS leaves ``location`` NULL, exactly as
+    ``resolve_location`` does, because that is the case a canonical marker must
+    refuse.
+    """
+    events = TrackingEvent.objects.filter(
+        team=team,
+        container=container,
+        event_time_type=TrackingEvent.EventTimeType.ACTUAL,
+        event_datetime__isnull=False,
+    )
+    if event_type is not None:
+        events = events.filter(event_type=event_type)
+    event = events.order_by("-event_datetime", "-created_at").first()
+    if event is None:
+        return None
+    event.location = location if status == LocationResolutionStatus.RESOLVED else None
+    event.location_resolution_status = status
+    event.location_resolution_method = LocationResolutionMethod.UNLOCODE
+    event.save(update_fields=["location", "location_resolution_status", "location_resolution_method"])
+    return event
 
 
 def payload_for_container(payload: dict, container_number: str) -> dict:

@@ -208,6 +208,16 @@ def get_location_workspace(team: Team, location: ContainerLocation) -> LocationW
     )
 
 
+def count_containers_at_location(team: Team, location: ContainerLocation) -> int:
+    """How many containers point here. One query, and the only definition of the number.
+
+    Shared with the location's map marker, which shows this count and nothing else:
+    two implementations would eventually let the Inventory tab and the marker beside
+    it disagree about how full a depot is.
+    """
+    return Container.objects.filter(team=team, current_location=location).count()
+
+
 def get_location_inventory(team: Team, location: ContainerLocation, *, sort: str | None = None, **filters):
     """The containers physically at this location, most recently arrived first.
 

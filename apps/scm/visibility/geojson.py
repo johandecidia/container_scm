@@ -1,17 +1,20 @@
 """Turning visibility read models into GeoJSON for Mapbox.
 
-Three rules hold everywhere in this module.
+Four rules hold everywhere in this module.
 
 **Longitude first.** GeoJSON coordinates are ``[longitude, latitude]``. Getting
 this backwards puts Gothenburg in Somalia and looks plausible enough to ship.
 
-**Properties are already decided.** Position quality, whether an event was observed
-or forecast, what a status is called — all of it is resolved here, so the browser
-never re-implements a domain rule to decide what to draw.
+**Properties are already decided.** Which position wins, what kind of claim it is,
+whether an event was observed or forecast, what a status is called — all of it is
+resolved before it leaves here, so the browser never re-implements a domain rule to
+decide what to draw. In particular the precedence physical > tracking > nothing is
+:mod:`apps.scm.visibility.map_positions`', and arrives as a property.
 
 **A line between two ports is not a route.** We know where events happened, not
 what path the vessel took. Connections are labelled as event connections, and the
 forecast continuation is marked as forecast, so the map cannot be read as a track.
+Nothing is ever drawn between a container and its destination for the same reason.
 
 **Every source, and which one.** A container's journey is drawn from all of its
 tracking sources, not the newest one, and each point says who reported it. A gap
@@ -27,15 +30,11 @@ from typing import cast
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format
+from django.utils.timesince import timesince
+from django.utils.translation import gettext as _
 
 from apps.scm.tracking.models import TrackingEvent
 from apps.scm.tracking.positions import PositionType, classify_position
-
-from .read_models import ObjectKind, VisibilityObject
-
-# Distinct positions closer together than this are treated as the same place when
-# aggregating a shipment's containers — five decimals is about a metre.
-_COORDINATE_PRECISION = 5
 
 LINE_ACTUAL = "actual_event_connection"
 LINE_FORECAST = "forecast_continuation"
@@ -46,22 +45,21 @@ def feature_collection(features: list[dict]) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
-def overview_feature_collection(objects: list[VisibilityObject]) -> dict:
-    """Return current positions for every visible object.
+def map_feature_collection(operational_map) -> dict:
+    """Return LOC-4's operational map as GeoJSON: one feature per marker.
 
-    One feature per distinct place, not per container: twenty boxes discharged at
-    the same terminal are one point carrying a count, while boxes that have gone
-    separate ways stay separate points. Objects whose last report carries no
-    coordinates are simply absent from the map — they are still in the list beside
-    it, which is where "no coordinates available" belongs.
+    A marker is a canonical location and a position class, never a container — see
+    :class:`~apps.scm.visibility.map_positions.MapLocationGroup`. The class is
+    carried explicitly on every feature so the browser can style physical, tracking
+    and destination markers differently without knowing why they differ, and every
+    label is resolved here: which position wins, what it is called, how old it is
+    and how it should be worded are all decided in the read model.
+
+    Groups with no coordinates never reach this function. They are counted in
+    ``MapCoverage`` instead, which is where "this place has no coordinates yet"
+    belongs — a marker at 0, 0 would be a lie about the Gulf of Guinea.
     """
-    features = []
-    for obj in objects:
-        for group in _position_groups(obj):
-            feature = _object_point(obj, group)
-            if feature is not None:
-                features.append(feature)
-    return feature_collection(features)
+    return feature_collection([_group_point(group) for group in operational_map.groups])
 
 
 def journey_feature_collection(events: list[TrackingEvent], *, container_number: str = "") -> dict:
@@ -96,7 +94,7 @@ def journey_feature_collection(events: list[TrackingEvent], *, container_number:
     return feature_collection(features)
 
 
-def container_journey_feature_collection(journey, *, container_number: str = "") -> dict:
+def container_journey_feature_collection(journey, *, container_number: str = "", positions=()) -> dict:
     """Return one container's journey as reported by every one of its sources.
 
     Built from the derived journey rather than from one provider's events, so a box
@@ -105,15 +103,31 @@ def container_journey_feature_collection(journey, *, container_number: str = "")
     so the map can mark it without deciding for itself which point that is.
 
     A point with no coordinates is absent from the map and present on the timeline,
-    which is the authoritative chronology. Our own physical observations are always
-    in that position: a container location records which yard holds the box, not
-    where on earth the yard is.
+    which is the authoritative chronology.
+
+    ``positions`` are LOC-4's canonical markers for this container — where MCR has
+    accepted the box to be, and where it is going. They are drawn *beside* the
+    journey rather than into it, because they answer a different question: the
+    journey is the evidence, and a canonical marker is the conclusion. There is
+    deliberately no line joining a container to its destination — a straight line
+    between two places is not a shipping route, and drawing one would be the same
+    mistake as reading the event connections as a vessel track.
+
+    When a canonical current marker is drawn, the journey's own "current" halo is
+    dropped: two rings claiming *now* at two slightly different coordinates — the
+    carrier's for the event, MCR's for the place — is a contradiction on the screen
+    even though both are true. The canonical one is the stronger statement and
+    keeps the claim.
     """
     number = container_number or (journey.container.container_id if journey.container is not None else "")
     current = journey.current_location
     current_point = current.point if current is not None else None
 
-    features: list[dict] = []
+    plottable = [position for position in positions if position.is_plottable]
+    features: list[dict] = [_position_point(position) for position in plottable]
+    if any(position.is_current for position in plottable):
+        current_point = None
+
     located = [point for point in journey.points if point.has_coordinates]
     for point in located:
         features.append(_journey_point_feature(point, container_number=number, is_current=point is current_point))
@@ -139,66 +153,128 @@ def container_journey_feature_collection(journey, *, container_number: str = "")
 # ---------------------------------------------------------------------------
 
 
-def _position_groups(obj: VisibilityObject) -> list[dict]:
-    """Group an object's containers by where they were last reported."""
-    groups: dict[tuple, dict] = {}
-    for workspace in obj.workspaces:
-        position = workspace.position
-        if position is None or not position.has_coordinates:
-            continue
-        # Both coordinates are set: that is what has_coordinates asserts.
-        latitude = cast(Decimal, position.latitude)
-        longitude = cast(Decimal, position.longitude)
-        key = (
-            position.location_unlocode
-            or (
-                round(float(latitude), _COORDINATE_PRECISION),
-                round(float(longitude), _COORDINATE_PRECISION),
-            ),
-            position.position_type,
-        )
-        group = groups.setdefault(key, {"position": position, "containers": []})
-        group["containers"].append(workspace.container)
-    return list(groups.values())
+def _group_point(group) -> dict:
+    """One marker: a canonical place, a position class and how many boxes.
 
+    ``container_number`` is filled in only for a group of one. A marker covering
+    eighty containers has no single number, and putting the first one on it would
+    read as a label for the whole group.
+    """
+    from .map_positions import PositionClass
 
-def _object_point(obj: VisibilityObject, group: dict) -> dict | None:
-    position = group["position"]
-    containers = group["containers"]
-    event = position.event
-
+    lead = group.lead
     properties = {
-        "object_type": obj.kind,
-        "object_id": obj.object_id,
-        "object_key": obj.key,
-        "label": obj.label,
-        "container_number": containers[0].container_id if len(containers) == 1 else "",
-        "container_count": len(containers),
-        "total_container_count": obj.container_count,
-        "carrier": obj.carrier_name,
-        "vessel_name": obj.vessel_name,
-        "vessel_imo": obj.vessel_imo,
-        "voyage_number": obj.voyage_number,
-        "current_status": obj.current_status,
-        "journey_state": obj.journey_state,
-        "journey_state_label": obj.journey_state_label,
-        "health": obj.health,
-        "health_label": obj.health_label,
-        "is_delayed": obj.is_delayed,
-        "delay_days": obj.delay_days,
-        "exception_count": obj.exception_count,
-        "eta": _date(obj.current_eta),
-        "eta_display": _date_display(obj.current_eta),
-        "eta_source": obj.eta_source,
-        "tracking_state": obj.tracking_state,
-        "tracking_state_label": obj.tracking_state_label,
-        "last_synced_at": _datetime(obj.last_synced_at),
-        "next_check_at": _datetime(obj.next_check_at),
-        "panel_url": reverse("visibility:object_panel", args=[obj.kind, obj.object_id]) if obj.object_id else "",
-        **_position_properties(position),
-        **_event_properties(event),
+        "object_type": "map_position",
+        "position_class": group.position_class,
+        "position_class_label": group.position_class_label,
+        # Stated rather than inferred from the class, so nothing downstream has to
+        # know that a destination is not a current position.
+        "is_current": group.is_current,
+        "is_destination": group.position_class == PositionClass.DESTINATION,
+        "location_id": group.location.pk,
+        "location_name": group.place_label,
+        "location_unlocode": group.location.unlocode,
+        "location_type_label": group.location.get_location_type_display(),
+        "container_count": group.count,
+        "container_number": lead.container_number if lead is not None else "",
+        # "At Oceanterminalen", never a coordinate: the point locates the terminal,
+        # not the container standing somewhere inside it.
+        "place_statement": lead.place_statement if lead is not None else _class_statement(group),
+        "source_label": lead.source_label if lead is not None else "",
+        "detail": lead.detail if lead is not None else "",
+        "occurred_at": _datetime(group.latest_at),
+        "occurred_at_display": _datetime_display(group.latest_at),
+        # Pre-rendered freshness. The browser never turns a timestamp into an age:
+        # it would do it in the visitor's clock and disagree with every other "6h
+        # ago" on the page, which are all Django's.
+        "age_display": _age_display(group.latest_at),
+        "arrival_state": lead.arrival_state if lead is not None else "",
+        "arrival_state_label": lead.arrival_state_label if lead is not None else "",
+        "arrival_state_counts": [{"label": label, "count": count} for label, count in group.arrival_state_counts],
+        "overdue_count": group.overdue_count,
+        "eta_display": _date_display(lead.eta) if lead is not None else "",
+        "destination_label": lead.destination_label if lead is not None else "",
+        "panel_url": reverse("visibility:map_location_panel", args=[group.position_class, group.location.pk]),
+        "container_url": reverse("containers:detail", args=[lead.container_id]) if lead is not None else "",
     }
-    return _point(position.longitude, position.latitude, properties)
+    # Both coordinates are set: a group with either missing never becomes a marker.
+    return cast(dict, _point(group.longitude, group.latitude, properties))
+
+
+def location_feature_collection(location, container_count: int = 0) -> dict:
+    """Return one canonical location as a single marker, or nothing to draw.
+
+    The Location Workspace's map answers "where is this place, and how much is
+    standing in it" — one marker, not one per container, because every container
+    here shares the location's single coordinate and eighty stacked discs would
+    say nothing eighty times.
+
+    Inbound volume is *not* a second marker. It would land on exactly the same
+    coordinate as the first and, more to the point, the page already states it in
+    words beside the tab that lists it — a duplicate on the map would be read as
+    extra traffic rather than the same traffic seen twice.
+
+    An empty collection when the location has no coordinates. The page says so in
+    words instead; see the coordinate status on the workspace header.
+    """
+    properties = {
+        "object_type": "map_position",
+        "position_class": "physical",
+        "position_class_label": str(_("Physical location")),
+        "is_current": True,
+        "is_destination": False,
+        "location_id": location.pk,
+        "location_name": location.full_name,
+        "location_unlocode": location.unlocode,
+        "location_type_label": location.get_location_type_display(),
+        "container_count": container_count,
+        "container_number": "",
+        "place_statement": str(_("At %(place)s") % {"place": location.full_name}),
+        "source_label": "",
+        "detail": "",
+        "occurred_at": None,
+        "occurred_at_display": "",
+        "age_display": "",
+        "arrival_state": "",
+        "arrival_state_label": "",
+        "arrival_state_counts": [],
+        "overdue_count": 0,
+        "eta_display": "",
+        "destination_label": "",
+        "panel_url": "",
+        "container_url": "",
+    }
+    point = _point(location.longitude, location.latitude, properties)
+    return feature_collection([point] if point is not None else [])
+
+
+def _position_point(position) -> dict:
+    """One canonical marker for a single container.
+
+    Built as a group of one rather than with its own property builder, so a marker
+    on the Container Workspace and the same marker on the Control Tower carry
+    identical properties and the browser needs one set of layers for both.
+    """
+    from .map_positions import MapLocationGroup
+
+    group = MapLocationGroup(
+        position_class=position.position_class,
+        # Non-None: only plottable positions reach here, and those have a location.
+        location=position.location,
+        positions=[position],
+    )
+    return _group_point(group)
+
+
+def _class_statement(group) -> str:
+    """The place in words for a marker covering several containers."""
+    from .map_positions import PositionClass
+
+    if group.position_class == PositionClass.DESTINATION:
+        return str(_("Bound for %(place)s") % {"place": group.place_label})
+    if group.position_class == PositionClass.TRACKING:
+        return str(_("Last reported at %(place)s") % {"place": group.place_label})
+    return str(_("At %(place)s") % {"place": group.place_label})
 
 
 def _event_point(event: TrackingEvent, *, container_number: str = "") -> dict | None:
@@ -301,19 +377,6 @@ def _line(events: list[TrackingEvent], line_type: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def _position_properties(position) -> dict:
-    return {
-        "position_type": position.position_type,
-        "position_type_label": position.get_position_type_display(),
-        "position_label": position.label,
-        "unlocode": position.location_unlocode,
-        # True only for a GPS fix of the box itself; a terminal or a vessel is not one.
-        "is_realtime": position.is_realtime,
-        "observed_at": _datetime(position.observed_at),
-        "observed_at_display": _datetime_display(position.observed_at),
-    }
-
-
 def _event_properties(event: TrackingEvent | None) -> dict:
     if event is None:
         return {
@@ -362,19 +425,19 @@ def _datetime_display(value) -> str:
     return date_format(local, "d M Y H:i")
 
 
-def _date(value) -> str | None:
-    return value.isoformat() if value else None
-
-
 def _date_display(value) -> str:
     return date_format(value, "d M Y") if value else ""
 
 
-def object_detail_urls(obj: VisibilityObject) -> dict:
-    """Links for an object's info card — only the ones that actually exist."""
-    urls = {}
-    if obj.kind == ObjectKind.CONTAINER and obj.container is not None:
-        urls["container_url"] = reverse("containers:detail", args=[obj.container.pk])
-    if obj.shipment is not None:
-        urls["shipment_url"] = reverse("shipments:detail", args=[obj.shipment.pk])
-    return urls
+def _age_display(value) -> str:
+    """How long ago, in Django's own wording — e.g. "6 hours ago".
+
+    Rendered server-side so a marker's freshness matches the "x ago" on every panel
+    beside it. There is deliberately no threshold here and no "stale" flag: nothing
+    in the domain defines when a position becomes too old to trust, and inventing a
+    number for the map would be a second, quieter answer to a question the tracking
+    layer already declines to guess at.
+    """
+    if not value:
+        return ""
+    return str(_("%(age)s ago") % {"age": timesince(value)})

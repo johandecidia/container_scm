@@ -14,10 +14,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import cast
 
 from django.db import models
 from django.db.models import TextChoices
 from django.utils.translation import gettext_lazy as _
+
+from apps.scm.containers.choices import LocationResolutionStatus
 
 from .models import TrackingEvent
 
@@ -166,3 +169,58 @@ def get_latest_container_position(team, container) -> ContainerPosition | None:
     if anchor is None:
         anchor = events.order_by("-event_datetime", "-created_at").first()
     return position_from_event(anchor) if anchor else None
+
+
+# Tracking evidence good enough to put a container on a canonical map: observed,
+# dated, and resolved to one of MCR's own locations.
+#
+# Every clause is a refusal rather than a preference, which is why this is stated
+# once and imported rather than assembled at each call site:
+#
+# ``event_time_type=ACTUAL``
+#     A forecast says where a carrier expects the box to be. Drawing it would put a
+#     container at a terminal it has not reached.
+# ``event_datetime`` present
+#     An undated report cannot be compared with anything, so it cannot be "latest",
+#     and a marker with no time carries no freshness for the reader to judge.
+# ``location`` set and ``RESOLVED``
+#     The canonical identity LOC-1 established. AMBIGUOUS leaves ``location`` NULL
+#     by design — the resolver refuses to pick between candidates — and UNRESOLVED
+#     never had one. Neither may produce a canonical marker: the coordinates would
+#     be somebody's guess about which place the carrier meant.
+CANONICAL_TRACKING_EVIDENCE = (
+    models.Q(event_time_type=TrackingEvent.EventTimeType.ACTUAL)
+    & models.Q(event_datetime__isnull=False)
+    & models.Q(location__isnull=False)
+    & models.Q(location_resolution_status=LocationResolutionStatus.RESOLVED)
+)
+
+
+def get_canonical_tracking_positions(team, container_ids) -> dict[int, TrackingEvent]:
+    """The newest canonically-located observation per container, in one query.
+
+    The tracking half of LOC-4's position precedence. What comes back is evidence,
+    not state: the caller decides whether it is allowed to speak for a container,
+    and it never overrides an accepted physical position.
+
+    ``DISTINCT ON`` keeps this to a single round trip however many containers are
+    asked about, and the ``created_at`` tiebreak matches every other "latest event"
+    read in the codebase, so two paths cannot name different events as the newest.
+
+    The canonical location travels with the row — with its parent, since a terminal
+    is labelled inside the port that contains it — because the caller reads a place
+    and a coordinate off every one of these and following the FK per container is
+    how a fleet-wide map grows a query per marker.
+    """
+    container_ids = list(container_ids)
+    if not container_ids:
+        return {}
+    rows = (
+        TrackingEvent.objects.filter(CANONICAL_TRACKING_EVIDENCE, team=team, container_id__in=container_ids)
+        .select_related("location", "location__parent_location", "provider")
+        .order_by("container_id", "-event_datetime", "-created_at")
+        .distinct("container_id")
+    )
+    # Non-NULL: the queryset only asked for events on these containers. The same
+    # cast the other bulk event readers use.
+    return {cast(int, row.container_id): row for row in rows}

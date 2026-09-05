@@ -198,6 +198,33 @@ def get_current_state_movement(team: Team, container: Container) -> ContainerMov
     return get_state_movements(team, container).first()
 
 
+def current_state_movements(team: Team, container_ids) -> dict[int, ContainerMovement]:
+    """The winning state movement for many containers at once, keyed by container id.
+
+    The bulk form of :func:`get_current_state_movement`, for the fleet-wide reads —
+    the operational map, chiefly — where following one query per container would
+    make the page cost grow with the number of boxes on it.
+
+    The ordering is :func:`get_state_movements`' own, restated only in the column
+    list ``DISTINCT ON`` needs; the precedence rule itself is
+    :func:`state_sort_key`'s and is not duplicated. Both paths therefore name the
+    same movement, which matters because this one explains what
+    ``Container.current_location`` says: a caller that picked a different movement
+    would print a source and a time that did not belong to the position beside them.
+    """
+    container_ids = list(container_ids)
+    if not container_ids:
+        return {}
+    rows = (
+        ContainerMovement.objects.filter(team=team, container_id__in=container_ids, affects_current_state=True)
+        .annotate(evidence_strength=_strength_annotation())
+        .select_related("to_location", "to_location__parent_location")
+        .order_by("container_id", "-occurred_at", "-evidence_strength", "-created_at", "-pk")
+        .distinct("container_id")
+    )
+    return {row.container_id: row for row in rows}
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------

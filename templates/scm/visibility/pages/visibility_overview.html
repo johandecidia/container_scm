@@ -27,9 +27,17 @@
 
   <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
-    {# Where things are. Outside the swap, and two thirds of the operational row. #}
+    {% comment %}
+      Where things are. Outside the swap, and two thirds of the operational row.
+
+      The note is doing real work: it says the map answers "where do we know these
+      containers are", which is a narrower question than "where might they be", and
+      it says a marker is a place rather than a fix. An operator who reads a
+      terminal's coordinate as a container's position will eventually go looking
+      for a box in a car park.
+    {% endcomment %}
     <div class="order-4 lg:col-start-1 lg:col-span-2 lg:row-start-3">
-      {% include "scm/visibility/components/map_card.html" with map_mode="overview" map_card_class="scm-panel h-full" map_title=_("Where things are") map_height="h-[26rem]" map_panel_target="#visibility-object-panel" map_note=_("One point per place a carrier last confirmed. Click a point for details.") %}
+      {% include "scm/visibility/components/map_card.html" with map_mode="overview" map_card_class="scm-panel h-full" map_title=_("Where things are") map_height="h-[26rem]" map_panel_target="#visibility-object-panel" map_note=_("One marker per canonical place. Physical locations lead; tracking fills the gaps. Click a marker for the containers.") %}
     </div>
 
     {# Filled by the map module when a point is clicked; collapsed until then. #}

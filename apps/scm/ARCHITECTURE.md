@@ -135,6 +135,7 @@ apps/scm/visibility/
     apps.py         # AppConfig only; no models
     selectors.py    # Read composition over the other apps' read models
     read_models.py  # VisibilityObject and its presentation groupings
+    map_positions.py # Which position a marker may claim, and of what kind
     geojson.py      # The GeoJSON contract for Mapbox
     context.py      # Map context for the shipment and container detail pages
     mapbox.py       # Browser-side Mapbox configuration

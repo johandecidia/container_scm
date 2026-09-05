@@ -1,9 +1,9 @@
 {% load i18n %}
 
 {% comment %}
-  The one map component. Included by the visibility overview, the shipment detail
-  page and the container detail page; the only differences are the mode, the
-  GeoJSON URL and the height.
+  The one map component. Included by the Control Tower, the shipment detail page,
+  the container detail page and the location workspace; the differences are the
+  mode, the GeoJSON URL and the height.
 
   Usage:
     {% include "scm/visibility/components/map_card.html" with
@@ -11,39 +11,40 @@
 
   Reads from context: mapbox, map_mode, map_data_url.
   Optional: map_title, map_height, map_panel_target, map_note, map_card_class
-  (the surrounding panel style, so a dense page can ask for a tighter one).
+  (the surrounding panel style, so a dense page can ask for a tighter one),
+  operational_map (LOC-4's read model, for the filters and the coverage line).
+
+  The legend is the honest part of the map. Three position classes mean three
+  different things and are told apart by shape as well as colour — a filled disc,
+  a hollow diamond, a hollow square — because colour alone excludes readers who
+  cannot distinguish it and dies in a printout. The shapes are drawn in map.js and
+  mirrored here as characters, so the key and the map say the same thing.
 
   Without a Mapbox token the card renders a configuration notice and the rest of
-  the page — timeline, ETA, tracking state — carries on working. The map is an
-  enhancement, and a missing token must never take a page down with it.
+  the page — queues, timeline, ETA, tracking state — carries on working. The map is
+  an enhancement, and a missing token must never take a page down with it.
 {% endcomment %}
 
 <section class="{{ map_card_class|default:'app-card' }}">
-  <div class="flex items-start justify-between gap-4 mb-3">
+  <div class="mb-3 flex items-start justify-between gap-4">
     <div>
       <h2 class="text-lg font-semibold">{{ map_title|default:_("Map") }}</h2>
       {% if map_note %}
-        <p class="text-xs text-base-content/60 mt-0.5">{{ map_note }}</p>
+        <p class="mt-0.5 text-xs text-base-content/60">{{ map_note }}</p>
       {% endif %}
     </div>
 
-    {% comment %}
-      The legend is the honest part of the map: it says that a solid line joins
-      places the carrier confirmed rather than tracing a vessel, and that a dashed
-      one is still a forecast.
-    {% endcomment %}
-    <div class="flex flex-wrap items-center gap-3 text-xs text-base-content/60 shrink-0">
-      {% if map_mode == "overview" %}
-        <span class="inline-flex items-center gap-1">
-          <span class="inline-block w-2.5 h-2.5 rounded-full bg-success"></span>{% translate "On time" %}
-        </span>
-        <span class="inline-flex items-center gap-1">
-          <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>{% translate "Delayed" %}
-        </span>
-        <span class="inline-flex items-center gap-1">
-          <span class="inline-block w-2.5 h-2.5 rounded-full bg-error"></span>{% translate "Exception" %}
-        </span>
-      {% else %}
+    <div class="flex shrink-0 flex-wrap items-center gap-3 text-xs text-base-content/60">
+      <span class="inline-flex items-center gap-1" title="{% translate 'Where we have accepted the container to be' %}">
+        <span class="text-success">●</span>{% translate "Physical" %}
+      </span>
+      <span class="inline-flex items-center gap-1" title="{% translate 'Where a carrier last reported it' %}">
+        <span class="text-info">◇</span>{% translate "Tracking" %}
+      </span>
+      <span class="inline-flex items-center gap-1" title="{% translate 'Where it is going — not where it is' %}">
+        <span class="text-warning">▣</span>{% translate "Destination" %}
+      </span>
+      {% if map_mode != "overview" %}
         <span class="inline-flex items-center gap-1">
           <span class="inline-block w-5 border-t-2 border-teal-700"></span>{% translate "Confirmed events" %}
         </span>
@@ -54,6 +55,41 @@
     </div>
   </div>
 
+  {% if map_mode == "overview" and mapbox.is_configured %}
+    {% comment %}
+      The map's own view state, deliberately separate from the board's filters
+      above it. The board decides which containers the map is about; these decide
+      which classes of position to draw out of that same set, so the map and the
+      list can never describe different fleets.
+
+      "Show destinations" is off by default and is a second question, not more of
+      the first: destination markers say where inbound volume is heading, and
+      counting them as current positions is the error this map exists to avoid.
+
+      Both controls render their state from the parsed filters, so a link that
+      arrives with ?destinations=1 — the one on the Arrivals queue — shows the
+      overlay already switched on rather than a map contradicting its own toggle.
+    {% endcomment %}
+    <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <select
+        name="position"
+        data-scm-map-filter
+        class="select select-xs select-bordered w-auto"
+        aria-label="{% translate 'Position type' %}"
+      >
+        <option value="">{% translate "Physical and tracking" %}</option>
+        {% for value, label in operational_map.position_class_choices %}
+          <option value="{{ value }}" {% if operational_map.filters.selected_position_class == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label class="label cursor-pointer gap-2 py-0">
+        <input type="checkbox" name="destinations" value="1" data-scm-map-filter class="checkbox checkbox-xs checkbox-warning" {% if operational_map.filters.show_destinations %}checked{% endif %}>
+        <span class="label-text text-xs">{% translate "Show destinations" %}</span>
+      </label>
+    </div>
+  {% endif %}
+
   {% if mapbox.is_configured %}
     <div
       data-scm-map
@@ -62,22 +98,26 @@
       data-map-mode="{{ map_mode }}"
       data-map-data-url="{{ map_data_url }}"
       {% if map_panel_target %}data-map-panel-target="{{ map_panel_target }}"{% endif %}
-      class="w-full rounded-box overflow-hidden bg-base-200 {{ map_height|default:'h-96' }}"
+      class="w-full overflow-hidden rounded-box bg-base-200 {{ map_height|default:'h-96' }}"
     ></div>
     {% if map_mode != "overview" %}
-      <p class="text-xs text-base-content/50 mt-2">
-        {% translate "Lines connect the places the carrier reported, in order. They are not a vessel track." %}
+      <p class="mt-2 text-xs text-base-content/50">
+        {% translate "Lines connect the places the carrier reported, in order. They are not a vessel track, and no line is drawn to a destination." %}
       </p>
     {% endif %}
   {% else %}
-    <div class="rounded-box bg-base-200 border border-dashed border-base-300 p-8 text-center {{ map_height|default:'h-96' }} flex flex-col items-center justify-center">
-      <i class="fa fa-map text-4xl text-base-content/20 mb-3"></i>
+    <div class="flex flex-col items-center justify-center rounded-box border border-dashed border-base-300 bg-base-200 p-8 text-center {{ map_height|default:'h-96' }}">
+      <i class="fa fa-map mb-3 text-4xl text-base-content/20"></i>
       <p class="text-sm font-medium text-base-content/70">{% translate "Map not configured" %}</p>
-      <p class="text-xs text-base-content/50 mt-1 max-w-sm">
+      <p class="mt-1 max-w-sm text-xs text-base-content/50">
         {% blocktranslate trimmed %}
           Set MAPBOX_PUBLIC_TOKEN to show the map. Everything else on this page works without it.
         {% endblocktranslate %}
       </p>
     </div>
+  {% endif %}
+
+  {% if operational_map %}
+    {% include "scm/visibility/components/map_coverage.html" with coverage=operational_map.coverage %}
   {% endif %}
 </section>

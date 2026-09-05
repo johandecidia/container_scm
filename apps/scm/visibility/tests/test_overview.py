@@ -16,8 +16,8 @@ from django.utils import timezone
 
 from apps.scm.containers.models import Container
 from apps.scm.shipments.models import Shipment, ShipmentContainer
-from apps.scm.tracking.models import TrackingEvent
-from apps.scm.visibility.geojson import overview_feature_collection
+from apps.scm.visibility.geojson import map_feature_collection
+from apps.scm.visibility.map_positions import PositionClass, get_operational_map
 from apps.scm.visibility.read_models import Health, ObjectKind
 from apps.scm.visibility.selectors import (
     VisibilityFilters,
@@ -27,7 +27,14 @@ from apps.scm.visibility.selectors import (
 )
 from apps.teams.models import Team
 
-from .factories import equipment_type, ingest_maersk_events, make_container, make_user_and_team
+from .factories import (
+    equipment_type,
+    ingest_maersk_events,
+    make_container,
+    make_location,
+    make_user_and_team,
+    resolve_tracking_to,
+)
 
 
 def _container(team, number: str) -> Container:
@@ -80,19 +87,56 @@ class OverviewGroupingTest(TestCase):
         objects = list_visibility_objects(self.team)
         self.assertEqual(len(objects), 2)
 
-    def test_containers_reported_at_the_same_place_share_one_map_point(self):
+    def test_containers_at_the_same_canonical_place_share_one_marker(self):
         """Three identical dots on one terminal tell nobody anything."""
-        features = overview_feature_collection(list_visibility_objects(self.team))["features"]
-        shipment_points = [f for f in features if f["properties"]["object_type"] == ObjectKind.SHIPMENT]
-        self.assertEqual(len(shipment_points), 1)
-        self.assertEqual(shipment_points[0]["properties"]["container_count"], 3)
+        terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        for container in self.on_shipment:
+            resolve_tracking_to(self.team, container, terminal)
 
-    def test_containers_that_have_gone_separate_ways_get_separate_points(self):
-        moved = self.on_shipment[0]
-        TrackingEvent.objects.filter(team=self.team, container=moved).update(location_unlocode="NLRTM")
-        features = overview_feature_collection(list_visibility_objects(self.team))["features"]
-        shipment_points = [f for f in features if f["properties"]["object_type"] == ObjectKind.SHIPMENT]
-        self.assertEqual(len(shipment_points), 2)
+        features = self._map_features()
+
+        self.assertEqual(len(features), 1)
+        self.assertEqual(features[0]["properties"]["container_count"], 3)
+        self.assertEqual(features[0]["properties"]["location_id"], terminal.pk)
+
+    def test_containers_at_different_canonical_places_get_separate_markers(self):
+        terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        rotterdam = make_location(self.team, "Rotterdam", unlocode="NLRTM", latitude="51.949760", longitude="4.144830")
+        resolve_tracking_to(self.team, self.on_shipment[0], rotterdam)
+        for container in self.on_shipment[1:]:
+            resolve_tracking_to(self.team, container, terminal)
+
+        counts = {f["properties"]["location_id"]: f["properties"]["container_count"] for f in self._map_features()}
+
+        self.assertEqual(counts, {terminal.pk: 2, rotterdam.pk: 1})
+
+    def test_a_marker_never_merges_two_position_classes_at_one_place(self):
+        """Physically here and merely reported here are two different claims.
+
+        Collapsing them would produce one marker of three at Oceanterminalen, and
+        the operator would have no way of telling which of the boxes anybody has
+        actually seen.
+        """
+        from .factories import place_container_at
+
+        terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        for container in self.on_shipment:
+            resolve_tracking_to(self.team, container, terminal)
+        place_container_at(self.team, self.on_shipment[0], terminal)
+
+        by_class = {f["properties"]["position_class"]: f["properties"]["container_count"] for f in self._map_features()}
+
+        self.assertEqual(by_class, {PositionClass.PHYSICAL: 1, PositionClass.TRACKING: 2})
+
+    def _map_features(self):
+        team_objects = list_visibility_objects(self.team)
+        return map_feature_collection(get_operational_map(self.team, team_objects))["features"]
 
     def test_statistics_count_shipments_and_containers_separately(self):
         overview = get_visibility_overview(self.team)
