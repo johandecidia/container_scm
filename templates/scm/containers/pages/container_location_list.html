@@ -1,12 +1,23 @@
 {% extends "scm/base.html" %}
 {% load i18n %}
 
+{% comment %}
+  The canonical locations, and below them the external places still waiting on a
+  decision.
+
+  The second panel is here rather than on any one location's page on purpose: an
+  external name that nothing claims is not the property of a location, and the work
+  it implies — deciding which place it is — starts from the list of places. It is
+  only rendered when there is something in it, so a team with nothing unresolved
+  sees no permanent nag.
+{% endcomment %}
+
 {% block app %}
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-2xl font-bold">{% translate "Locations" %}</h1>
       <p class="text-sm text-base-content/60 mt-1">
-        {% translate "Every place containers are recorded. Open one to see what is standing there and what has moved." %}
+        {% translate "Every place containers are recorded. Open one to see what is standing there, what is expected and what has moved." %}
       </p>
     </div>
     <button
@@ -25,6 +36,10 @@
       {% include "scm/containers/partials/container_location_table.html" %}
     </div>
   </section>
+
+  {% if unresolved_locations %}
+    {% include "scm/containers/partials/location_unresolved.html" %}
+  {% endif %}
 
   <div id="modal-container"></div>
 {% endblock %}

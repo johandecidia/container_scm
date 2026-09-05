@@ -7,9 +7,14 @@
   `current_location` points here, counted on read. There is no stored count and
   nothing to keep in sync.
 
-  Expected arrivals are deliberately absent from the header. No reliable
-  relationship connects a location to a shipment's destination yet, and a number
-  here would be the most visible place to put a guess. The Expected tab says why.
+  The canonical identifiers sit under the name: the parent this place is inside, and
+  its UN/LOCODE. The code is shown without any suggestion that it is unique — several
+  places under one port legitimately share one — so it reads as an attribute of this
+  place rather than as its identity.
+
+  Expected arrivals now appear here, and only from canonical destinations. The
+  number is safe to put in a header precisely because it is not matched on names:
+  it counts what somebody said is coming to this location.
 
   Same frame as the container and purchase order headers: back link, identity,
   context, the figures that matter, actions.
@@ -37,7 +42,18 @@
         {% if workspace.place %}
           <span class="text-base-content/30 mx-1">·</span>{{ workspace.place }}
         {% endif %}
+        {% if workspace.unlocode %}
+          <span class="text-base-content/30 mx-1">·</span>
+          <span class="font-mono" title="{% translate 'UN/LOCODE. Several places may share one code.' %}">{{ workspace.unlocode }}</span>
+        {% endif %}
       </p>
+
+      {% if workspace.parent %}
+        <p class="text-xs text-base-content/50 mt-1">
+          {% translate "Inside" %}
+          <a href="{% url 'containers:location_detail' workspace.parent.pk %}" class="link link-hover">{{ workspace.parent.name }}</a>
+        </p>
+      {% endif %}
 
       {% if location.owner_name or location.external_reference %}
         <p class="text-xs text-base-content/50 mt-1">
@@ -55,6 +71,16 @@
             {{ count }} containers currently here
           {% endblocktranslate %}
         </span>
+        {% if workspace.expected.count %}
+          <span class="text-base-content/30 hidden sm:inline">·</span>
+          <span class="text-base-content/70 basis-full sm:basis-auto">
+            {% blocktranslate trimmed count count=workspace.expected.count %}
+              {{ count }} arrival expected
+            {% plural %}
+              {{ count }} arrivals expected
+            {% endblocktranslate %}
+          </span>
+        {% endif %}
         {% if workspace.moved_in_last_week %}
           {# The separator only earns its place when the two phrases share a line. #}
           <span class="text-base-content/30 hidden sm:inline">·</span>

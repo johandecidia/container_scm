@@ -28,4 +28,16 @@ urlpatterns = [
     path("locations/<int:location_id>/", views.container_location_detail, name="location_detail"),
     path("locations/<int:location_id>/edit/", views.container_location_update, name="location_update"),
     path("locations/<int:location_id>/deactivate/", views.container_location_deactivate, name="location_deactivate"),
+    # External identity. Aliases hang off a location because that is what they name,
+    # so the location's id is part of the path and scoping is not optional.
+    path(
+        "locations/<int:location_id>/aliases/add/",
+        views.container_location_alias_create,
+        name="location_alias_create",
+    ),
+    path(
+        "locations/<int:location_id>/aliases/<int:alias_id>/delete/",
+        views.container_location_alias_delete,
+        name="location_alias_delete",
+    ),
 ]

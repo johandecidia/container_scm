@@ -4,7 +4,14 @@ from django import forms
 from django.utils.translation import gettext_lazy as _
 
 from .intake import carrier_choices, parse_and_validate_container_number
-from .models import Container, ContainerLocation, EquipmentType
+from .location_identity import (
+    normalize_alias_source,
+    normalize_country_code,
+    normalize_external_code,
+    normalize_location_name,
+    normalize_unlocode,
+)
+from .models import Container, ContainerLocation, EquipmentType, LocationAlias
 from .utils import parse_container_id, validate_container_id
 
 MAX_PASTED_CONTAINERS = 500
@@ -253,15 +260,37 @@ class PlannedContainerForm(forms.Form):
 
 
 class ContainerLocationForm(forms.ModelForm):
-    """Form for creating or editing a ContainerLocation."""
+    """Form for creating or editing a canonical location.
+
+    ``unlocode`` accepts what somebody actually types — ``segot``, ``SE GOT``,
+    ``SEGOT`` — and canonicalises it before the model sees it. It is declared here
+    rather than taken from the model for exactly that reason: the column holds five
+    characters, and a field inheriting that limit would reject "SE GOT" on length
+    before ``clean_unlocode`` could turn it into the five it holds.
+    """
+
+    unlocode = forms.CharField(
+        label=_("UN/LOCODE"),
+        required=False,
+        # Room for the separators people type, not for a longer code. Anything that
+        # does not canonicalise to a real code is rejected by `clean_unlocode`.
+        max_length=12,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full uppercase", "maxlength": 12}),
+    )
 
     class Meta:
         model = ContainerLocation
         fields = [
             "name",
             "location_type",
+            "parent_location",
+            "unlocode",
+            "country_code",
             "country",
             "city",
+            "latitude",
+            "longitude",
+            "timezone",
             "address",
             "external_reference",
             "owner_name",
@@ -271,10 +300,124 @@ class ContainerLocationForm(forms.ModelForm):
         widgets = {
             "name": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
             "location_type": forms.Select(attrs={"class": "select select-bordered w-full"}),
+            "parent_location": forms.Select(attrs={"class": "select select-bordered w-full"}),
+            "country_code": forms.TextInput(attrs={"class": "input input-bordered w-full uppercase", "maxlength": 2}),
             "country": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
             "city": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "latitude": forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.000001"}),
+            "longitude": forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.000001"}),
+            "timezone": forms.TextInput(
+                attrs={"class": "input input-bordered w-full", "placeholder": "Europe/Stockholm"}
+            ),
             "address": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
             "external_reference": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
             "owner_name": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
             "notes": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
+        }
+
+    def __init__(self, *args, team=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        parent_field = cast(forms.ModelChoiceField, self.fields["parent_location"])
+        parent_field.empty_label = _("— No parent —")
+
+        # A parent has to be one of this team's locations, and it cannot be this
+        # location itself. Scoped on the queryset rather than only in `clean` so a
+        # foreign id is not even offered, and cannot be posted.
+        team = team or (self.instance.team if self.instance and self.instance.team_id else None)
+        queryset = ContainerLocation.objects.none() if team is None else ContainerLocation.objects.filter(team=team)
+        if self.instance and self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        parent_field.queryset = queryset.order_by("name")
+
+        for name in ("country_code", "latitude", "longitude", "timezone", "parent_location"):
+            self.fields[name].required = False
+
+    def clean_unlocode(self) -> str:
+        """Canonicalise the code, or reject it as not being one.
+
+        A value that cannot be canonicalised is an error rather than silently
+        dropped: somebody typing a code into the UN/LOCODE box means to record one,
+        and quietly saving nothing would leave them believing they had.
+        """
+        raw = (self.cleaned_data.get("unlocode") or "").strip()
+        if not raw:
+            return ""
+        normalized = normalize_unlocode(raw)
+        if not normalized:
+            raise forms.ValidationError(
+                _("%(value)s is not a UN/LOCODE. Expected two country letters and three place characters, e.g. SEGOT.")
+                % {"value": raw}
+            )
+        return normalized
+
+    def clean_country_code(self) -> str:
+        raw = (self.cleaned_data.get("country_code") or "").strip()
+        if not raw:
+            return ""
+        normalized = normalize_country_code(raw)
+        if not normalized:
+            raise forms.ValidationError(_("Expected a two-letter ISO country code, e.g. SE."))
+        return normalized
+
+
+class LocationAliasForm(forms.ModelForm):
+    """Form for recording what an external source calls a location.
+
+    ``source`` is a free-text field rather than a dropdown because most valid
+    values are ``TrackingProvider`` codes — rows in the database, added as providers
+    are onboarded — so a fixed list would go stale. Known providers are offered as
+    suggestions through a datalist; the two reserved sources are documented in the
+    field's help text.
+    """
+
+    class Meta:
+        model = LocationAlias
+        fields = ["source", "external_code", "external_name", "latitude", "longitude"]
+        widgets = {
+            "source": forms.TextInput(
+                attrs={
+                    "class": "input input-bordered w-full lowercase",
+                    "list": "alias-source-options",
+                    "placeholder": "traqo",
+                }
+            ),
+            "external_code": forms.TextInput(attrs={"class": "input input-bordered w-full uppercase"}),
+            "external_name": forms.TextInput(
+                attrs={"class": "input input-bordered w-full", "placeholder": "GOTHENBURG"}
+            ),
+            "latitude": forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.000001"}),
+            "longitude": forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.000001"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["source"].help_text = _(
+            "A tracking provider code such as traqo or maersk, or one of: unlocode, internal."
+        )
+        for name in ("external_code", "external_name", "latitude", "longitude"):
+            self.fields[name].required = False
+
+    def clean_source(self) -> str:
+        source = normalize_alias_source(self.cleaned_data.get("source"))
+        if not source:
+            raise forms.ValidationError(_("An alias needs a source."))
+        return source
+
+    def clean(self):
+        """An alias with neither identifier says nothing and is not stored."""
+        cleaned = super().clean()
+        code = normalize_external_code(cleaned.get("external_code"))
+        name = normalize_location_name(cleaned.get("external_name"))
+        if not code and not name:
+            raise forms.ValidationError(_("Give the external code, the external name, or both."))
+        return cleaned
+
+    def alias_data(self) -> dict:
+        """The cleaned values, for ``create_location_alias``."""
+        return {
+            "source": self.cleaned_data["source"],
+            "external_code": self.cleaned_data.get("external_code") or "",
+            "external_name": self.cleaned_data.get("external_name") or "",
+            "latitude": self.cleaned_data.get("latitude"),
+            "longitude": self.cleaned_data.get("longitude"),
         }

@@ -52,6 +52,17 @@
         :aria-selected="tab === 'activity'"
         @click="show('activity')"
       >{% translate "Activity" %}</button>
+      <button
+        type="button" role="tab" class="tab whitespace-nowrap"
+        :class="tab === 'names' && 'tab-active'"
+        :aria-selected="tab === 'names'"
+        @click="show('names')"
+      >
+        {% translate "External names" %}
+        {% if workspace.alias_count %}
+          <span class="badge badge-ghost badge-sm ml-1">{{ workspace.alias_count }}</span>
+        {% endif %}
+      </button>
     </div>
 
     {# ------------------------------------------------------------------ #}
@@ -72,20 +83,12 @@
     </div>
 
     {# ------------------------------------------------------------------ #}
-    {# Expected — what is on its way, or why we cannot say.               #}
+    {# Expected — what is canonically routed here.                        #}
     {# ------------------------------------------------------------------ #}
     <div x-show="tab === 'expected'" role="tabpanel" x-cloak>
       <section class="scm-panel">
-        {% include "scm/components/section_header.html" with title=_("Expected arrivals") %}
-        {% include "scm/containers/partials/location_expected_note.html" %}
-        <p class="text-xs text-base-content/40 mt-4 pt-4 border-t border-base-300">
-          {% blocktranslate trimmed %}
-            This tab will list containers routed to this location once a shipment's
-            destination can be resolved to a location record. Until then no count is
-            shown here, because a count matched on place names would be confidently
-            wrong.
-          {% endblocktranslate %}
-        </p>
+        {% include "scm/components/section_header.html" with title=_("Expected arrivals") count=workspace.expected.count %}
+        {% include "scm/containers/partials/location_expected.html" %}
       </section>
     </div>
 
@@ -94,6 +97,16 @@
     {# ------------------------------------------------------------------ #}
     <div x-show="tab === 'activity'" role="tabpanel" x-cloak>
       {% include "scm/containers/partials/location_activity.html" %}
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# External names — what providers call this place.                   #}
+    {# ------------------------------------------------------------------ #}
+    <div x-show="tab === 'names'" role="tabpanel" x-cloak>
+      <section class="scm-panel">
+        {% include "scm/components/section_header.html" with title=_("External names") count=workspace.alias_count %}
+        {% include "scm/containers/partials/location_aliases.html" with aliases=workspace.aliases %}
+      </section>
     </div>
   </div>
 

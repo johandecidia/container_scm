@@ -9,8 +9,9 @@
 
   Expected arrivals get a panel here rather than being hidden, because "nothing is
   expected" and "we cannot tell you what is expected" are different answers and the
-  second one is the true one today. It says so in one sentence and points at the
-  Arrivals queue, which does answer the question for the fleet as a whole.
+  first one is now the true one: the set comes from canonical destinations, so an
+  empty list means nothing is routed here rather than that the question is
+  unanswerable.
 {% endcomment %}
 
 <div class="flex flex-col gap-4">
@@ -42,11 +43,11 @@
     </section>
 
     {# ---------------------------------------------------------------- #}
-    {# Expected arrivals — or why there is no honest number.            #}
+    {# Expected arrivals, from canonical destinations only.             #}
     {# ---------------------------------------------------------------- #}
     <section class="scm-panel">
-      {% include "scm/components/section_header.html" with title=_("Expected arrivals") %}
-      {% include "scm/containers/partials/location_expected_note.html" %}
+      {% include "scm/components/section_header.html" with title=_("Expected arrivals") count=workspace.expected.count %}
+      {% include "scm/containers/partials/location_expected.html" %}
     </section>
   </div>
 

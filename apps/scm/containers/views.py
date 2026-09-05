@@ -1,6 +1,7 @@
 # Container views — request handling, response rendering, form handling only.
 # Business logic belongs in services.py; queries belong in selectors.py.
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -21,18 +22,28 @@ from .discovery import (
     get_planned_containers,
     run_discovery_for_team,
 )
-from .forms import ContainerForm, ContainerLocationForm, PlannedContainerForm
-from .models import Container, ContainerLocation, PlannedContainer, PlannedContainerStatus
+from .forms import ContainerForm, ContainerLocationForm, LocationAliasForm, PlannedContainerForm
+from .models import Container, ContainerLocation, LocationAlias, PlannedContainer, PlannedContainerStatus
 from .selectors import (
     filter_containers,
     get_active_equipment_types,
+    get_alias_source_suggestions,
     get_container_workspace,
+    get_location_aliases,
     get_location_inventory,
     get_location_overview_movements,
     get_location_workspace,
     get_team_locations_with_counts,
+    get_unresolved_external_locations,
 )
-from .services import create_location, delete_container, update_container, update_location
+from .services import (
+    create_location,
+    create_location_alias,
+    delete_container,
+    delete_location_alias,
+    update_container,
+    update_location,
+)
 
 CONTAINERS_PER_PAGE = 25
 
@@ -290,13 +301,22 @@ def planned_container_run_discovery(request):
 
 @scm_login_required
 def container_location_list(request):
-    """List all container locations with container counts."""
+    """The canonical locations, and the external places still waiting on a decision.
+
+    The unresolved panel is here rather than on a location's own page because that
+    is where it belongs: an external name nothing claims is not the property of any
+    one location, and the work it implies — deciding which place it is — starts from
+    the list of places.
+    """
     team = request.default_team
-    locations = get_team_locations_with_counts(team)
     return render(
         request,
         "scm/containers/pages/container_location_list.html",
-        {"locations": locations, "team_slug": team.slug},
+        {
+            "locations": get_team_locations_with_counts(team),
+            "unresolved_locations": get_unresolved_external_locations(team),
+            "team_slug": team.slug,
+        },
     )
 
 
@@ -333,6 +353,9 @@ def container_location_detail(request, location_id):
         "inventory": page_obj,
         "page_obj": page_obj,
         "overview_movements": get_location_overview_movements(workspace),
+        # The workspace already loaded the aliases; the panel is included with them
+        # rather than the page asking a second time.
+        "alias_source_suggestions": get_alias_source_suggestions(team),
         "equipment_types": get_active_equipment_types(),
         "status_choices": ContainerStatus.choices,
         "inventory_filters": {
@@ -352,7 +375,7 @@ def container_location_create(request):
     """Create a new container location."""
     team = request.default_team
     if request.method == "POST":
-        form = ContainerLocationForm(request.POST)
+        form = ContainerLocationForm(request.POST, team=team)
         if form.is_valid():
             create_location(team=team, data=form.cleaned_data)
             if request.htmx:
@@ -371,7 +394,7 @@ def container_location_create(request):
                 {"form": form, "modal_title": _("New Location"), "form_action": request.path, "team_slug": team.slug},
             )
     else:
-        form = ContainerLocationForm()
+        form = ContainerLocationForm(team=team)
     return render(
         request,
         "scm/containers/partials/container_location_form.html",
@@ -385,7 +408,7 @@ def container_location_update(request, location_id):
     team = request.default_team
     location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
     if request.method == "POST":
-        form = ContainerLocationForm(request.POST, instance=location)
+        form = ContainerLocationForm(request.POST, instance=location, team=team)
         if form.is_valid():
             update_location(location=location, data=form.cleaned_data)
             if request.htmx:
@@ -404,12 +427,84 @@ def container_location_update(request, location_id):
                 {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
             )
     else:
-        form = ContainerLocationForm(instance=location)
+        form = ContainerLocationForm(instance=location, team=team)
     return render(
         request,
         "scm/containers/partials/container_location_form.html",
         {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
     )
+
+
+def _alias_panel(request, team, location):
+    """Re-render the aliases panel for one location.
+
+    Every alias write returns this, so add and remove both leave the page showing
+    the current set without a reload — and there is one template deciding what an
+    alias list looks like.
+    """
+    return render(
+        request,
+        "scm/containers/partials/location_aliases.html",
+        {
+            "location": location,
+            "aliases": get_location_aliases(team=team, location=location),
+            "alias_source_suggestions": get_alias_source_suggestions(team),
+            "team_slug": team.slug,
+        },
+    )
+
+
+@scm_login_required
+def container_location_alias_create(request, location_id):
+    """Record an external name for a location.
+
+    A duplicate is a validation error, not a second row: the unique constraints on
+    (team, source, code) and (team, source, name) are what let the resolver treat an
+    alias hit as certain, so the form has to surface a collision rather than the
+    database raising one.
+    """
+    team = request.default_team
+    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
+
+    if request.method == "POST":
+        form = LocationAliasForm(request.POST)
+        if form.is_valid():
+            try:
+                create_location_alias(team=team, location=location, data=form.alias_data())
+            except ValidationError as error:
+                form.add_error(None, error)
+            else:
+                if request.htmx:
+                    return _alias_panel(request, team, location)
+                messages.success(request, _("Alias added."))
+                return redirect("containers:location_detail", location_id=location.pk)
+    else:
+        form = LocationAliasForm()
+
+    context = {
+        "form": form,
+        "location": location,
+        "modal_title": _("Add alias"),
+        "form_action": request.path,
+        "alias_source_suggestions": get_alias_source_suggestions(team),
+        "team_slug": team.slug,
+    }
+    return render(request, "scm/containers/partials/location_alias_form.html", context)
+
+
+@scm_login_required
+@require_POST
+def container_location_alias_delete(request, location_id, alias_id):
+    """Remove an external name from a location."""
+    team = request.default_team
+    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
+    alias = get_object_or_404(LocationAlias, pk=alias_id, team=team, location=location)
+    delete_location_alias(team=team, alias=alias)
+
+    if request.htmx:
+        return _alias_panel(request, team, location)
+    messages.success(request, _("Alias removed."))
+    return redirect("containers:location_detail", location_id=location.pk)
 
 
 @scm_login_required

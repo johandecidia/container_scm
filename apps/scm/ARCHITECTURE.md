@@ -38,6 +38,42 @@ Nothing here persists a journey, a leg or a gap: all three are computed on read 
 `TrackingEvent` and the container's own location record, so a new event changes the
 answer immediately and there is nothing to reconcile.
 
+### Locations: three concepts that must not collapse
+
+A "location" means three different things in this domain, and conflating any two of
+them produces confidently wrong answers. They are separate models on purpose:
+
+| Concept | Where | What it is |
+|---|---|---|
+| **Identity** | `ContainerLocation` (`containers`) | What MCR considers a place to be. Owned and edited by MCR. |
+| **Evidence** | `TrackingEvent.location_name` / `_unlocode` / coordinates, and `LocationAlias` | What a carrier or provider *said*. Kept verbatim, never rewritten. |
+| **State** | `Container.current_location`, `ContainerMovement` | Where a box is believed to be. |
+
+```
+apps/scm/containers/
+    location_identity.py   # Pure normalisation of codes, names and coordinates
+    location_resolver.py   # external location → canonical location, with a stated method
+    location_workspace.py  # The location detail read model
+```
+
+Three rules hold this together:
+
+**UN/LOCODE is not unique.** Göteborg the port, Oceanterminalen inside it and a
+third terminal beside them are three operational places under `SEGOT`. The column is
+indexed, never constrained.
+
+**The resolver is the only place a place-name rule may live.** Carrier adapters
+produce `NormalisedTrackingEvent`; `tracking/ingestion.py` — the single write path
+for every provider — hands its location to `resolve_location` and stores the answer
+beside the carrier's own wording. No adapter contains a rule about what a place name
+means.
+
+**Ambiguity is an answer.** There is no fuzzy matching: every rule is an exact
+comparison over a canonicalised value, and evidence fitting several canonical
+locations equally well resolves to `AMBIGUOUS` rather than to a guess. The resolver
+never creates a location or an alias, so reading a carrier response cannot grow the
+master data.
+
 ---
 
 ## Composition layers

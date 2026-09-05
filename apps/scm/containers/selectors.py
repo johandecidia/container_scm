@@ -1,8 +1,12 @@
 # Container selectors — all read/query operations.
+from collections.abc import Iterable
+from typing import cast
+
 from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 
 from apps.teams.models import Team
 
+from .choices import LocationAliasSource, LocationResolutionStatus
 from .location_workspace import (
     LocationWorkspace,
     get_location_inventory,
@@ -10,7 +14,7 @@ from .location_workspace import (
     get_location_overview_movements,
     get_location_workspace,
 )
-from .models import Container, ContainerLocation, EquipmentType
+from .models import Container, ContainerLocation, EquipmentType, LocationAlias
 from .utils import container_number_query
 from .workspace import ContainerWorkspace, get_container_workspace
 
@@ -84,7 +88,7 @@ def get_container_by_id(team: Team, container_id: int) -> Container:
 
 def get_team_locations(team: Team, active_only: bool = True) -> QuerySet[ContainerLocation]:
     """Return container locations for a team."""
-    qs = ContainerLocation.objects.filter(team=team)
+    qs = ContainerLocation.objects.filter(team=team).select_related("parent_location")
     if active_only:
         qs = qs.filter(is_active=True)
     return qs.order_by("name")
@@ -92,7 +96,31 @@ def get_team_locations(team: Team, active_only: bool = True) -> QuerySet[Contain
 
 def get_team_locations_with_counts(team: Team) -> QuerySet[ContainerLocation]:
     """Return locations annotated with the current number of containers at each."""
-    return ContainerLocation.objects.filter(team=team).annotate(container_count=Count("containers")).order_by("name")
+    return (
+        ContainerLocation.objects.filter(team=team)
+        .select_related("parent_location")
+        .annotate(container_count=Count("containers"), alias_count=Count("aliases", distinct=True))
+        .order_by("name")
+    )
+
+
+def get_location_aliases(team: Team, location: ContainerLocation) -> QuerySet[LocationAlias]:
+    """Return the external names recorded for one location."""
+    return LocationAlias.objects.filter(team=team, location=location).order_by("source", "external_name")
+
+
+def get_alias_source_suggestions(team: Team) -> list[str]:
+    """Alias sources worth offering: the providers in use, plus the reserved two.
+
+    Suggestions, not a closed list. The alias source field stays free text because a
+    provider is a database row and a fixed enum would go stale the moment one was
+    onboarded — but somebody recording an alias should not have to guess whether the
+    code is ``cma-cgm`` or ``cma_cgm``, so the codes actually in use are offered.
+    """
+    from apps.scm.tracking.models import TrackingSubscription
+
+    in_use = set(TrackingSubscription.objects.filter(team=team).values_list("provider__code", flat=True).distinct())
+    return sorted(code for code in in_use | set(LocationAliasSource.RESERVED) if code)
 
 
 def get_location_subtree_ids(team: Team, location: ContainerLocation) -> list[int]:
@@ -120,6 +148,51 @@ def get_location_subtree_ids(team: Team, location: ContainerLocation) -> list[in
         ids.extend(children)
         frontier = children
     return ids
+
+
+def get_unresolved_external_locations(team: Team, limit: int = 25) -> list[dict]:
+    """External places that carrier evidence names but no canonical location claims.
+
+    The operational bridge between the two layers: each row is a place a provider
+    keeps reporting that MCR has not decided about yet, and the fix for every one of
+    them is to record an alias. Grouped by provider and reported name so a carrier
+    that has said "GOTHENBURG" four hundred times is one row to deal with, not four
+    hundred.
+
+    ``AMBIGUOUS`` rows sit alongside unresolved ones because they need the same
+    action for a different reason — the evidence matched several canonical locations
+    and an alias is what breaks the tie.
+    """
+    from apps.scm.tracking.models import TrackingEvent
+
+    # `.values(...).annotate(...)` yields dicts, which the model-typed stubs for
+    # `values()` do not express. Cast rather than restructure the query.
+    rows = cast(
+        "Iterable[dict]",
+        TrackingEvent.objects.filter(
+            team=team,
+            location_resolution_status__in=(
+                LocationResolutionStatus.UNRESOLVED,
+                LocationResolutionStatus.AMBIGUOUS,
+            ),
+        )
+        .exclude(location_name="")
+        .values("provider__code", "provider__name", "location_name", "location_unlocode", "location_resolution_status")
+        .annotate(event_count=Count("pk"))
+        .order_by("-event_count", "location_name")[:limit],
+    )
+    return [
+        {
+            "provider_code": row["provider__code"],
+            "provider_name": row["provider__name"],
+            "location_name": row["location_name"],
+            "unlocode": row["location_unlocode"],
+            "status": row["location_resolution_status"],
+            "is_ambiguous": row["location_resolution_status"] == LocationResolutionStatus.AMBIGUOUS,
+            "event_count": row["event_count"],
+        }
+        for row in rows
+    ]
 
 
 def filter_containers(
@@ -183,13 +256,16 @@ __all__ = [
     "get_container_by_id",
     "get_container_workspace",
     "get_default_equipment_type",
+    "get_alias_source_suggestions",
     "get_equipment_types",
+    "get_location_aliases",
     "get_location_inventory",
-    "get_location_subtree_ids",
     "get_location_movements",
     "get_location_overview_movements",
+    "get_location_subtree_ids",
     "get_location_workspace",
     "get_team_containers",
     "get_team_locations",
     "get_team_locations_with_counts",
+    "get_unresolved_external_locations",
 ]

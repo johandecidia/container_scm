@@ -1,0 +1,70 @@
+{% load i18n %}
+
+{% comment %}
+  Places carriers keep naming that no canonical location claims.
+
+  Every row here is one decision waiting to be made, and the action is always the
+  same: open the location this evidence belongs to and record an alias for it. The
+  panel does not offer a shortcut that creates a location, because a canonical
+  location is master data somebody should mean to add — a one-click "create from
+  carrier text" is how a location list ends up with four spellings of Göteborg in it.
+
+  Rows are grouped by provider and reported name, so a carrier that has said
+  "GOTHENBURG" four hundred times is one line of work rather than four hundred. The
+  count is how much evidence is currently unattached, not a severity.
+
+  Ambiguous rows sit alongside unresolved ones. They need the same action for a
+  different reason: the evidence matched several canonical locations, and an alias is
+  what breaks the tie.
+{% endcomment %}
+
+<section class="app-card mt-6">
+  {% include "scm/components/section_header.html" with title=_("Unmatched carrier locations") count=unresolved_locations|length %}
+
+  <p class="text-sm text-base-content/60 mb-3">
+    {% blocktranslate trimmed %}
+      Places tracking evidence names that no location here claims. Open the location
+      each one belongs to and add it as an external name.
+    {% endblocktranslate %}
+  </p>
+
+  <div class="overflow-x-auto">
+    <table class="table table-sm w-full">
+      <thead>
+        <tr>
+          <th>{% translate "Reported name" %}</th>
+          <th>{% translate "UN/LOCODE" %}</th>
+          <th>{% translate "Source" %}</th>
+          <th>{% translate "Why" %}</th>
+          <th class="text-right">{% translate "Events" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in unresolved_locations %}
+          <tr>
+            <td class="text-sm font-medium">{{ row.location_name }}</td>
+            <td class="text-sm font-mono text-base-content/60">{{ row.unlocode|default:"—" }}</td>
+            <td><span class="badge badge-ghost badge-sm font-mono">{{ row.provider_code }}</span></td>
+            <td class="text-sm">
+              {% if row.is_ambiguous %}
+                <span class="badge badge-warning badge-sm" title="{% translate 'This matched several locations, so nothing was chosen.' %}">
+                  {% translate "Ambiguous" %}
+                </span>
+              {% else %}
+                <span class="text-base-content/50">{% translate "No match" %}</span>
+              {% endif %}
+            </td>
+            <td class="text-sm text-right tabular-nums">{{ row.event_count }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="text-xs text-base-content/40 mt-3 pt-3 border-t border-base-300">
+    {% blocktranslate trimmed %}
+      Unmatched evidence is still stored in full and still shown on container
+      timelines. Only the link to a location is missing.
+    {% endblocktranslate %}
+  </p>
+</section>
