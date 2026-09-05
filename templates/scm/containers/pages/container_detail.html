@@ -79,7 +79,16 @@
         and the tracking panel below it are what carriers say, which is a different
         kind of claim and is kept visually separate for exactly that reason.
       {% endcomment %}
-      {% include "scm/containers/partials/container_physical_state.html" %}
+      {% comment %}
+        Physical state and inbound progress side by side: where the box is, and how
+        far it has got towards where it was booked to. Two different questions — see
+        the arrival panel's own comment — and the second one is absent entirely for a
+        box with no inbound shipment, which is why it is not given its own row.
+      {% endcomment %}
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        {% include "scm/containers/partials/container_physical_state.html" %}
+        {% include "scm/containers/partials/container_arrival_lifecycle.html" %}
+      </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {% include "scm/containers/partials/container_journey_summary.html" %}

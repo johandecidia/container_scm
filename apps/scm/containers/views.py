@@ -264,11 +264,14 @@ def container_record_movement(request, container_id):
                 messages.success(request, _("Movement recorded."))
                 return redirect("containers:detail", container_id=container.pk)
     else:
+        initial = {"occurred_at": timezone.localtime().strftime("%Y-%m-%dT%H:%M")}
+        if (destination := _inbound_destination_id(team, container, requested_type)) is not None:
+            initial["to_location"] = destination
         form = ContainerMovementForm(
             team=team,
             container=container,
             movement_type=requested_type,
-            initial={"occurred_at": timezone.localtime().strftime("%Y-%m-%dT%H:%M")},
+            initial=initial,
         )
 
     return render(
@@ -282,6 +285,38 @@ def container_record_movement(request, container_id):
             "team_slug": team.slug,
         },
     )
+
+
+def _inbound_destination_id(team, container, movement_type: str) -> int | None:
+    """The canonical place this box is inbound to, for prefilling a receipt.
+
+    Only for a receipt, and only a *default*: receiving is the movement whose
+    destination is knowable in advance, because the shipment already says where the
+    box was booked to. A gate-in can happen anywhere on the way, and offering the
+    booked destination for one would put a guess in the field.
+
+    Read through the arrival lifecycle rather than from ``destination_location``
+    directly, so the field is prefilled with the same place the lifecycle will judge
+    the resulting movement against. Falls back to nothing rather than to the
+    container's current location — a box standing at the wrong depot should not have
+    that depot suggested as where it is being received.
+    """
+    if movement_type != MovementType.RECEIVED:
+        return None
+
+    from apps.scm.shipments.models import ShipmentContainer
+    from apps.scm.visibility.arrival_lifecycle import get_container_arrival_lifecycle
+
+    workspace_shipment = (
+        ShipmentContainer.objects.filter(container=container, shipment__team=team)
+        .select_related("shipment", "shipment__destination_location")
+        .order_by("-created_at")
+        .first()
+    )
+    if workspace_shipment is None:
+        return None
+    lifecycle = get_container_arrival_lifecycle(team, container, workspace_shipment.shipment)
+    return lifecycle.destination.pk if lifecycle.destination is not None else None
 
 
 # ---------------------------------------------------------------------------

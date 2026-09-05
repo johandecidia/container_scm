@@ -35,6 +35,26 @@
         <i class="fa fa-arrow-right-to-bracket text-xs"></i>
         {% translate "Gate in" %}
       </button>
+      {% comment %}
+        Receiving is its own event, not a side effect of gating in. A gate-in says
+        the box entered the facility; a receipt says somebody took it into their
+        records, and a depot that does both records both — one button each, so the
+        history says what actually happened rather than what usually follows.
+
+        The modal opens with the inbound destination already chosen where there is
+        one; it stays editable, because a box can be received somewhere other than
+        where it was booked to and that is a fact worth being able to record.
+      {% endcomment %}
+      <button
+        type="button"
+        class="btn btn-xs btn-outline"
+        hx-get="{% url 'containers:record_movement' container.pk %}?type=received"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-clipboard-check text-xs"></i>
+        {% translate "Receive" %}
+      </button>
       {% if workspace.has_physical_location %}
         <button
           type="button"
