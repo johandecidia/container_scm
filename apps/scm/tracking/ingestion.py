@@ -29,6 +29,17 @@ Location resolution
     its evidence intact and no canonical link. A resolver that raised would lose
     real tracking data over master data that is merely incomplete, so it is called
     defensively and a failure costs the link, not the event.
+
+Physical interpretation
+    A stored event is offered to
+    :func:`apps.scm.tracking.physical_movements.interpret_tracking_event_safely`,
+    which decides — for the very few event types that say so unambiguously — whether
+    it also describes a physical movement.
+
+    This module does not decide that, and must not. Ingestion's job is to record
+    what a carrier said; whether what it said becomes MCR's belief about where a box
+    is belongs to one place, and that place is the interpretation layer. The call is
+    here only because this is the single write path every provider passes through.
 """
 
 from __future__ import annotations
@@ -44,6 +55,7 @@ from django.utils import timezone
 from apps.scm.containers.location_resolver import LocationQuery, LocationResolution, resolve_location
 
 from .models import TrackingEvent
+from .physical_movements import interpret_tracking_event_safely
 from .statuses import (
     normalize_dcsa_event_type,
     normalize_event_time_type,
@@ -244,6 +256,11 @@ def persist_normalised_event(
     Idempotent: the same carrier event processed any number of times yields one
     row. A concurrent writer that wins the race is detected through the unique
     constraint and its row is returned instead.
+
+    A stored event is then offered to the physical interpretation layer, on refresh
+    as well as on first sight — a carrier that corrects an event's place, or an
+    operator who records the alias that finally resolves it, should see the movement
+    appear on the next sync rather than never.
     """
     reference = normalised.container_number or (subscription.tracking_reference if subscription else "")
     fingerprint = build_event_fingerprint(
@@ -269,7 +286,9 @@ def persist_normalised_event(
         raw_payload=raw_payload,
         resolution=resolve_event_location(team=team, provider_code=provider.code, normalised=normalised),
     )
-    return upsert_event(team=team, provider=provider, fingerprint=fingerprint, defaults=defaults)
+    event, created = upsert_event(team=team, provider=provider, fingerprint=fingerprint, defaults=defaults)
+    interpret_tracking_event_safely(team, event)
+    return event, created
 
 
 def upsert_event(
