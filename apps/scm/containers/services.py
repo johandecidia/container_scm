@@ -1,29 +1,40 @@
 # Container services — all business logic and write operations.
-from django.utils import timezone
-
+#
+# Physical position is not decided here. Every service below that changes where a
+# container is delegates to `movements.record_container_movement`, which owns the
+# validation, the precedence rules and the projection onto
+# `Container.current_location`. See movements.py.
 from apps.teams.models import Team
 from apps.users.models import CustomUser
 
 from .choices import LocationSource, MovementType
 from .models import Container, ContainerLocation, ContainerMovement, LocationAlias
+from .movements import record_container_movement
 
 
 def create_container(team: Team, user: CustomUser, data: dict) -> Container:
-    """Create a new container belonging to the given team."""
+    """Create a new container belonging to the given team.
+
+    A container created with a location gets a ``CREATED`` movement for it, so the
+    position it starts with has the same audit trail as every one that follows. The
+    location is written by the projection rather than by the insert, which is why it
+    is held back and recorded afterwards.
+    """
+    data = dict(data)
+    location = data.pop("current_location", None)
     container = Container.objects.create(
         team=team,
         created_by=user,
         updated_by=user,
         **data,
     )
-    if container.current_location_id:
-        ContainerMovement.objects.create(
+    if location is not None:
+        record_container_movement(
             team=team,
             container=container,
-            from_location=None,
-            to_location=container.current_location,
             movement_type=MovementType.CREATED,
-            occurred_at=container.created_at or timezone.now(),
+            to_location=location,
+            occurred_at=container.created_at,
             source=container.location_source or LocationSource.MANUAL,
         )
     return container
@@ -32,28 +43,30 @@ def create_container(team: Team, user: CustomUser, data: dict) -> Container:
 def update_container(container: Container, user: CustomUser, data: dict) -> Container:
     """Update the given container and record who made the change.
 
-    Creates a ContainerMovement when current_location changes.
+    A location change goes through the movement service rather than being written
+    onto the row: an edit that moves a box is a physical movement, and recording it
+    as one is what keeps the history able to explain the current position. The rest
+    of the edit is an ordinary field update.
     """
+    data = dict(data)
+    moves = "current_location" in data
+    new_location = data.pop("current_location", None)
     old_location_id = container.current_location_id
+
     for field, value in data.items():
         setattr(container, field, value)
     container.updated_by = user
     container.save()
 
-    new_location_id = container.current_location_id
-    if new_location_id != old_location_id:
-        ContainerMovement.objects.create(
+    new_location_id = new_location.pk if new_location is not None else None
+    if moves and new_location_id != old_location_id:
+        record_container_movement(
             team=container.team,
             container=container,
-            from_location_id=old_location_id,
-            to_location_id=new_location_id,
-            movement_type=MovementType.POSITION_UPDATE,
-            occurred_at=timezone.now(),
+            movement_type=MovementType.MANUAL_ADJUSTMENT,
+            to_location=new_location,
             source=container.location_source or LocationSource.MANUAL,
         )
-        container.last_location_update = timezone.now()
-        container.save(update_fields=["last_location_update"])
-
     return container
 
 
@@ -66,20 +79,19 @@ def set_container_location(
     occurred_at=None,
     notes: str = "",
 ) -> ContainerMovement:
-    """Set a container's current location and record the movement."""
-    old_location = container.current_location
-    container.current_location = location
-    container.location_source = source
-    container.last_location_update = occurred_at or timezone.now()
-    container.save(update_fields=["current_location", "location_source", "last_location_update"])
+    """Set a container's current location and record the movement.
 
-    return ContainerMovement.objects.create(
+    Kept for its callers, and now a thin call onto the state transition service. The
+    behaviour it gains from that is the point: the location is set only if this
+    movement is actually the container's newest accepted one, so passing a
+    historical ``occurred_at`` records history instead of rewriting the present.
+    """
+    return record_container_movement(
         team=container.team,
         container=container,
-        from_location=old_location,
-        to_location=location,
         movement_type=movement_type,
-        occurred_at=occurred_at or timezone.now(),
+        to_location=location,
+        occurred_at=occurred_at,
         source=source,
         notes=notes,
     )

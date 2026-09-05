@@ -1,3 +1,5 @@
+from enum import IntEnum
+
 from django.db.models import TextChoices
 from django.utils.translation import gettext_lazy as _
 
@@ -128,7 +130,21 @@ class LocationResolutionMethod(TextChoices):
 
 
 class LocationSource(TextChoices):
+    """Who claims a container is where a movement says it is.
+
+    The value is provenance, not confidence: it says who made the claim, and
+    ``apps.scm.containers.movements`` turns that into the precedence that decides
+    which claim becomes ``Container.current_location``.
+
+    ``DEPOT`` is separate from ``MANUAL`` because they are different claims. A
+    manual movement is an operator typing what they saw; a depot movement is a yard
+    system reporting a receipt it handled. Both are direct observations of the box —
+    they rank together — but merging them would lose which one to ask about a
+    disputed row.
+    """
+
     MANUAL = "manual", _("Manual")
+    DEPOT = "depot", _("Depot")
     TRACKING_EVENT = "tracking_event", _("Tracking Event")
     SHIPMENT_UPDATE = "shipment_update", _("Shipment Update")
     SUPPLIER_DELIVERY = "supplier_delivery", _("Supplier Delivery")
@@ -136,7 +152,85 @@ class LocationSource(TextChoices):
     API = "api", _("API")
 
 
+class EvidenceStrength(IntEnum):
+    """How direct a claim about a container's position is.
+
+    Three ranks, not a score. A number in between would invent a precision the
+    domain does not have — the difference between an operator who saw the box and a
+    carrier who inferred it from a vessel manifest is a difference in *kind*.
+
+    ``OBSERVED``
+        Somebody physically handled the container: an operator recording a gate
+        move, a depot reporting a receipt, a supplier delivery being signed for.
+    ``RECORDED``
+        One of MCR's own systems asserting a position without anybody having seen
+        the box — an import file, an API write, a shipment update.
+    ``INFERRED``
+        A carrier's report, interpreted by us into a movement. Real evidence, and
+        the weakest thing here.
+
+    Used only to break ties at an identical ``occurred_at``. Time leads; see
+    ``apps.scm.containers.movements``.
+    """
+
+    INFERRED = 0
+    RECORDED = 1
+    OBSERVED = 2
+
+
+# The rank of each provenance. An unrecognised or blank source — a legacy row, or a
+# value written before this table existed — is RECORDED: it came from one of our own
+# systems, which is neither an observation nor a carrier's guess.
+EVIDENCE_STRENGTH_BY_SOURCE: dict[str, EvidenceStrength] = {
+    LocationSource.MANUAL: EvidenceStrength.OBSERVED,
+    LocationSource.DEPOT: EvidenceStrength.OBSERVED,
+    LocationSource.SUPPLIER_DELIVERY: EvidenceStrength.OBSERVED,
+    LocationSource.IMPORT: EvidenceStrength.RECORDED,
+    LocationSource.SHIPMENT_UPDATE: EvidenceStrength.RECORDED,
+    LocationSource.API: EvidenceStrength.RECORDED,
+    LocationSource.TRACKING_EVENT: EvidenceStrength.INFERRED,
+}
+
+DEFAULT_EVIDENCE_STRENGTH = EvidenceStrength.RECORDED
+
+OBSERVED_LOCATION_SOURCES = frozenset(
+    source for source, strength in EVIDENCE_STRENGTH_BY_SOURCE.items() if strength == EvidenceStrength.OBSERVED
+)
+
+
+def evidence_strength(source: str) -> EvidenceStrength:
+    """Return how direct a claim made by *source* is."""
+    return EVIDENCE_STRENGTH_BY_SOURCE.get(source, DEFAULT_EVIDENCE_STRENGTH)
+
+
 class MovementType(TextChoices):
+    """What kind of physical move a :class:`ContainerMovement` records.
+
+    The first eight values predate LOC-2 and are kept because rows use them:
+    changing a stored value would silently reclassify history. ``POSITION_UPDATE``
+    remains the honest label for "the location changed and nobody said how".
+
+    ``GATE_IN``, ``GATE_OUT``, ``RECEIVED`` and ``TRANSFER`` are LOC-2's additions
+    and are the four an operator actually performs. Their from/to semantics are
+    defined once, in ``apps.scm.containers.movements``, and nothing else may
+    restate them.
+
+    **There are deliberately no carrier event names here.** ``VESSEL_ARRIVED``,
+    ``BOOKED`` and the rest are :class:`~apps.scm.tracking.models.TrackingEvent`
+    types — external evidence about a journey. A movement is an *accepted* physical
+    change of position, and the two must not become the same vocabulary, because
+    then the difference between what a carrier said and what we accepted would stop
+    being visible. ``LOADED_ON_VESSEL`` and ``DISCHARGED_AT_PORT`` are the surviving
+    exceptions, kept only because existing rows carry them.
+    """
+
+    # LOC-2 operational movements.
+    GATE_IN = "gate_in", _("Gate In")
+    GATE_OUT = "gate_out", _("Gate Out")
+    RECEIVED = "received", _("Received")
+    TRANSFER = "transfer", _("Transfer")
+
+    # Pre-existing values, kept for the rows that already use them.
     CREATED = "created", _("Created")
     POSITION_UPDATE = "position_update", _("Position Update")
     LOADED_ON_VESSEL = "loaded_on_vessel", _("Loaded on Vessel")

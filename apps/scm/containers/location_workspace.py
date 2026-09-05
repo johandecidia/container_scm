@@ -251,15 +251,14 @@ def get_location_movements(team: Team, location: ContainerLocation, limit: int =
     Both directions, because a location's history is what came and what went. The
     row itself says which: a movement whose ``to_location`` is this one arrived, and
     one whose ``from_location`` is this one left.
-    """
-    from django.db.models import Q
 
-    return list(
-        ContainerMovement.objects.filter(team=team)
-        .filter(Q(to_location=location) | Q(from_location=location))
-        .select_related("container", "container__equipment_type", "from_location", "to_location")
-        .order_by("-occurred_at", "-created_at")[:limit]
-    )
+    The query itself lives in ``movements``, beside the rest of the physical state
+    model, so a location's activity and a container's history cannot come to mean
+    different things.
+    """
+    from .movements import location_activity
+
+    return location_activity(team=team, location=location, limit=limit)
 
 
 def get_location_overview_movements(workspace: LocationWorkspace) -> list:

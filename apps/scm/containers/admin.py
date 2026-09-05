@@ -60,7 +60,16 @@ class ContainerAdmin(admin.ModelAdmin):
 
 @admin.register(ContainerMovement)
 class ContainerMovementAdmin(admin.ModelAdmin):
-    list_display = ["container", "movement_type", "from_location", "to_location", "occurred_at", "source", "team"]
-    list_filter = ["movement_type", "source", "team"]
-    search_fields = ["container__owner_code", "container__serial_number", "notes"]
+    list_display = [
+        "container",
+        "movement_type",
+        "from_location",
+        "to_location",
+        "occurred_at",
+        "source",
+        "affects_current_state",
+        "team",
+    ]
+    list_filter = ["movement_type", "source", "affects_current_state", "team"]
+    search_fields = ["container__owner_code", "container__serial_number", "gate_name", "notes"]
     readonly_fields = ["created_at", "updated_at"]

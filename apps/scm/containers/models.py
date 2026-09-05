@@ -6,6 +6,7 @@ from django.utils.translation import gettext_lazy as _
 from apps.teams.models import BaseTeamModel
 
 from .choices import (
+    OBSERVED_LOCATION_SOURCES,
     ColorSystem,
     ContainerCategory,
     ContainerCondition,
@@ -604,7 +605,45 @@ class PlannedContainer(BaseTeamModel):
 
 
 class ContainerMovement(BaseTeamModel):
-    """Records a container's movement between locations, forming a position history."""
+    """One accepted physical movement of a container. The audit trail of position.
+
+    Three layers describe where a box is, and a value in one never silently becomes
+    a value in another:
+
+    :class:`~apps.scm.tracking.models.TrackingEvent`
+        External evidence. A carrier saying "DISCHARGED — GOTHENBURG". Stored
+        verbatim, never authoritative on its own.
+    ``ContainerMovement``
+        An accepted movement. Somebody — an operator, a depot, or the conservative
+        interpretation layer in ``apps.scm.tracking.physical_movements`` — decided
+        this really happened to the box.
+    ``Container.current_location``
+        A *projection* of the movement history, not an independent field. See
+        :func:`apps.scm.containers.movements.project_container_state`.
+
+    The invariant the projection maintains:
+
+    .. code-block:: text
+
+        Container.current_location
+            = the location implied by the winning state-affecting movement
+
+    ``affects_current_state`` is what makes a movement a claim about position rather
+    than a note in the history. A movement recorded purely for the record — evidence
+    somebody wants kept but does not want acted on — sets it False and is skipped by
+    the projection entirely. It does not mean "this movement won"; whether it won is
+    derived by comparing it against the rest of the history, and can change when a
+    later, or a stronger, movement arrives.
+
+    ``gate_name`` is the gate a box passed through, e.g. "John Evans". A gate is a
+    point a container passes, not a place it is at, so it is a string on the
+    movement rather than a :class:`ContainerLocation` — inventing a canonical
+    location per gate would put a container "at" somewhere it can never rest.
+
+    Nothing writes rows here directly. Every writer goes through
+    :func:`apps.scm.containers.movements.record_container_movement`, which is the
+    only place validation, precedence and the projection live.
+    """
 
     container = models.ForeignKey(
         Container,
@@ -664,6 +703,18 @@ class ContainerMovement(BaseTeamModel):
         blank=True,
         related_name="container_movements",
         verbose_name=_("related tracking event"),
+        help_text=_("The carrier event this movement was interpreted from, when it came from one."),
+    )
+    gate_name = models.CharField(
+        _("gate"),
+        max_length=100,
+        blank=True,
+        help_text=_("The gate the container passed through, e.g. John Evans. Not a location."),
+    )
+    affects_current_state = models.BooleanField(
+        _("affects current state"),
+        default=True,
+        help_text=_("Whether this movement is a claim about where the container is, or history only."),
     )
     notes = models.TextField(_("notes"), blank=True)
 
@@ -672,9 +723,50 @@ class ContainerMovement(BaseTeamModel):
         indexes = [
             models.Index(fields=["team", "container"]),
             models.Index(fields=["team", "occurred_at"]),
+            # The projection's own query: this container's state-affecting history,
+            # newest physical event first.
+            models.Index(fields=["team", "container", "-occurred_at"]),
+            # "Has anything arrived at this location", for Expected Arrivals.
+            models.Index(fields=["team", "to_location", "movement_type"]),
+        ]
+        constraints = [
+            # One tracking event yields at most one movement. This is what makes
+            # automatic interpretation idempotent: re-ingesting a carrier event
+            # cannot add a second movement for it, whatever the timestamps say.
+            models.UniqueConstraint(
+                fields=["related_tracking_event"],
+                condition=models.Q(related_tracking_event__isnull=False),
+                name="unique_movement_per_tracking_event",
+            ),
         ]
         verbose_name = _("Container Movement")
         verbose_name_plural = _("Container Movements")
 
     def __str__(self) -> str:
         return f"{self.container} → {self.to_location} ({self.occurred_at:%Y-%m-%d})"
+
+    @property
+    def is_tracking_derived(self) -> bool:
+        """True when a carrier event, not a person, is behind this movement."""
+        return self.source == LocationSource.TRACKING_EVENT or self.related_tracking_event_id is not None
+
+    @property
+    def is_observed(self) -> bool:
+        """True when somebody physically handled or saw the box.
+
+        The distinction the Activity tab draws: an operator's gate move and a
+        carrier's report are different kinds of claim, and a reader has to be able
+        to tell which they are looking at.
+        """
+        return self.source in OBSERVED_LOCATION_SOURCES
+
+    @property
+    def resolved_location_id(self) -> int | None:
+        """Where this movement leaves the container, as an id.
+
+        Always ``to_location``. Every movement type expresses its destination the
+        same way, including ``GATE_OUT``: a departure to nowhere recorded is
+        ``to_location=None``, which is the honest answer, and a departure to a known
+        place names it. There is no second field saying where the box ended up.
+        """
+        return self.to_location_id

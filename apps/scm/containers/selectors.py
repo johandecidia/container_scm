@@ -15,6 +15,7 @@ from .location_workspace import (
     get_location_workspace,
 )
 from .models import Container, ContainerLocation, EquipmentType, LocationAlias
+from .movements import get_container_movements, get_current_state_movement, get_state_movements
 from .utils import container_number_query
 from .workspace import ContainerWorkspace, get_container_workspace
 
@@ -246,16 +247,19 @@ def filter_containers(
 
 
 # The container and location detail read models live in workspace.py and
-# location_workspace.py; re-exported here so callers keep importing selectors for
-# reads.
+# location_workspace.py, and the physical-state reads in movements.py; re-exported
+# here so callers keep importing selectors for reads.
 __all__ = [
     "ContainerWorkspace",
     "LocationWorkspace",
     "filter_containers",
     "get_active_equipment_types",
     "get_container_by_id",
+    "get_container_movements",
     "get_container_workspace",
+    "get_current_state_movement",
     "get_default_equipment_type",
+    "get_state_movements",
     "get_alias_source_suggestions",
     "get_equipment_types",
     "get_location_aliases",
