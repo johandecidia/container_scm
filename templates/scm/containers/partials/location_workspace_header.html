@@ -48,10 +48,19 @@
         {% endif %}
       </p>
 
-      {% if workspace.parent %}
-        <p class="text-xs text-base-content/50 mt-1">
-          {% translate "Inside" %}
-          <a href="{% url 'containers:location_detail' workspace.parent.pk %}" class="link link-hover">{{ workspace.parent.name }}</a>
+      {% if workspace.hierarchy.has_parent %}
+        {% comment %}
+          The whole path rather than just the parent: "Oceanterminalen" inside
+          "Göteborg" is one fact, but a yard three levels down reads as a mystery
+          without the port at the front of it. Already loaded by the workspace, so
+          this costs no queries. The panel on the Overview tab is the same path.
+        {% endcomment %}
+        <p class="text-xs text-base-content/50 mt-1 flex flex-wrap items-center gap-x-1">
+          <span>{% translate "Inside" %}</span>
+          {% for step in workspace.hierarchy.ancestors %}
+            <a href="{% url 'containers:location_detail' step.pk %}" class="link link-hover">{{ step.name }}</a>
+            {% if not forloop.last %}<span class="text-base-content/30">›</span>{% endif %}
+          {% endfor %}
         </p>
       {% endif %}
 

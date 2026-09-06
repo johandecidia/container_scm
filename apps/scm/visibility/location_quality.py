@@ -12,11 +12,35 @@ Three kinds of gap, and each has exactly one safe action:
 ``AMBIGUOUS`` evidence
     A provider named a place and the evidence fitted several canonical locations
     equally well, so :func:`~apps.scm.containers.location_resolver.resolve_location`
-    refused to choose. The action is an alias that breaks the tie.
+    refused to choose. The action is an alias that breaks the tie — or, where the tie
+    is *structural*, the hierarchy.
 ``UNRESOLVED`` evidence
     A provider named a place no canonical location claims. The action is an alias —
     or, where the place genuinely is not in the network yet, a new location, which
     nothing here will create.
+
+Some ambiguity is structural, and an alias is the wrong tool for it
+------------------------------------------------------------------
+
+.. code-block:: text
+
+    SEGOT resolves to:
+      Göteborg
+      Oceanterminalen
+    No containment relationship currently distinguishes them.
+
+An alias fixes one provider's word for one place. A parent relationship fixes the
+whole class: once Oceanterminalen is recorded as being inside Göteborg, ``SEGOT``
+means the port for *every* provider, forever, and the tie disappears from this queue
+without anybody typing a carrier's spelling.
+
+So an ambiguous row can carry a hierarchy hint, and it is deliberately conservative.
+The only evidence it accepts is the resolver's own: the tie came from a shared
+UN/LOCODE, and the places it could not choose between are ones nothing contains. It
+never fires for a coordinate tie, a shared name, or two contradicting aliases, and it
+never proposes *which* place goes inside which — a shared code makes a relationship
+worth reviewing and is not itself proof of containment. The action opens the location
+form; nothing here writes a parent.
 
 **This module owns no facts and writes nothing.** Every number is read off
 something that already decided it: the coordinate gap off ``ContainerLocation``, the
@@ -48,7 +72,8 @@ from typing import TYPE_CHECKING, cast
 
 from django.db.models import Count, Max, Q
 
-from apps.scm.containers.choices import LocationResolutionStatus
+from apps.scm.containers.choices import LocationResolutionMethod, LocationResolutionStatus
+from apps.scm.containers.location_hierarchy import ancestor_chain, descendant_ids
 from apps.scm.containers.location_identity import normalize_location_name
 from apps.scm.containers.models import Container, ContainerLocation, LocationAlias
 from apps.scm.shipments.models import Shipment
@@ -150,6 +175,11 @@ class LocationEvidence:
     recorded for this source and name means the decision has been taken; the
     historic events still say what they said, because nothing here rewrites them.
 
+    ``candidate_method`` is the rule that produced the tie, carried because *which*
+    evidence failed to choose decides what would fix it: a shared UN/LOCODE may be a
+    hierarchy somebody has not recorded, whereas two locations five kilometres from
+    one coordinate never are. See :attr:`needs_hierarchy_review`.
+
     Frozen because it is an interpretation of the evidence as it was read. A caller
     able to edit one could describe a decision nobody took.
     """
@@ -163,11 +193,41 @@ class LocationEvidence:
     container_count: int = 0
     last_seen_at: datetime | None = None
     candidates: list[ContainerLocation] = field(default_factory=list)
+    candidate_method: str = LocationResolutionMethod.NONE
     alias_location: ContainerLocation | None = None
 
     @property
     def is_ambiguous(self) -> bool:
         return self.status == LocationResolutionStatus.AMBIGUOUS
+
+    @property
+    def needs_hierarchy_review(self) -> bool:
+        """True when a containment relationship is what would settle this row.
+
+        Three conditions, all of them read off the resolver rather than guessed:
+
+        * the row is ambiguous — a resolved or unresolved place has no tie to settle;
+        * the tie came from the ``UNLOCODE`` rule, so what could not be chosen between
+          is a set of places sharing one code;
+        * there is more than one candidate left after the resolver's own hierarchy
+          narrowing, which is precisely the statement "nothing here contains anything
+          else here".
+
+        What it is *not*: a suggestion about which place belongs inside which. Similar
+        names, nearby coordinates and a shared country are not evidence of containment
+        and are not consulted. The row says the relationship is missing; an operator
+        says what it is.
+        """
+        return (
+            self.is_ambiguous
+            and self.candidate_method == LocationResolutionMethod.UNLOCODE
+            and len(self.candidates) > 1
+        )
+
+    @property
+    def shared_identity(self) -> str:
+        """The code the candidates are tangled up in, for the hint's first line."""
+        return self.raw_unlocode or self.label
 
     @property
     def label(self) -> str:
@@ -194,6 +254,41 @@ class LocationEvidence:
         record a row no lookup would ever read.
         """
         return bool(self.raw_name) and not self.is_aliased
+
+
+@dataclass(frozen=True)
+class HierarchyImpact:
+    """What a containment relationship for one location would probably settle.
+
+    A read-model estimate and nothing more. It triggers no resolution, changes no
+    event and does not suggest a parent — it answers "is this relationship worth
+    recording?" for somebody who has the location form open.
+
+    ``unrelated`` is the places sharing this location's UN/LOCODE that nothing relates
+    to it, which is the reason the code is ambiguous in the first place. The counts
+    are the evidence currently sitting behind that code, grouped exactly as the queue
+    groups it.
+
+    Empty is the normal state, and it is the honest answer for a place with no code,
+    a code nobody else carries, or a hierarchy already recorded.
+    """
+
+    location: ContainerLocation | None = None
+    unlocode: str = ""
+    unrelated: list[ContainerLocation] = field(default_factory=list)
+    ambiguous_groups: int = 0
+    event_count: int = 0
+    container_count: int = 0
+
+    @property
+    def is_relevant(self) -> bool:
+        """True when there is both something to relate and something to gain by it."""
+        return bool(self.unrelated and self.ambiguous_groups)
+
+    @property
+    def shares_code_with(self) -> str:
+        """The unrelated places, named, for one line of prose."""
+        return ", ".join(location.name for location in self.unrelated)
 
 
 @dataclass(frozen=True)
@@ -249,6 +344,16 @@ class LocationDataQuality:
     @property
     def has_work(self) -> bool:
         return bool(self.coordinate_gaps or self.ambiguous_evidence or self.unresolved_evidence)
+
+    @property
+    def hierarchy_review_count(self) -> int:
+        """How many displayed ambiguous rows a containment relationship would settle.
+
+        Off the rows already built, so the headline costs nothing extra. Counted over
+        what is shown rather than over everything found, for the same reason the
+        displayed rows are capped: it is a description of the screen.
+        """
+        return sum(1 for row in self.ambiguous_evidence if row.needs_hierarchy_review)
 
     @property
     def gaps_hidden(self) -> int:
@@ -502,12 +607,19 @@ def _with_recorded_aliases(team: Team, groups: list[LocationEvidence]) -> list[L
 
 
 def _with_candidates(team: Team, groups: list[LocationEvidence]) -> list[LocationEvidence]:
-    """Attach the resolver's own candidate list to each ambiguous group.
+    """Attach the resolver's own candidate list and rule to each ambiguous group.
 
     The resolver is asked again rather than a candidate list being stored on the
     event, because the tie is a function of the *current* master data: two terminals
     that could not be told apart last month may be one hierarchy today, and a stored
-    list would still show the old ambiguity.
+    list would still show the old ambiguity. That is also what makes the hierarchy
+    hint trustworthy — record the parent and the hint is gone on the next load,
+    before any event has been re-resolved.
+
+    The method is carried alongside the candidates because it is what says whether
+    the hierarchy is the fix. Taking it from the resolver rather than inferring it
+    from the shape of the candidate list keeps that judgment in the one module
+    entitled to make it.
 
     Only the name and the code are handed over. The coordinates of some particular
     event are deliberately left out — a coordinate is not an identity, and a group is
@@ -518,15 +630,75 @@ def _with_candidates(team: Team, groups: list[LocationEvidence]) -> list[Locatio
     """
     from apps.scm.containers.location_resolver import LocationQuery, resolve_location
 
-    return [
-        replace(
+    resolved = [
+        (
             group,
-            candidates=list(
-                resolve_location(
-                    team,
-                    LocationQuery(source=group.provider_code, name=group.raw_name, unlocode=group.raw_unlocode),
-                ).candidates
+            resolve_location(
+                team,
+                LocationQuery(source=group.provider_code, name=group.raw_name, unlocode=group.raw_unlocode),
             ),
         )
         for group in groups
     ]
+    return [
+        replace(group, candidates=list(resolution.candidates), candidate_method=resolution.method)
+        for group, resolution in resolved
+    ]
+
+
+def get_hierarchy_impact(team: Team, location: ContainerLocation) -> HierarchyImpact:
+    """Estimate what recording a containment relationship for *location* would settle.
+
+    Shown beside the parent selector, so somebody about to relate two places knows
+    whether it is bookkeeping or the fix for four hundred events. Three queries at
+    most and none of them a fleet read: the locations sharing the code, the evidence
+    grouped the way this module already groups it, and the containers behind it.
+
+    It is an **estimate**, and the wording on the form says so. It is keyed on the
+    code as the provider reported it rather than on the resolver's verdict per group,
+    because asking the resolver once per ambiguous group would put the queue's whole
+    cost on a modal. The queue itself remains the authority for which rows are really
+    ambiguous, and it is one click away.
+
+    Zero impact is reported for the cases where the relationship cannot help: no code
+    on this location, nobody sharing it, or everybody sharing it already related to
+    this one. Nothing is proposed in any case — which place goes inside which is the
+    operator's call, and this function does not have an opinion about it.
+    """
+    code = location.unlocode
+    if not code:
+        return HierarchyImpact(location=location)
+
+    sharing = list(ContainerLocation.objects.filter(team=team, is_active=True, unlocode=code).exclude(pk=location.pk))
+    if not sharing:
+        return HierarchyImpact(location=location, unlocode=code)
+
+    # Already related in either direction means the code is not ambiguous between
+    # this pair, so there is nothing here for a new relationship to settle.
+    related = {*descendant_ids(team, location), *(parent.pk for parent in ancestor_chain(team, location))}
+    unrelated = [candidate for candidate in sharing if candidate.pk not in related]
+    if not unrelated:
+        return HierarchyImpact(location=location, unlocode=code)
+
+    evidence = TrackingEvent.objects.filter(
+        team=team,
+        location_resolution_status=LocationResolutionStatus.AMBIGUOUS,
+        location_unlocode__iexact=code,
+    )
+    # The same grouping keys the queue's own rows use, so "12 groups" here and
+    # twelve rows there are the same twelve decisions.
+    groups = list(
+        cast(
+            "Iterable[dict]",
+            evidence.values("provider__code", "location_name", "location_unlocode").annotate(total=Count("pk")),
+        )
+    )
+    containers = evidence.aggregate(total=Count("container_id", distinct=True))["total"] or 0
+    return HierarchyImpact(
+        location=location,
+        unlocode=code,
+        unrelated=unrelated,
+        ambiguous_groups=len(groups),
+        event_count=sum(row["total"] for row in groups),
+        container_count=containers,
+    )

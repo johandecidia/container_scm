@@ -50,11 +50,64 @@
             <label class="label"><span class="label-text">{{ form.parent_location.label }}</span></label>
             {{ form.parent_location }}
             <p class="text-xs text-base-content/50 mt-1">
-              {% translate "The larger place this sits inside, e.g. the port a terminal belongs to." %}
+              {% translate "The larger place this sits inside, e.g. the port a terminal belongs to. Only places it could legally be inside are listed." %}
             </p>
             {% if form.parent_location.errors %}<p class="text-error text-xs mt-1">{{ form.parent_location.errors|join:" " }}</p>{% endif %}
           </div>
         </div>
+        {% if hierarchy_impact.is_relevant %}
+          {% comment %}
+            What relating this place to the ones sharing its code would probably
+            settle. An estimate off the stored evidence — it triggers nothing, and the
+            counts are the ones the data-quality queue groups by, so they describe the
+            same decisions that page lists.
+
+            Deliberately no suggestion of *which* way round the relationship goes. A
+            shared code makes it worth reviewing; it is not proof that either place
+            contains the other, and only somebody who knows the network can say.
+          {% endcomment %}
+          <div role="note" class="alert alert-info text-sm items-start">
+            <i class="fa fa-sitemap mt-0.5"></i>
+            <div>
+              <p>
+                {% blocktranslate trimmed with code=hierarchy_impact.unlocode places=hierarchy_impact.shares_code_with %}
+                  {{ code }} is also carried by {{ places }}, with no containment
+                  relationship recorded either way.
+                {% endblocktranslate %}
+              </p>
+              <p class="mt-1">
+                {% translate "Recording one may resolve:" %}
+                {% blocktranslate trimmed count count=hierarchy_impact.ambiguous_groups %}
+                  {{ count }} ambiguous evidence group
+                {% plural %}
+                  {{ count }} ambiguous evidence groups
+                {% endblocktranslate %}
+                <span class="text-base-content/30 mx-1">·</span>
+                {% blocktranslate trimmed count count=hierarchy_impact.event_count %}
+                  {{ count }} tracking event
+                {% plural %}
+                  {{ count }} tracking events
+                {% endblocktranslate %}
+                {% if hierarchy_impact.container_count %}
+                  <span class="text-base-content/30 mx-1">·</span>
+                  {% blocktranslate trimmed count count=hierarchy_impact.container_count %}
+                    {{ count }} container
+                  {% plural %}
+                    {{ count }} containers
+                  {% endblocktranslate %}
+                {% endif %}
+              </p>
+              <p class="text-xs opacity-70 mt-1">
+                {% blocktranslate trimmed %}
+                  An estimate from stored evidence. Saving changes nothing historic —
+                  those events pick it up the next time they are refreshed or
+                  re-parsed.
+                {% endblocktranslate %}
+              </p>
+            </div>
+          </div>
+        {% endif %}
+
         <div class="grid grid-cols-2 gap-3">
           <div class="form-control">
             <label class="label"><span class="label-text">{{ form.unlocode.label }}</span></label>

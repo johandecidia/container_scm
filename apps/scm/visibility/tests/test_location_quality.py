@@ -32,12 +32,13 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.scm.containers.choices import LocationResolutionStatus, LocationType
+from apps.scm.containers.choices import LocationResolutionMethod, LocationResolutionStatus, LocationType
 from apps.scm.containers.location_resolver import LocationQuery, resolve_location
 from apps.scm.containers.models import ContainerLocation, LocationAlias
-from apps.scm.containers.services import create_location_alias
+from apps.scm.containers.services import create_location_alias, update_location
 from apps.scm.tracking.models import TrackingEvent
 from apps.scm.visibility.location_quality import (
+    get_hierarchy_impact,
     get_location_data_quality,
     get_location_quality_summary,
     has_unmatched_evidence,
@@ -867,3 +868,408 @@ class LocationQualityQueryTest(TestCase):
         """What the Locations list pays to point at this queue."""
         with self.assertNumQueries(2):
             get_location_quality_summary(self.team)
+
+
+class HierarchyHintTest(TestCase):
+    """LOC-6: telling a *structural* tie apart from a naming one.
+
+    An alias fixes one provider's word for one place. A parent relationship fixes the
+    code for every provider at once. The queue is allowed to say which of the two is
+    missing — and only when the resolver's own answer says so, because "these two look
+    related" is exactly the inference this whole area refuses to make.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = make_user_and_team("hier@example.com", "loc5-hierarchy")
+        cls.provider = make_provider("traqo", "Traqo")
+
+    def _row(self, *, name="GOTHENBURG", unlocode="SEGOT"):
+        _event(
+            self.team,
+            provider=self.provider,
+            name=name,
+            unlocode=unlocode,
+            status=LocationResolutionStatus.AMBIGUOUS,
+            fingerprint=f"fp-hier-{name}-{unlocode}",
+        )
+        return get_location_data_quality(self.team).ambiguous_evidence[0]
+
+    def _two_unrelated_places(self):
+        port = make_location(self.team, "Göteborg", unlocode="SEGOT", location_type=LocationType.PORT)
+        terminal = make_location(self.team, "Oceanterminalen", unlocode="SEGOT", location_type=LocationType.TERMINAL)
+        return port, terminal
+
+    def test_a_shared_code_with_no_containment_is_flagged_for_hierarchy_review(self):
+        port, terminal = self._two_unrelated_places()
+        row = self._row()
+        self.assertTrue(row.needs_hierarchy_review)
+        self.assertEqual({candidate.pk for candidate in row.candidates}, {port.pk, terminal.pk})
+        self.assertEqual(row.shared_identity, "SEGOT")
+
+    def test_the_flag_carries_the_rule_that_produced_the_tie(self):
+        self._two_unrelated_places()
+        self.assertEqual(self._row().candidate_method, LocationResolutionMethod.UNLOCODE)
+
+    def test_recording_the_containment_removes_the_hint_immediately(self):
+        """Before any event has been re-resolved: the hint is a function of the
+        current master data, which is why it can be trusted to disappear.
+
+        The row itself stays — its stored status is still ``AMBIGUOUS``, because
+        nothing here rewrites evidence — but the tie is gone and so is the suggestion.
+        """
+        port, terminal = self._two_unrelated_places()
+        update_location(location=terminal, data={"parent_location": port})
+        row = self._row()
+        self.assertFalse(row.needs_hierarchy_review)
+        self.assertFalse(row.has_candidates)
+        self.assertTrue(row.is_ambiguous)
+
+    def test_a_tie_between_places_with_no_shared_code_is_not_a_hierarchy_issue(self):
+        """Two locations of the same name is a naming problem. An alias fixes it."""
+        make_location(self.team, "Central")
+        make_location(self.team, "Central")
+        row = self._row(name="Central", unlocode="")
+        self.assertTrue(row.is_ambiguous)
+        self.assertFalse(row.needs_hierarchy_review)
+        self.assertTrue(row.can_record_alias)
+
+    def test_a_coordinate_tie_is_never_a_hierarchy_issue(self):
+        """Nearby coordinates are not evidence of containment, so nothing is offered.
+
+        Evidence groups are keyed on the named place and never on a fix, so a
+        coordinate tie cannot even reach this hint — asserted so that stays true.
+        """
+        make_location(self.team, "Göteborg", latitude=OCEANTERMINALEN[0], longitude=OCEANTERMINALEN[1])
+        make_location(self.team, "Skandiahamnen", latitude=OCEANTERMINALEN[0], longitude=OCEANTERMINALEN[1])
+        row = self._row(name="SOMEWHERE", unlocode="")
+        self.assertFalse(row.needs_hierarchy_review)
+
+    def test_contradicting_aliases_are_not_a_hierarchy_issue(self):
+        """The master data disagrees with itself; a parent would not settle it."""
+        port, terminal = self._two_unrelated_places()
+        create_location_alias(self.team, port, {"source": "traqo", "external_name": "GOTHENBURG"})
+        create_location_alias(self.team, terminal, {"source": "traqo", "external_code": "OT1"})
+        _event(
+            self.team,
+            provider=self.provider,
+            name="GOTHENBURG",
+            unlocode="SEGOT",
+            status=LocationResolutionStatus.AMBIGUOUS,
+            fingerprint="fp-hier-alias-clash",
+        )
+        row = get_location_data_quality(self.team).ambiguous_evidence[0]
+        self.assertEqual(row.candidate_method, LocationResolutionMethod.ALIAS)
+        self.assertFalse(row.needs_hierarchy_review)
+
+    def test_an_ambiguity_with_nothing_left_to_relate_is_not_flagged(self):
+        """One candidate, or none, is not a structural tie."""
+        make_location(self.team, "Göteborg", unlocode="SEGOT", location_type=LocationType.PORT)
+        self.assertFalse(self._row().needs_hierarchy_review)
+
+    def test_unresolved_evidence_is_never_flagged(self):
+        self._two_unrelated_places()
+        _event(self.team, provider=self.provider, name="ATLANTIS", fingerprint="fp-hier-unresolved")
+        row = next(r for r in get_location_data_quality(self.team).unresolved_evidence if r.raw_name == "ATLANTIS")
+        self.assertFalse(row.needs_hierarchy_review)
+
+    def test_the_page_counts_the_rows_a_relationship_would_settle(self):
+        self._two_unrelated_places()
+        self._row()
+        self.assertEqual(get_location_data_quality(self.team).hierarchy_review_count, 1)
+
+    def test_a_three_level_tie_does_not_cost_more_to_hint_at(self):
+        """The hint reads the resolver's answer; it does not walk the tree per row."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._two_unrelated_places()
+        _event(
+            self.team,
+            provider=self.provider,
+            name="GOTHENBURG",
+            unlocode="SEGOT",
+            status=LocationResolutionStatus.AMBIGUOUS,
+            fingerprint="fp-hier-cost",
+        )
+        with CaptureQueriesContext(connection) as flat:
+            get_location_data_quality(self.team)
+
+        deep = make_location(self.team, "Skandiahamnen", unlocode="SEGOT", location_type=LocationType.TERMINAL)
+        for index in range(3):
+            deep = make_location(self.team, f"Level {index}", unlocode="SEGOT", parent=deep)
+        with CaptureQueriesContext(connection) as nested:
+            get_location_data_quality(self.team)
+
+        self.assertEqual(len(nested.captured_queries), len(flat.captured_queries))
+
+
+class HierarchyImpactTest(TestCase):
+    """The read-model estimate shown beside the parent selector."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = make_user_and_team("impact@example.com", "loc5-impact")
+        cls.provider = make_provider("traqo", "Traqo")
+        cls.container = make_container(cls.team)
+
+    def setUp(self):
+        self.port = make_location(self.team, "Göteborg", unlocode="SEGOT", location_type=LocationType.PORT)
+        self.terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", location_type=LocationType.TERMINAL
+        )
+
+    def _ambiguous(self, count=1, unlocode="SEGOT", name="GOTHENBURG"):
+        for index in range(count):
+            _event(
+                self.team,
+                provider=self.provider,
+                name=f"{name} {index}",
+                unlocode=unlocode,
+                status=LocationResolutionStatus.AMBIGUOUS,
+                container=self.container,
+                fingerprint=f"fp-impact-{unlocode}-{name}-{index}",
+            )
+
+    def test_it_reports_the_places_sharing_the_code_and_the_evidence_behind_it(self):
+        self._ambiguous(count=2)
+        impact = get_hierarchy_impact(self.team, self.terminal)
+        self.assertTrue(impact.is_relevant)
+        self.assertEqual([place.pk for place in impact.unrelated], [self.port.pk])
+        self.assertEqual(impact.ambiguous_groups, 2)
+        self.assertEqual(impact.event_count, 2)
+        self.assertEqual(impact.container_count, 1)
+        self.assertEqual(impact.shares_code_with, "Göteborg")
+
+    def test_a_location_with_no_code_has_nothing_to_estimate(self):
+        depot = make_location(self.team, "John Evans Depot")
+        self.assertFalse(get_hierarchy_impact(self.team, depot).is_relevant)
+
+    def test_a_code_nobody_else_carries_has_nothing_to_estimate(self):
+        self._ambiguous()
+        alone = make_location(self.team, "Rotterdam", unlocode="NLRTM", location_type=LocationType.PORT)
+        self.assertFalse(get_hierarchy_impact(self.team, alone).is_relevant)
+
+    def test_an_already_recorded_relationship_has_nothing_left_to_settle(self):
+        self._ambiguous()
+        update_location(location=self.terminal, data={"parent_location": self.port})
+        self.assertFalse(get_hierarchy_impact(self.team, self.terminal).is_relevant)
+        self.assertFalse(get_hierarchy_impact(self.team, self.port).is_relevant)
+
+    def test_evidence_about_a_different_code_is_not_counted(self):
+        self._ambiguous(unlocode="NLRTM", name="ROTTERDAM")
+        impact = get_hierarchy_impact(self.team, self.terminal)
+        self.assertEqual(impact.ambiguous_groups, 0)
+        self.assertFalse(impact.is_relevant)
+
+    def test_resolved_evidence_is_not_counted(self):
+        _event(
+            self.team,
+            provider=self.provider,
+            name="GOTHENBURG",
+            unlocode="SEGOT",
+            status=LocationResolutionStatus.RESOLVED,
+            fingerprint="fp-impact-resolved",
+        )
+        self.assertEqual(get_hierarchy_impact(self.team, self.terminal).ambiguous_groups, 0)
+
+    def test_another_teams_evidence_and_places_are_never_counted(self):
+        other_user, other_team = make_user_and_team("impact-theirs@example.com", "loc5-impact-theirs")
+        make_location(other_team, "Their Göteborg", unlocode="SEGOT", location_type=LocationType.PORT)
+        _event(
+            other_team,
+            provider=self.provider,
+            name="GOTHENBURG",
+            unlocode="SEGOT",
+            status=LocationResolutionStatus.AMBIGUOUS,
+            fingerprint="fp-impact-theirs",
+        )
+        impact = get_hierarchy_impact(self.team, self.terminal)
+        self.assertEqual([place.pk for place in impact.unrelated], [self.port.pk])
+        self.assertEqual(impact.ambiguous_groups, 0)
+
+    def test_the_estimate_changes_nothing(self):
+        """A preview that re-resolved would be a write dressed as a read."""
+        self._ambiguous()
+        event = TrackingEvent.objects.get(team=self.team, event_fingerprint="fp-impact-SEGOT-GOTHENBURG-0")
+        get_hierarchy_impact(self.team, self.terminal)
+        event.refresh_from_db()
+        self.assertIsNone(event.location_id)
+        self.assertEqual(event.location_resolution_status, LocationResolutionStatus.AMBIGUOUS)
+
+    def test_it_costs_a_bounded_number_of_queries(self):
+        """Four: the places sharing the code, the subtree, the grouped evidence and
+        the containers. None of them a fleet read, and none per evidence row."""
+        self._ambiguous(count=3)
+        with self.assertNumQueries(4):
+            get_hierarchy_impact(self.team, self.terminal)
+
+
+@override_settings(STORAGES=TEST_STORAGES)
+class HierarchyReviewPageTest(TestCase):
+    """The route from an ambiguous row to the place where it gets fixed."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = make_user_and_team("hierpage@example.com", "loc5-hier-page")
+        cls.provider = make_provider("traqo", "Traqo")
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(self.user)
+        self.port = make_location(self.team, "Göteborg", unlocode="SEGOT", location_type=LocationType.PORT)
+        self.terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", location_type=LocationType.TERMINAL
+        )
+        _event(
+            self.team,
+            provider=self.provider,
+            name="GOTHENBURG",
+            unlocode="SEGOT",
+            status=LocationResolutionStatus.AMBIGUOUS,
+            fingerprint="fp-hier-page",
+        )
+
+    def test_the_queue_names_the_hierarchy_problem(self):
+        response = self.client.get(reverse("visibility:location_quality"))
+        self.assertContains(response, "Potential hierarchy issue")
+        self.assertContains(response, "no containment")
+
+    def test_each_candidate_offers_a_way_into_its_own_edit_form(self):
+        response = self.client.get(reverse("visibility:location_quality"))
+        self.assertContains(response, "Review hierarchy")
+        for candidate in (self.port, self.terminal):
+            with self.subTest(candidate=candidate.name):
+                self.assertContains(
+                    response,
+                    f"{reverse('containers:location_update', args=[candidate.pk])}?return_to=location_quality",
+                )
+
+    def test_the_form_previews_what_the_relationship_would_settle(self):
+        response = self.client.get(
+            f"{reverse('containers:location_update', args=[self.terminal.pk])}?return_to=location_quality",
+            headers={"hx-request": "true"},
+        )
+        self.assertContains(response, "Recording one may resolve")
+        self.assertContains(response, "1 ambiguous evidence group")
+        self.assertContains(response, "Göteborg — SEGOT — Port")
+
+    def test_saving_the_parent_returns_to_a_freshly_built_queue(self):
+        response = self.client.post(
+            reverse("containers:location_update", args=[self.terminal.pk]),
+            data={
+                "name": "Oceanterminalen",
+                "location_type": LocationType.TERMINAL,
+                "unlocode": "SEGOT",
+                "parent_location": str(self.port.pk),
+                "is_active": True,
+                "return_to": "location_quality",
+            },
+            headers={"hx-request": "true"},
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["HX-Redirect"], reverse("visibility:location_quality"))
+        self.terminal.refresh_from_db()
+        self.assertEqual(self.terminal.parent_location, self.port)
+
+    def test_the_hint_is_gone_from_the_queue_once_the_parent_is_recorded(self):
+        update_location(location=self.terminal, data={"parent_location": self.port})
+        response = self.client.get(reverse("visibility:location_quality"))
+        self.assertNotContains(response, "Potential hierarchy issue")
+
+    def test_the_queue_never_records_a_parent_itself(self):
+        """No path on this page writes the hierarchy — it opens the form."""
+        self.client.get(reverse("visibility:location_quality"))
+        self.terminal.refresh_from_db()
+        self.assertIsNone(self.terminal.parent_location_id)
+
+    def test_a_form_with_no_hierarchy_problem_shows_no_preview(self):
+        depot = make_location(self.team, "John Evans Depot")
+        response = self.client.get(
+            reverse("containers:location_update", args=[depot.pk]), headers={"hx-request": "true"}
+        )
+        self.assertNotContains(response, "Recording one may resolve")
+
+    def test_creating_a_location_shows_no_preview(self):
+        response = self.client.get(reverse("containers:location_create"), headers={"hx-request": "true"})
+        self.assertNotContains(response, "Recording one may resolve")
+
+
+@override_settings(STORAGES=TEST_STORAGES)
+class HistoricHierarchyReResolutionTest(TestCase):
+    """LOC-6 through the mechanism LOC-5 established: nothing rewrites stored events.
+
+    The claim being pinned is the whole reason a hierarchy edit is worth making at
+    all: an event the resolver refused to place, a parent recorded afterwards, and the
+    *same row* resolving on the next ingestion of the same payload. No bulk rewrite,
+    no second row, no new fingerprint.
+
+    Ingestion is the same function ``reparse_tracking_payloads`` calls, so the command
+    is this test with a different trigger. Its own known caveat is unchanged and not
+    LOC-6's to fix: an event the provider gave no event ID is fingerprinted from the
+    fields it reported, so a *parser* correction to one of those fields produces a new
+    fingerprint and leaves the old row behind, which is what ``--prune-superseded``
+    exists for. A hierarchy edit changes none of those fields — it changes what the
+    resolver concludes about them — so it cannot trigger that path.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user, cls.team = make_user_and_team("hier-historic@example.com", "loc6-historic")
+        cls.container = make_container(cls.team)
+
+    def setUp(self):
+        # Two places carrying the code the fixture reports, and nothing relating
+        # them: the state in which SEGOT cannot be resolved.
+        self.port = make_location(self.team, "Göteborg", unlocode="SEGOT", location_type=LocationType.PORT)
+        self.terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", location_type=LocationType.TERMINAL
+        )
+        ingest_maersk_events(self.team, self.container)
+
+    def _segot_events(self):
+        return TrackingEvent.objects.filter(team=self.team, location_unlocode="SEGOT")
+
+    def test_the_evidence_starts_ambiguous(self):
+        events = self._segot_events()
+        self.assertTrue(events.exists())
+        for event in events:
+            self.assertEqual(event.location_resolution_status, LocationResolutionStatus.AMBIGUOUS)
+            self.assertIsNone(event.location_id)
+
+    def test_the_queue_offers_the_hierarchy_for_it(self):
+        rows = [row for row in get_location_data_quality(self.team).ambiguous_evidence if row.raw_unlocode == "SEGOT"]
+        self.assertTrue(rows)
+        self.assertTrue(all(row.needs_hierarchy_review for row in rows))
+
+    def test_recording_the_parent_does_not_touch_the_stored_events(self):
+        before = {event.pk: event.location_resolution_status for event in self._segot_events()}
+        update_location(location=self.terminal, data={"parent_location": self.port})
+        after = {event.pk: event.location_resolution_status for event in self._segot_events()}
+        self.assertEqual(after, before)
+
+    def test_the_next_ingestion_resolves_the_same_rows_in_place(self):
+        ids_before = set(self._segot_events().values_list("pk", flat=True))
+        update_location(location=self.terminal, data={"parent_location": self.port})
+
+        ingest_maersk_events(self.team, self.container)
+
+        events = self._segot_events()
+        self.assertEqual(set(events.values_list("pk", flat=True)), ids_before)
+        for event in events:
+            self.assertEqual(event.location_id, self.port.pk)
+            self.assertEqual(event.location_resolution_status, LocationResolutionStatus.RESOLVED)
+
+    def test_re_ingestion_does_not_duplicate_the_events(self):
+        before = TrackingEvent.objects.filter(team=self.team).count()
+        update_location(location=self.terminal, data={"parent_location": self.port})
+        ingest_maersk_events(self.team, self.container)
+        self.assertEqual(TrackingEvent.objects.filter(team=self.team).count(), before)
+
+    def test_the_queue_is_empty_of_that_tie_afterwards(self):
+        update_location(location=self.terminal, data={"parent_location": self.port})
+        ingest_maersk_events(self.team, self.container)
+        remaining = [
+            row for row in get_location_data_quality(self.team).ambiguous_evidence if row.raw_unlocode == "SEGOT"
+        ]
+        self.assertEqual(remaining, [])

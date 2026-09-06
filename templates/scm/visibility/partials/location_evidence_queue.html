@@ -19,6 +19,12 @@
   picking one on the operator's behalf is exactly the confidently-wrong answer the
   resolver refuses to give.
 
+  Where the tie is *structural* — the resolver could not choose between places that
+  share a code and that nothing relates — the row also offers the hierarchy. That is
+  the difference between fixing one provider's spelling and fixing the code for all of
+  them. It appears only for a UN/LOCODE tie, never for a coordinate or naming one, and
+  it proposes no relationship: it opens the location form.
+
   Recording an alias changes what the *next* resolution decides. It does not rewrite
   the events already stored, and this section says so rather than leaving somebody to
   wonder why the row is still here.
@@ -56,6 +62,44 @@
                     {% for candidate in row.candidates %}
                       <a href="{% url 'containers:location_detail' candidate.pk %}" class="link link-hover">{{ candidate.full_name }}</a>{% if not forloop.last %}, {% endif %}
                     {% endfor %}
+                  </div>
+                {% endif %}
+                {% if row.needs_hierarchy_review %}
+                  {% comment %}
+                    A structural tie rather than a naming one: these places share a
+                    code and nothing records that either is inside the other. An alias
+                    would fix this one provider's word for the place; a containment
+                    relationship fixes the code for every provider at once.
+
+                    So the hint names the problem and opens the edit form for each
+                    candidate. It does not say which way round the relationship goes —
+                    a shared UN/LOCODE makes it worth reviewing and is not proof of
+                    containment, and guessing here would be the same
+                    confidently-wrong answer the resolver refused to give.
+                  {% endcomment %}
+                  <div class="mt-2 rounded border border-warning/40 bg-warning/5 p-2">
+                    <p class="text-xs font-medium text-warning">{% translate "Potential hierarchy issue" %}</p>
+                    <p class="text-xs text-base-content/60 mt-0.5">
+                      {% blocktranslate trimmed with code=row.shared_identity %}
+                        {{ code }} resolves to several places, and no containment
+                        relationship currently distinguishes them.
+                      {% endblocktranslate %}
+                    </p>
+                    <div class="flex flex-wrap gap-1 mt-1.5">
+                      {% for candidate in row.candidates %}
+                        <button
+                          type="button"
+                          class="btn btn-xs btn-outline btn-warning"
+                          hx-get="{% url 'containers:location_update' candidate.pk %}?return_to=location_quality"
+                          hx-target="#modal-container"
+                          hx-swap="innerHTML"
+                        >
+                          {% blocktranslate trimmed with name=candidate.name %}
+                            Review hierarchy — {{ name }}
+                          {% endblocktranslate %}
+                        </button>
+                      {% endfor %}
+                    </div>
                   </div>
                 {% endif %}
               </td>

@@ -256,12 +256,14 @@ class LocationUiTest(TestCase):
         self.assertEqual(self.terminal.parent_location, self.port)
 
     def test_the_form_does_not_offer_the_location_as_its_own_parent(self):
+        """Nor anything inside it — LOC-6 narrowed this. A descendant was offered here
+        before, and choosing it was a cycle the model then had to explain away."""
         response = self.client.get(
             reverse("containers:location_update", kwargs={"location_id": self.port.pk}), HTTP_HX_REQUEST="true"
         )
         parents = response.context["form"].fields["parent_location"].queryset
         self.assertNotIn(self.port, parents)
-        self.assertIn(self.terminal, parents)
+        self.assertNotIn(self.terminal, parents)
 
     def test_the_form_does_not_offer_another_teams_location_as_a_parent(self):
         other_team = Team.objects.create(name="Theirs", slug="loc-ui-theirs")

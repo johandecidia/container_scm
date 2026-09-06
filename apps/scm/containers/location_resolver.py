@@ -36,6 +36,29 @@ The one place plurality is *not* ambiguity is a hierarchy. Several locations sha
 ``SEGOT`` where one contains the others is not a tie — it is a port with terminals
 inside it — and the code resolves to the port. See :func:`_narrow_to_outermost`.
 
+Precision follows the evidence, in both directions
+--------------------------------------------------
+
+A hierarchy makes two mistakes possible, and they are opposites.
+
+*Overstating.* ``SEGOT`` is a claim about Göteborg; it says nothing about which berth.
+Resolving it to Oceanterminalen would turn port-level evidence into terminal-level
+certainty, and a shipment would be credited to a terminal no carrier named.
+
+*Understating.* A carrier that names ``Oceanterminalen`` *and* sends ``SEGOT`` has
+identified the terminal. Answering "Göteborg" because the code was checked first
+throws away the more specific of two pieces of agreeing evidence, and adding a coarse
+code to a query would make the answer worse.
+
+So the rules are ordered by how narrow the *evidence* is, not by which column it came
+from, and :func:`_by_name_within_unlocode` sits between the aliases and the bare code:
+a name that identifies exactly one place inside what the code names resolves to that
+place. Where the name and the code cannot be reconciled at all — the name is one of
+our locations, the code is one of our locations, and neither contains the other — the
+answer is ``AMBIGUOUS``, for the same reason two contradicting aliases are: letting
+one of them win would make the result depend on this module's ordering rather than on
+the master data.
+
 Nothing here writes
 -------------------
 
@@ -55,6 +78,7 @@ from django.conf import settings
 from django.db.models import Q
 
 from .choices import LocationResolutionMethod, LocationResolutionStatus
+from .location_hierarchy import contained_ids
 from .location_identity import (
     distance_km,
     normalize_alias_source,
@@ -167,13 +191,16 @@ def resolve_location(team: Team, query: LocationQuery) -> LocationResolution:
     1. ``ALIAS`` — an alias this source recorded for this *name*. Somebody decided
        this, so it beats everything derived.
     2. ``EXTERNAL_CODE`` — an alias this source recorded for this *code*.
-    3. ``UNLOCODE`` — canonical locations carrying the code, narrowed to the
+    3. ``NAME`` within ``UNLOCODE`` — a name identifying exactly one canonical
+       location inside what the code names. Two agreeing pieces of evidence, and the
+       name is the narrower of them.
+    4. ``UNLOCODE`` — canonical locations carrying the code, narrowed to the
        outermost one when they form a hierarchy.
-    4. ``COORDINATES`` — exactly one canonical location within the configured
+    5. ``COORDINATES`` — exactly one canonical location within the configured
        radius.
-    5. ``NAME`` — canonical locations whose own normalised name matches, optionally
+    6. ``NAME`` — canonical locations whose own normalised name matches, optionally
        narrowed by country and city.
-    6. ``UNRESOLVED``.
+    7. ``UNRESOLVED``.
 
     Steps 1 and 2 are both explicit aliases and are checked against each other: if a
     source's name alias and its code alias point at *different* canonical locations,
@@ -182,9 +209,24 @@ def resolve_location(team: Team, query: LocationQuery) -> LocationResolution:
     one would make the answer depend on this function's ordering instead of on what
     an operator actually recorded.
 
-    Only ``is_active`` locations are considered. Deactivating a location says "stop
-    routing new evidence here", and it is the aliases and codes that get reused when
-    a place is replaced.
+    Concretely, for Göteborg (``SEGOT``, ``PORT``) containing Oceanterminalen
+    (``SEGOT``, ``TERMINAL``):
+
+    .. code-block:: text
+
+        unlocode=SEGOT                        ──▶  Göteborg      (step 4, outermost)
+        name=Oceanterminalen, unlocode=SEGOT  ──▶  Oceanterminalen (step 3)
+        name=Oceanterminalen                  ──▶  Oceanterminalen (step 6)
+        name=Göteborg, unlocode=SEGOT         ──▶  Göteborg      (step 3)
+
+    and where the two places share the code but *no* containment is recorded, a bare
+    ``SEGOT`` is ``AMBIGUOUS`` — which is the row LOC-5's queue turns into "review the
+    hierarchy".
+
+    Only ``is_active`` locations are considered as answers. Deactivating a location
+    says "stop routing new evidence here", and it is the aliases and codes that get
+    reused when a place is replaced. Containment itself is read regardless of active
+    state: retiring a terminal does not move the yard inside it out of the port.
 
     Never writes. An unresolvable location is a fact about the master data, not an
     invitation to create some.
@@ -192,7 +234,7 @@ def resolve_location(team: Team, query: LocationQuery) -> LocationResolution:
     if query.is_empty:
         return UNRESOLVED
 
-    for rule in (_by_alias_and_code, _by_unlocode, _by_coordinates, _by_name):
+    for rule in (_by_alias_and_code, _by_name_within_unlocode, _by_unlocode, _by_coordinates, _by_name):
         resolution = rule(team, query)
         if resolution is not None:
             return resolution
@@ -260,8 +302,79 @@ def _alias_filter(name: str, code: str) -> Q:
     return matches
 
 
+def _by_name_within_unlocode(team: Team, query: LocationQuery) -> LocationResolution | None:
+    """Step 3: a name that says *which* place inside the one the code names.
+
+    Only fires when the query carries both identifiers, which is the case a hierarchy
+    makes interesting:
+
+    .. code-block:: text
+
+        Göteborg           SEGOT      name=Oceanterminalen  ──▶  Oceanterminalen
+          └─ Oceanterminalen  SEGOT   unlocode=SEGOT
+
+    The code establishes the port; the name establishes the place inside it. Both
+    agree, and the answer is the narrower of the two — otherwise a carrier that told
+    us the terminal would be recorded as having told us only the city, and the extra
+    precision it sent would be discarded because the code happened to be checked
+    first.
+
+    "Inside" means what :mod:`.location_hierarchy` says it means: the named location
+    either carries the code itself or sits beneath something that does. A name whose
+    place has no such relation to the code is *not* narrowed into it — that is the
+    inference this module exists to refuse.
+
+    Three outcomes:
+
+    *One consistent place* — resolved to it, by ``NAME``, because the name is what
+    discriminated.
+
+    *Several consistent places* — no answer here. Two locations of the same name
+    inside one port is a naming problem, and the code still answers correctly at the
+    level it names, so the question passes down to step 4.
+
+    *No consistent place, while the name does match locations of ours* — the two
+    identifiers describe unrelated places, and neither is allowed to win. ``AMBIGUOUS``
+    over both sets, so LOC-5's queue shows exactly which places need separating or
+    relating. Deciding this by rule order would be the silent, confidently-wrong
+    answer: a carrier's ``SEGOT`` would quietly overrule the name of a place it has
+    nothing to do with.
+    """
+    unlocode = normalize_unlocode(query.unlocode)
+    if not unlocode or not normalize_location_name(query.name):
+        return None
+
+    named = _narrow_to_outermost(_by_name_candidates(team, query), team=team)
+    if not named:
+        return None
+
+    coded = _by_unlocode_candidates(team, unlocode)
+    if not coded:
+        # The code names nothing of ours, so there is nothing to be inside of. The
+        # name rule further down answers this on its own terms.
+        return None
+
+    coded_ids = {location.pk for location in coded}
+    inside = contained_ids(named, coded_ids, team=team)
+    consistent = [location for location in named if location.pk in coded_ids or location.pk in inside]
+
+    if len(consistent) == 1:
+        return LocationResolution(
+            status=LocationResolutionStatus.RESOLVED,
+            method=LocationResolutionMethod.NAME,
+            location=consistent[0],
+        )
+    if consistent:
+        return None
+    return LocationResolution(
+        status=LocationResolutionStatus.AMBIGUOUS,
+        method=LocationResolutionMethod.UNLOCODE,
+        candidates=[*_narrow_to_outermost(coded, team=team), *named],
+    )
+
+
 def _by_unlocode(team: Team, query: LocationQuery) -> LocationResolution | None:
-    """Step 3: the UN/LOCODE register's answer, at the level it actually names.
+    """Step 4: the UN/LOCODE register's answer, at the level it actually names.
 
     A code names a port, not a berth. Where several of this team's locations carry
     it and one contains the others, the code resolves to the container — Göteborg,
@@ -272,12 +385,16 @@ def _by_unlocode(team: Team, query: LocationQuery) -> LocationResolution | None:
     if not unlocode:
         return None
 
-    candidates = list(ContainerLocation.objects.filter(team=team, is_active=True, unlocode=unlocode))
-    return _decide(candidates, LocationResolutionMethod.UNLOCODE)
+    return _decide(team, _by_unlocode_candidates(team, unlocode), LocationResolutionMethod.UNLOCODE)
+
+
+def _by_unlocode_candidates(team: Team, unlocode: str) -> list[ContainerLocation]:
+    """This team's active locations carrying *unlocode*, in one query."""
+    return list(ContainerLocation.objects.filter(team=team, is_active=True, unlocode=unlocode))
 
 
 def _by_coordinates(team: Team, query: LocationQuery) -> LocationResolution | None:
-    """Step 4: one canonical location close enough to be the same place.
+    """Step 5: one canonical location close enough to be the same place.
 
     A fallback, not an identity system. Distance is computed in application code
     over the locations that have coordinates at all — usually a small handful, since
@@ -316,7 +433,7 @@ def _by_coordinates(team: Team, query: LocationQuery) -> LocationResolution | No
 
 
 def _by_name(team: Team, query: LocationQuery) -> LocationResolution | None:
-    """Step 5: this team's own name for the place, matched exactly once normalised.
+    """Step 6: this team's own name for the place, matched exactly once normalised.
 
     Case, whitespace and diacritics are already folded, so "GOTHENBURG",
     " Gothenburg " and "Göteborg" all arrive here as one string. Nothing beyond
@@ -327,14 +444,26 @@ def _by_name(team: Team, query: LocationQuery) -> LocationResolution | None:
     stored rows do too, which is what stops a warehouse named "Central" in Sweden
     answering for one in Vietnam.
     """
+    if not normalize_location_name(query.name):
+        return None
+    return _decide(team, _by_name_candidates(team, query), LocationResolutionMethod.NAME)
+
+
+def _by_name_candidates(team: Team, query: LocationQuery) -> list[ContainerLocation]:
+    """The locations whose own name matches the query's, narrowed by country and city.
+
+    Shared with step 3, so "which of our places is called this" has one answer
+    wherever the question is asked. Hierarchy narrowing is deliberately *not* done
+    here: step 3 needs the un-narrowed set to compare against the code, and applies
+    it itself.
+    """
     name = normalize_location_name(query.name)
     if not name:
-        return None
-
+        return []
     candidates = list(ContainerLocation.objects.filter(team=team, is_active=True, normalized_name=name))
     if len(candidates) > 1:
         candidates = _narrow_by_place(candidates, query)
-    return _decide(candidates, LocationResolutionMethod.NAME)
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -342,12 +471,12 @@ def _by_name(team: Team, query: LocationQuery) -> LocationResolution | None:
 # ---------------------------------------------------------------------------
 
 
-def _decide(candidates: list[ContainerLocation], method: str) -> LocationResolution | None:
+def _decide(team: Team, candidates: list[ContainerLocation], method: str) -> LocationResolution | None:
     """Turn a candidate set into a resolution, collapsing hierarchies first."""
     if not candidates:
         return None
 
-    outermost = _narrow_to_outermost(candidates)
+    outermost = _narrow_to_outermost(candidates, team=team)
     if len(outermost) == 1:
         return LocationResolution(
             status=LocationResolutionStatus.RESOLVED,
@@ -361,7 +490,7 @@ def _decide(candidates: list[ContainerLocation], method: str) -> LocationResolut
     )
 
 
-def _narrow_to_outermost(candidates: list[ContainerLocation]) -> list[ContainerLocation]:
+def _narrow_to_outermost(candidates: list[ContainerLocation], *, team: Team) -> list[ContainerLocation]:
     """Drop any candidate that sits inside another candidate.
 
     Göteborg (PORT, SEGOT) and Oceanterminalen (DEPOT, SEGOT, parent Göteborg) both
@@ -369,31 +498,21 @@ def _narrow_to_outermost(candidates: list[ContainerLocation]) -> list[ContainerL
     first, and the code names the first. Dropping the descendant leaves one answer.
 
     Two *unrelated* locations sharing a code survive this untouched and go on to be
-    reported as ambiguous, which is the honest result.
+    reported as ambiguous, which is the honest result — and the one LOC-5 offers to
+    fix by recording the containment.
+
+    The containment itself is :func:`~apps.scm.containers.location_hierarchy.contained_ids`,
+    which walks the whole set a level at a time instead of following each candidate's
+    ``parent_location`` in turn. For the structure this exists for — a port whose
+    terminals carry its code — the parents are already among the candidates and the
+    answer costs no queries at all.
     """
     if len(candidates) < 2:
         return candidates
 
     ids = {location.pk for location in candidates}
-    return [location for location in candidates if not _has_ancestor_in(location, ids)]
-
-
-def _has_ancestor_in(location: ContainerLocation, ids: set[int]) -> bool:
-    """True when any location above *location* is one of *ids*."""
-    seen: set[int] = {location.pk}
-    current = location.parent_location
-    for _step in range(10):
-        if current is None:
-            return False
-        if current.pk in ids:
-            return True
-        if current.pk in seen:
-            # A cycle written straight to the database. `clean()` rejects these, so
-            # this is a guard against corrupt data rather than an expected path.
-            return False
-        seen.add(current.pk)
-        current = current.parent_location
-    return False
+    inside = contained_ids(candidates, ids, team=team)
+    return [location for location in candidates if location.pk not in inside]
 
 
 def _narrow_by_place(candidates: list[ContainerLocation], query: LocationQuery) -> list[ContainerLocation]:

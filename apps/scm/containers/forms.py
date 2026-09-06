@@ -5,6 +5,7 @@ from django.utils.translation import gettext_lazy as _
 
 from .choices import MovementType
 from .intake import carrier_choices, parse_and_validate_container_number
+from .location_hierarchy import parent_options
 from .location_identity import (
     normalize_alias_source,
     normalize_country_code,
@@ -373,6 +374,35 @@ class PlannedContainerForm(forms.Form):
         return self.cleaned_data["container_number"].upper().strip()
 
 
+class ParentLocationChoiceField(forms.ModelChoiceField):
+    """The parent selector, labelled with enough context to choose from.
+
+    ``Oceanterminalen`` on its own is not a choice anybody can make confidently when
+    the list also holds ``APM Terminals Gothenburg`` and two depots. The code and the
+    type are what distinguish them:
+
+    .. code-block:: text
+
+        Göteborg — SEGOT — Port
+        Oceanterminalen — SEGOT — Terminal
+        John Evans Depot — Depot
+
+    Only fields that are actually recorded appear; a location with no code shows two
+    parts rather than an empty gap. A deactivated place can only be here because it is
+    already this location's parent (see
+    :func:`~apps.scm.containers.location_hierarchy.parent_options`), and says so, so
+    keeping it is a decision rather than an accident.
+    """
+
+    def label_from_instance(self, obj) -> str:
+        parts = [obj.name]
+        if obj.unlocode:
+            parts.append(obj.unlocode)
+        parts.append(str(obj.get_location_type_display()))
+        label = " — ".join(parts)
+        return label if obj.is_active else f"{label} ({_('inactive')})"
+
+
 class ContainerLocationForm(forms.ModelForm):
     """Form for creating or editing a canonical location.
 
@@ -381,6 +411,12 @@ class ContainerLocationForm(forms.ModelForm):
     rather than taken from the model for exactly that reason: the column holds five
     characters, and a field inheriting that limit would reject "SE GOT" on length
     before ``clean_unlocode`` could turn it into the five it holds.
+
+    The parent selector offers only the locations that could legally be one — this
+    team's, not itself, not anything inside it, and active. Refusing a descendant up
+    front rather than through ``clean()`` matters: "that would make the hierarchy
+    circular" is a sentence nobody should have to read to find out that the option
+    they were shown was never available.
     """
 
     unlocode = forms.CharField(
@@ -411,6 +447,7 @@ class ContainerLocationForm(forms.ModelForm):
             "notes",
             "is_active",
         ]
+        field_classes = {"parent_location": ParentLocationChoiceField}
         widgets = {
             "name": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
             "location_type": forms.Select(attrs={"class": "select select-bordered w-full"}),
@@ -434,14 +471,14 @@ class ContainerLocationForm(forms.ModelForm):
         parent_field = cast(forms.ModelChoiceField, self.fields["parent_location"])
         parent_field.empty_label = _("— No parent —")
 
-        # A parent has to be one of this team's locations, and it cannot be this
-        # location itself. Scoped on the queryset rather than only in `clean` so a
-        # foreign id is not even offered, and cannot be posted.
+        # Which locations may be a parent is a hierarchy rule, not a form detail, so
+        # it comes from `location_hierarchy` — the same module the model validates
+        # with. Scoped on the queryset rather than only in `clean`, so an illegal id
+        # is neither offered nor accepted when posted.
         team = team or (self.instance.team if self.instance and self.instance.team_id else None)
-        queryset = ContainerLocation.objects.none() if team is None else ContainerLocation.objects.filter(team=team)
-        if self.instance and self.instance.pk:
-            queryset = queryset.exclude(pk=self.instance.pk)
-        parent_field.queryset = queryset.order_by("name")
+        parent_field.queryset = (
+            ContainerLocation.objects.none() if team is None else parent_options(team, self.instance)
+        )
 
         for name in ("country_code", "latitude", "longitude", "timezone", "parent_location"):
             self.fields[name].required = False

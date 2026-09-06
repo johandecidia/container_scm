@@ -4,8 +4,11 @@ from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 from apps.teams.models import Team
 
 from .choices import LocationAliasSource
+from .location_hierarchy import descendant_ids
 from .location_workspace import (
+    LocationHierarchy,
     LocationWorkspace,
+    get_location_hierarchy,
     get_location_inventory,
     get_location_movements,
     get_location_overview_movements,
@@ -15,11 +18,6 @@ from .models import Container, ContainerLocation, EquipmentType, LocationAlias
 from .movements import get_container_movements, get_current_state_movement, get_state_movements
 from .utils import container_number_query
 from .workspace import ContainerWorkspace, get_container_workspace
-
-# How many levels of location containment `get_location_subtree_ids` will walk. A
-# port inside a port inside a port is already past anything the domain describes;
-# the bound stops a cycle written straight to the database from looping.
-_MAX_SUBTREE_DEPTH = 10
 
 _SORT_MAP = {
     "newest": "-created_at",
@@ -124,28 +122,13 @@ def get_alias_source_suggestions(team: Team) -> list[str]:
 def get_location_subtree_ids(team: Team, location: ContainerLocation) -> list[int]:
     """Return *location*'s id together with every location beneath it.
 
-    What "expected at Göteborg" has to mean: a shipment bound for Oceanterminalen is
-    arriving at the port that contains it, and a port whose terminals were invisible
-    to it would under-report its own arrivals. This is not inference — the
-    containment is a relation MCR recorded itself.
-
-    Walked level by level rather than with a recursive CTE. The hierarchy the domain
-    describes is a port with terminals in it, so this is two or three cheap queries
-    and stays readable; ``_MAX_SUBTREE_DEPTH`` bounds it against corrupt data.
+    Kept as the name its callers already use — the arrivals queue and the location
+    workspace's Expected tab — and now a call onto
+    :func:`apps.scm.containers.location_hierarchy.descendant_ids`, which is where
+    every traversal of the hierarchy lives. Two walks would eventually let a port
+    contain a terminal on one page and not on another.
     """
-    ids = [location.pk]
-    frontier = [location.pk]
-    for _level in range(_MAX_SUBTREE_DEPTH):
-        children = list(
-            ContainerLocation.objects.filter(team=team, parent_location_id__in=frontier)
-            .exclude(pk__in=ids)
-            .values_list("pk", flat=True)
-        )
-        if not children:
-            break
-        ids.extend(children)
-        frontier = children
-    return ids
+    return descendant_ids(team, location)
 
 
 # Unmatched external place names used to be aggregated here, for a panel on the
@@ -212,6 +195,7 @@ def filter_containers(
 # here so callers keep importing selectors for reads.
 __all__ = [
     "ContainerWorkspace",
+    "LocationHierarchy",
     "LocationWorkspace",
     "filter_containers",
     "get_active_equipment_types",
@@ -224,6 +208,7 @@ __all__ = [
     "get_alias_source_suggestions",
     "get_equipment_types",
     "get_location_aliases",
+    "get_location_hierarchy",
     "get_location_inventory",
     "get_location_movements",
     "get_location_overview_movements",

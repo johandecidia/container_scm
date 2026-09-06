@@ -455,7 +455,13 @@ def container_location_detail(request, location_id):
     containers standing on it, so refusing to show them would hide real inventory.
     """
     team = request.default_team
-    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
+    location = get_object_or_404(
+        # The parent is rendered in the header and the hierarchy panel; joining it
+        # here costs nothing and saves the workspace a query.
+        ContainerLocation.objects.select_related("parent_location"),
+        pk=location_id,
+        team=team,
+    )
     workspace = get_location_workspace(team=team, location=location)
 
     inventory = get_location_inventory(
@@ -496,7 +502,7 @@ def container_location_detail(request, location_id):
     return render(request, "scm/containers/pages/container_location_detail.html", context)
 
 
-def _location_form_context(request, form, *, team, title: str) -> dict:
+def _location_form_context(request, form, *, team, title: str, location=None) -> dict:
     """Context for the location modal, carrying the page it was opened from.
 
     ``return_to`` arrives as a query parameter on the way in and travels back as a
@@ -505,7 +511,14 @@ def _location_form_context(request, form, *, team, title: str) -> dict:
     modal's HTMX target too: a form opened from the location list swaps that list's
     table, and one opened from anywhere else has no table to swap and stays in the
     modal until the view redirects it.
+
+    ``hierarchy_impact`` is what recording a parent here would probably settle, and
+    only for an existing location — a place being created has no evidence behind it
+    yet. Read-only, and read at most once per form: it is an estimate to inform the
+    choice, not a step in making it, and nothing is re-resolved by opening the modal.
     """
+    from apps.scm.visibility.location_quality import get_hierarchy_impact
+
     requested = request.POST.get("return_to") or request.GET.get("return_to", "")
     return_to = requested if requested in _LOCATION_FORM_RETURNS else ""
     return {
@@ -515,6 +528,7 @@ def _location_form_context(request, form, *, team, title: str) -> dict:
         "return_to": return_to,
         "form_target": "#modal-container" if return_to else "#location-table",
         "form_swap": "innerHTML" if return_to else "outerHTML",
+        "hierarchy_impact": None if location is None else get_hierarchy_impact(team, location),
         "team_slug": team.slug,
     }
 
@@ -559,9 +573,10 @@ def container_location_update(request, location_id):
     """Edit an existing container location.
 
     Reached from the location list, from the Location Workspace, and from the
-    Location Data Quality queue — where the edit being made is almost always the
-    coordinates. It is the same form and the same ``update_location`` in every case,
-    so validation stays where LOC-4 put it, on ``ContainerLocation.clean``.
+    Location Data Quality queue — where the edit is usually the coordinates or, since
+    LOC-6, the parent. It is the same form and the same ``update_location`` in every
+    case, so validation stays on ``ContainerLocation.clean``, which is what makes a
+    cycle impossible however the parent was set.
     """
     team = request.default_team
     location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
@@ -586,7 +601,7 @@ def container_location_update(request, location_id):
     return render(
         request,
         "scm/containers/partials/container_location_form.html",
-        _location_form_context(request, form, team=team, title=_("Edit Location")),
+        _location_form_context(request, form, team=team, title=_("Edit Location"), location=location),
     )
 
 

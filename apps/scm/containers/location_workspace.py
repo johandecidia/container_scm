@@ -26,6 +26,14 @@ rather than inferred: a shipment bound for Oceanterminalen *is* arriving at the
 Göteborg port that contains it, so the port's tab includes it and the terminal's
 tab does not include the port's other traffic.
 
+**Structure is shown, never inferred.** :class:`LocationHierarchy` renders the parent
+this place was recorded inside and the places recorded inside it — the same
+``parent_location`` the resolver narrows with and the arrivals queue expands, read
+through :mod:`apps.scm.containers.location_hierarchy` so there is one idea of what
+contains what. The panel exists because that relation is now load-bearing: it is what
+decides whether ``SEGOT`` means the port or is ambiguous between three places, and an
+operator cannot maintain something they cannot see.
+
 :class:`ExpectedArrivals` keeps its ``is_available`` field. It is now True for every
 location, but a location whose team has nothing routed to it canonically still has
 to say "nothing is expected here" rather than "we cannot tell you" — and those
@@ -63,6 +71,81 @@ class StatusCount:
     status: str
     label: str
     count: int
+
+
+@dataclass(frozen=True)
+class LocationHierarchy:
+    """Where this place sits in the network MCR recorded, one level either way.
+
+    ``ancestors`` is the path down to it, outermost first, so a breadcrumb reads
+    ``Göteborg › Oceanterminalen › MCR Yard``. ``children`` is what is immediately
+    inside it, each carrying its own inventory count from the same annotation the
+    Locations list uses.
+
+    Bounded on purpose: the immediate children and the path up. A whole subtree on a
+    location page would be a tree view, and the way to see what is inside a terminal
+    is to open the terminal.
+
+    Nothing here is derived from names, coordinates or codes — it is the containment
+    an operator recorded, and the panel says so.
+    """
+
+    location: ContainerLocation
+    ancestors: list[ContainerLocation] = field(default_factory=list)
+    children: list[ContainerLocation] = field(default_factory=list)
+
+    @property
+    def parent(self) -> ContainerLocation | None:
+        """The place immediately above, or None when this is a root."""
+        return self.ancestors[-1] if self.ancestors else None
+
+    @property
+    def has_parent(self) -> bool:
+        return bool(self.ancestors)
+
+    @property
+    def path(self) -> list[ContainerLocation]:
+        """The ancestors and this location, outermost first."""
+        return [*self.ancestors, self.location]
+
+    @property
+    def has_children(self) -> bool:
+        return bool(self.children)
+
+    @property
+    def child_count(self) -> int:
+        return len(self.children)
+
+    @property
+    def is_root(self) -> bool:
+        return not self.ancestors
+
+    @property
+    def is_leaf(self) -> bool:
+        return not self.children
+
+    @property
+    def has_inactive_parent(self) -> bool:
+        """True when the place above this one has been deactivated.
+
+        Worth saying out loud rather than hiding: the containment still holds — a
+        retired port does not move its terminals — but new evidence will no longer
+        resolve to the parent, so a reader wondering why the port stopped claiming
+        anything has the answer on the page.
+        """
+        parent = self.parent
+        return parent is not None and not parent.is_active
+
+    @property
+    def shares_unlocode_with_parent(self) -> bool:
+        """True when this place and its parent carry the same UN/LOCODE.
+
+        The normal, legitimate case for a port and its terminals — and the one where
+        the recorded containment is doing real work, because it is what stops the
+        code being ambiguous between them.
+        """
+        parent = self.parent
+        return bool(parent is not None and self.location.unlocode and parent.unlocode == self.location.unlocode)
 
 
 @dataclass(frozen=True)
@@ -107,6 +190,7 @@ class LocationWorkspace:
     recent_movements: list = field(default_factory=list)
     expected: ExpectedArrivals = field(default_factory=ExpectedArrivals)
     aliases: list = field(default_factory=list)
+    hierarchy: LocationHierarchy | None = None
 
     # -- identity -----------------------------------------------------------
 
@@ -125,7 +209,13 @@ class LocationWorkspace:
 
     @property
     def parent(self) -> ContainerLocation | None:
-        return self.location.parent_location
+        """The place immediately above, from the hierarchy this workspace loaded.
+
+        Read through ``hierarchy`` rather than off ``location.parent_location`` so the
+        header, the breadcrumb and the hierarchy panel are one query rather than
+        three views of the same foreign key.
+        """
+        return self.hierarchy.parent if self.hierarchy is not None else self.location.parent_location
 
     @property
     def unlocode(self) -> str:
@@ -177,12 +267,31 @@ class LocationWorkspace:
         )
 
 
+def get_location_hierarchy(team: Team, location: ContainerLocation) -> LocationHierarchy:
+    """Where *location* sits in the recorded hierarchy: the path up, and one level down.
+
+    One query for the children, and one per level of the path above — one or two for
+    the structures the domain has, bounded by
+    :data:`apps.scm.containers.location_hierarchy.MAX_DEPTH` whatever the data says.
+    Nothing here costs a query *per child*, which is the N+1 a port with forty
+    terminals would otherwise pay: the counts are annotated.
+    """
+    from .location_hierarchy import ancestor_chain, children_with_counts
+
+    return LocationHierarchy(
+        location=location,
+        ancestors=ancestor_chain(team, location),
+        children=list(children_with_counts(team, location)),
+    )
+
+
 def get_location_workspace(team: Team, location: ContainerLocation) -> LocationWorkspace:
     """Gather everything the location workspace renders, team-scoped throughout.
 
-    Four queries plus whatever the view does with the inventory queryset: the count,
-    the status breakdown, the recent movements, and the inventory itself. Nothing
-    scales with the number of containers at the location.
+    Six queries plus whatever the view does with the inventory queryset: the count,
+    the status breakdown, the recent movements, the aliases, the hierarchy's children
+    and its path upward, and the inventory itself. Nothing scales with the number of
+    containers at the location, or with the number of places inside it.
     """
     inventory = get_location_inventory(team=team, location=location)
 
@@ -205,6 +314,7 @@ def get_location_workspace(team: Team, location: ContainerLocation) -> LocationW
         recent_movements=get_location_movements(team=team, location=location),
         expected=get_expected_arrivals(team=team, location=location),
         aliases=list(LocationAlias.objects.filter(team=team, location=location).order_by("source", "external_name")),
+        hierarchy=get_location_hierarchy(team=team, location=location),
     )
 
 

@@ -17,6 +17,11 @@
   says so plainly when they are not. One marker for the location, carrying the
   inventory count — not one per container, because they all share the location's
   single coordinate and eighty stacked discs would say nothing eighty times.
+
+  The hierarchy panel sits below them. It is on the Overview rather than behind a tab
+  of its own because containment is part of what this place *is* — the same category
+  as its code and its type — and because it is the panel somebody arrives at from the
+  data-quality queue.
 {% endcomment %}
 
 <div class="flex flex-col gap-4">
@@ -57,6 +62,11 @@
       {% include "scm/containers/partials/location_expected.html" %}
     </section>
   </div>
+
+  {# ------------------------------------------------------------------ #}
+  {# Where this place sits: the path down to it, and what is inside it.  #}
+  {# ------------------------------------------------------------------ #}
+  {% include "scm/containers/partials/location_hierarchy.html" %}
 
   {# ------------------------------------------------------------------ #}
   {# Recent movement.                                                    #}

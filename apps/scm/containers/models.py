@@ -25,12 +25,6 @@ from .location_identity import (
 )
 from .utils import validate_container_id
 
-# How deep a location hierarchy may be walked when checking for a cycle. A port
-# inside a port inside a port is already past anything the domain describes; the
-# bound exists so a cycle written directly to the database cannot spin `clean()`
-# forever.
-_MAX_PARENT_DEPTH = 10
-
 
 class PlannedContainerStatus(models.TextChoices):
     PLANNED = "planned", _("Planned")
@@ -80,6 +74,12 @@ class ContainerLocation(BaseTeamModel):
     force two of the three to be misfiled or invented as something else. It is
     indexed, not constrained, and ``location_resolver`` handles the plurality by
     refusing to guess between them.
+
+    **Containment is an adjacency list and nothing cleverer.**
+    ``parent_location`` means "this place sits inside that one", with no restriction
+    by type: a terminal in a port, a yard in a terminal and an area in a depot are
+    one relation. What it means, what it may not do, and every walk over it are
+    stated once in :mod:`apps.scm.containers.location_hierarchy`.
 
     ``normalized_name`` is derived, maintained by ``save``, and exists so a name can
     be looked up on an index rather than by loading every location a team has and
@@ -165,32 +165,15 @@ class ContainerLocation(BaseTeamModel):
         """Reject a hierarchy that is not one, a foreign parent, and impossible coordinates."""
         super().clean()
         self._validate_coordinates()
+        # The hierarchy rules — no self-parenting, no cycle at any distance, no
+        # foreign parent, bounded depth — live beside the traversals that rely on
+        # them, in `location_hierarchy`. That module is also what the form's parent
+        # selector and the resolver's narrowing read, so there is one statement of
+        # what containment means rather than one per caller. Imported here rather
+        # than at module scope because it imports this module.
+        from .location_hierarchy import validate_parent
 
-        parent_id = self.parent_location_id
-        if parent_id is None:
-            return
-
-        if self.pk is not None and parent_id == self.pk:
-            raise ValidationError({"parent_location": _("A location cannot be its own parent.")})
-
-        parent = self.parent_location
-        if parent is not None and self.team_id and parent.team_id != self.team_id:
-            raise ValidationError({"parent_location": _("The parent location must belong to the same team.")})
-
-        # Walking up from the proposed parent must not arrive back here. Without
-        # this, "make A the child of B" and "make B the child of A" are each
-        # individually valid and together detach both from every query that starts
-        # at a root.
-        seen = {self.pk} if self.pk is not None else set()
-        current = parent
-        for _step in range(_MAX_PARENT_DEPTH):
-            if current is None:
-                return
-            if current.pk in seen:
-                raise ValidationError({"parent_location": _("That would make the location hierarchy circular.")})
-            seen.add(current.pk)
-            current = current.parent_location
-        raise ValidationError({"parent_location": _("The location hierarchy is nested too deeply.")})
+        validate_parent(self)
 
     def _validate_coordinates(self) -> None:
         """Reject a latitude or longitude that is not on the planet.
