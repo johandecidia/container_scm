@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import intake_views, views
+from . import intake_views, location_views, views
 
 app_name = "containers"
 
@@ -27,26 +27,30 @@ urlpatterns = [
     path("discovery/<int:pk>/cancel/", views.planned_container_cancel, name="discovery_cancel"),
     # Container locations. `create` is declared before `<int:location_id>` so the
     # literal segment is matched first; the detail route is the Location Workspace.
-    path("locations/", views.container_location_list, name="location_list"),
-    path("locations/create/", views.container_location_create, name="location_create"),
-    path("locations/<int:location_id>/", views.container_location_detail, name="location_detail"),
-    path("locations/<int:location_id>/edit/", views.container_location_update, name="location_update"),
-    path("locations/<int:location_id>/deactivate/", views.container_location_deactivate, name="location_deactivate"),
+    path("locations/", location_views.container_location_list, name="location_list"),
+    path("locations/create/", location_views.container_location_create, name="location_create"),
+    path("locations/<int:location_id>/", location_views.container_location_detail, name="location_detail"),
+    path("locations/<int:location_id>/edit/", location_views.container_location_update, name="location_update"),
+    path(
+        "locations/<int:location_id>/deactivate/",
+        location_views.container_location_deactivate,
+        name="location_deactivate",
+    ),
     # External identity. Aliases hang off a location because that is what they name,
     # so the location's id is part of the path and scoping is not optional.
     path(
         "locations/<int:location_id>/aliases/add/",
-        views.container_location_alias_create,
+        location_views.container_location_alias_create,
         name="location_alias_create",
     ),
     path(
         "locations/<int:location_id>/aliases/<int:alias_id>/delete/",
-        views.container_location_alias_delete,
+        location_views.container_location_alias_delete,
         name="location_alias_delete",
     ),
     # LOC-5's action, arrived at from the other direction: the operator is looking
     # at what a provider reported and says which canonical location it is. No
     # location id in the path — choosing one is the whole decision — and the
     # evidence travels in the query string and the form.
-    path("locations/aliases/from-evidence/", views.location_evidence_alias, name="location_evidence_alias"),
+    path("locations/aliases/from-evidence/", location_views.location_evidence_alias, name="location_evidence_alias"),
 ]
