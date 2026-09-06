@@ -474,6 +474,68 @@ class ContainerLocationForm(forms.ModelForm):
         return normalized
 
 
+class LocationEvidenceAliasForm(forms.Form):
+    """Record one row of the Location Data Quality queue as an alias.
+
+    The same decision :class:`LocationAliasForm` records, arrived at from the other
+    direction. There, an operator is looking at a place and says what a provider
+    calls it; here they are looking at what a provider called something and say
+    which place it is. So the evidence is fixed and carried in hidden fields, and
+    the only thing being chosen is the canonical location.
+
+    There is deliberately no "create the location too". A canonical location is
+    master data somebody should mean to add, and a one-click "create from carrier
+    text" is how a location list ends up with four spellings of Göteborg in it.
+
+    Both identifiers travel with the evidence, but only ``external_name`` is stored.
+    The alias table's ``external_code`` is for a *provider's own* identifier for a
+    place, and the resolver looks it up against a query field the tracking pipeline
+    never fills; putting a UN/LOCODE there would file the code where nothing reads
+    it. A code that names a place belongs on the location, through the location form.
+    """
+
+    location = forms.ModelChoiceField(
+        label=_("Canonical location"),
+        queryset=ContainerLocation.objects.none(),
+        empty_label=_("— Choose a location —"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    source = forms.CharField(max_length=50, widget=forms.HiddenInput())
+    external_name = forms.CharField(max_length=200, widget=forms.HiddenInput())
+
+    def __init__(self, *args, team=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scoped on the queryset rather than only in `clean`, so another team's id
+        # is not offered and cannot be posted.
+        location_field = cast(forms.ModelChoiceField, self.fields["location"])
+        location_field.queryset = (
+            ContainerLocation.objects.none()
+            if team is None
+            else ContainerLocation.objects.filter(team=team, is_active=True)
+            .select_related("parent_location")
+            .order_by("name")
+        )
+
+    def clean_source(self) -> str:
+        source = normalize_alias_source(self.cleaned_data.get("source"))
+        if not source:
+            raise forms.ValidationError(_("An alias needs a source."))
+        return source
+
+    def clean_external_name(self) -> str:
+        name = (self.cleaned_data.get("external_name") or "").strip()
+        if not normalize_location_name(name):
+            raise forms.ValidationError(_("An alias needs the name the source reported."))
+        return name
+
+    def alias_data(self) -> dict:
+        """The cleaned values, for ``create_location_alias``."""
+        return {
+            "source": self.cleaned_data["source"],
+            "external_name": self.cleaned_data["external_name"],
+        }
+
+
 class LocationAliasForm(forms.ModelForm):
     """Form for recording what an external source calls a location.
 

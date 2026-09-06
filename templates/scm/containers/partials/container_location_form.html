@@ -7,6 +7,12 @@
   and UN/LOCODE decide which carrier evidence reaches this place; the address and the
   owner name are for people. The hint under the code says it need not be unique,
   which is the one thing about it that surprises people.
+
+  `form_target` and `return_to` are how the same form serves more than one page. The
+  Locations list swaps its own table back in; the Location Data Quality queue has no
+  table to swap, so it posts into the modal and the view answers a success with
+  HX-Redirect back to a freshly built queue. The flag travels as a hidden field so a
+  validation error does not lose the page the operator started on.
 {% endcomment %}
 
 <div class="modal modal-open">
@@ -16,10 +22,11 @@
       method="post"
       action="{{ form_action }}"
       hx-post="{{ form_action }}"
-      hx-target="#location-table"
-      hx-swap="outerHTML"
+      hx-target="{{ form_target|default:'#location-table' }}"
+      hx-swap="{{ form_swap|default:'outerHTML' }}"
     >
       {% csrf_token %}
+      {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
 
       {% if form.non_field_errors %}
         <div role="alert" class="alert alert-error mb-4 text-sm">

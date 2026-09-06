@@ -74,10 +74,21 @@
 <li class="menu-title">
   <span>{% translate "Network" %}</span>
 </li>
+{% url 'visibility:location_quality' as location_quality_url %}
 <li>
   <a href="{% url 'containers:location_list' %}" {% if '/scm/containers/locations/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-map-marker-alt h-4 w-4"></i>
     {% translate "Locations" %}
+  </a>
+</li>
+{% comment %}
+  Data Quality sits under Network rather than Control: its rows are edits to the
+  location master data this group owns, not supply chain events to react to.
+{% endcomment %}
+<li>
+  <a href="{{ location_quality_url }}" {% if request.path == location_quality_url %}class="menu-active"{% endif %}>
+    <i class="fa fa-location-crosshairs h-4 w-4"></i>
+    {% translate "Data Quality" %}
   </a>
 </li>
 

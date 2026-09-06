@@ -13,6 +13,10 @@ urlpatterns = [
     # models the Control Tower composes, not bounded contexts of their own.
     path("exceptions/", views.exceptions_queue, name="exceptions"),
     path("arrivals/", views.arrivals_queue, name="arrivals"),
+    # LOC-5. A queue over the same location read models, whose rows are master-data
+    # edits rather than shipments. The edits themselves post to `containers`, which
+    # owns the master data — this app reads and never writes.
+    path("location-quality/", views.location_quality, name="location_quality"),
     path("map-data/", views.visibility_map_data, name="map_data"),
     # What one map marker expands into. Keyed by position class as well as location:
     # "what is physically at Oceanterminalen" and "what is heading there" are two

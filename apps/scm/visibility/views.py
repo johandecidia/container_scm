@@ -24,6 +24,7 @@ from .geojson import (
     location_feature_collection,
     map_feature_collection,
 )
+from .location_quality import get_location_data_quality
 from .map_positions import (
     MapFilters,
     PositionClass,
@@ -104,6 +105,26 @@ def arrivals_queue(request):
     if request.htmx:
         return render(request, ARRIVALS_QUEUE_TEMPLATE, context)
     return render(request, "scm/visibility/pages/arrivals.html", context)
+
+
+@scm_login_required
+def location_quality(request):
+    """The Location Data Quality queue: what to fix so the map can improve.
+
+    Read-only, like everything else in this app. The three actions its rows offer —
+    edit a location's coordinates, record an alias, add a location — all post to
+    ``containers``, which owns the canonical location master data.
+
+    No HTMX branch. The page is a list of master-data tasks rather than a filtered
+    view of one, so there is nothing on it a filter would narrow; an edit leaves
+    through a form and comes back to a freshly built page.
+    """
+    team = request.default_team
+    return render(
+        request,
+        "scm/visibility/pages/location_quality.html",
+        {"quality": get_location_data_quality(team), "team_slug": team.slug},
+    )
 
 
 @scm_login_required

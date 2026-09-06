@@ -44,4 +44,9 @@ urlpatterns = [
         views.container_location_alias_delete,
         name="location_alias_delete",
     ),
+    # LOC-5's action, arrived at from the other direction: the operator is looking
+    # at what a provider reported and says which canonical location it is. No
+    # location id in the path — choosing one is the whole decision — and the
+    # evidence travels in the query string and the form.
+    path("locations/aliases/from-evidence/", views.location_evidence_alias, name="location_evidence_alias"),
 ]

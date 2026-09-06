@@ -1,0 +1,93 @@
+{% load i18n %}
+
+{% comment %}
+  "Record this evidence as an alias for…" — the Location Data Quality queue's action.
+
+  The evidence is stated, not editable. The operator is not retyping what a carrier
+  sent; they are answering one question about it, and the only input is which
+  canonical location it means. The reported name and code travel in hidden fields so
+  the alias that gets stored is the string the resolver will actually compare.
+
+  There is no "create the location" here. A canonical location is master data
+  somebody should mean to add, and the queue links to the ordinary location form for
+  a place that genuinely is not in the network yet.
+
+  On success the view answers with HX-Redirect back to the queue, so the operator
+  lands on a freshly built page with this row resolved. An error — a duplicate alias
+  is the usual one — re-renders this modal with its messages.
+{% endcomment %}
+
+<div class="modal modal-open">
+  <div class="modal-box max-w-lg">
+    <h3 class="font-bold text-lg mb-1">{% translate "Map reported place to a location" %}</h3>
+    <p class="text-sm text-base-content/60 mb-4">
+      {% blocktranslate trimmed %}
+        Record what this source calls the place. Future tracking events naming it
+        will resolve to the location you choose.
+      {% endblocktranslate %}
+    </p>
+
+    <div class="bg-base-200 rounded-box p-3 mb-4 text-sm space-y-1">
+      <div class="flex items-baseline gap-2">
+        <span class="text-xs uppercase tracking-wide text-base-content/50 w-20 shrink-0">{% translate "Reported" %}</span>
+        <span class="font-medium">{{ raw_name|default:"—" }}</span>
+      </div>
+      <div class="flex items-baseline gap-2">
+        <span class="text-xs uppercase tracking-wide text-base-content/50 w-20 shrink-0">{% translate "Source" %}</span>
+        <span class="badge badge-ghost badge-sm font-mono">{{ provider_code|default:"—" }}</span>
+      </div>
+      {% if raw_unlocode %}
+        <div class="flex items-baseline gap-2">
+          <span class="text-xs uppercase tracking-wide text-base-content/50 w-20 shrink-0">{% translate "UN/LOCODE" %}</span>
+          <span class="font-mono text-base-content/70">{{ raw_unlocode }}</span>
+          <span class="text-xs text-base-content/40">
+            {% translate "kept on the evidence — an alias matches on the name" %}
+          </span>
+        </div>
+      {% endif %}
+    </div>
+
+    <form
+      method="post"
+      action="{{ form_action }}"
+      hx-post="{{ form_action }}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      {% csrf_token %}
+      {{ form.source }}
+      {{ form.external_name }}
+      <input type="hidden" name="unlocode" value="{{ raw_unlocode }}">
+
+      {% if form.non_field_errors %}
+        <div role="alert" class="alert alert-error mb-4 text-sm">
+          <i class="fa fa-circle-exclamation"></i>
+          <span>{{ form.non_field_errors|join:" " }}</span>
+        </div>
+      {% endif %}
+
+      <div class="form-control">
+        <label class="label" for="{{ form.location.id_for_label }}">
+          <span class="label-text">{{ form.location.label }}</span>
+        </label>
+        {{ form.location }}
+        <p class="text-xs text-base-content/50 mt-1">
+          {% translate "Only existing locations. Nothing is created here." %}
+        </p>
+        {% if form.location.errors %}<p class="text-error text-xs mt-1">{{ form.location.errors|join:" " }}</p>{% endif %}
+      </div>
+
+      <p class="text-xs text-base-content/40 mt-4">
+        {% blocktranslate trimmed %}
+          Events already stored keep the resolution they were given. The alias
+          applies from the next refresh or re-parse of them onwards.
+        {% endblocktranslate %}
+      </p>
+
+      <div class="modal-action">
+        <button type="button" class="btn btn-ghost" onclick="this.closest('.modal').remove()">{% translate "Cancel" %}</button>
+        <button type="submit" class="btn btn-primary">{% translate "Record alias" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

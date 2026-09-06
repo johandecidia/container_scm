@@ -1,0 +1,40 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Location Data Quality — the master-data edits that would make the map improve.
+
+  Read top to bottom as one argument: here is how complete the location data is,
+  here are the places that cannot be drawn, here is the evidence that matched
+  several places, here is the evidence that matched none. Every row ends in an
+  action, and every action is an edit to master data somebody owns.
+
+  Operational rather than analytical. There is no trend, no percentage over time and
+  no score, because none of those tell anybody what to do next — and the question
+  this page exists to answer is "what do I fix?".
+
+  No map. The Control Tower has the map; this is the page it links to when the map
+  cannot show something.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/components/page_header.html" with title=_("Location data quality") subtitle=_("What to fix so containers and evidence can be placed. Nothing here is guessed or geocoded.") %}
+
+  {% include "scm/visibility/partials/location_quality_summary.html" %}
+
+  {% if not quality.has_work %}
+    {% comment %}
+      Nothing to fix is a real and reportable state, and it is not the same as an
+      empty page. Said in words so a reader can tell "all done" from "not loaded".
+    {% endcomment %}
+    <section class="app-card mt-6">
+      {% include "scm/components/empty_state.html" with icon="fa-circle-check" title=_("Nothing to fix") message=_("Every active location has coordinates, and every place a provider has named resolves to one of them.") %}
+    </section>
+  {% else %}
+    {% include "scm/visibility/partials/location_coordinate_gaps.html" %}
+    {% include "scm/visibility/partials/location_evidence_queue.html" with rows=quality.ambiguous_evidence hidden=quality.ambiguous_hidden total=quality.ambiguous_total section="ambiguous" %}
+    {% include "scm/visibility/partials/location_evidence_queue.html" with rows=quality.unresolved_evidence hidden=quality.unresolved_hidden total=quality.unresolved_total section="unresolved" %}
+  {% endif %}
+
+  <div id="modal-container"></div>
+{% endblock %}

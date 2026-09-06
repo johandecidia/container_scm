@@ -14,6 +14,12 @@
   deliberately did not invent latitudes for places it could not verify, so a
   location without them is a normal state of the master data — and the fix is a
   location form, which is what the link goes to.
+
+  The named locations stay. "Oceanterminalen and 2 others" is a job somebody can do
+  this afternoon, and losing the names to a generic link would put a click between
+  the reader and the one fact that makes them act. The link is added beside them for
+  the rest of the picture — the ambiguous and unresolved evidence this line cannot
+  show without becoming a page of its own.
 {% endcomment %}
 
 <p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60">
@@ -69,5 +75,12 @@
         {% endblocktranslate %}
       {% endif %}
     </span>
+  {% endif %}
+
+  {% if coverage.has_gaps %}
+    <a href="{% url 'visibility:location_quality' %}" class="link link-hover font-medium">
+      <i class="fa fa-wrench"></i>
+      {% translate "Fix location coverage" %}
+    </a>
   {% endif %}
 </p>

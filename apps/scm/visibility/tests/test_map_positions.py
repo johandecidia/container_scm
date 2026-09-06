@@ -54,6 +54,7 @@ from .factories import (
     make_user_and_team,
     place_container_at,
     resolve_tracking_to,
+    with_check_digit,
 )
 
 # Real coordinates for real places, used only as fixture values. Nothing in the
@@ -630,7 +631,7 @@ class MapQueryCountTest(MapFixture):
     def _add_containers(self, count: int) -> None:
         for _index in range(count):
             self.added += 1
-            container = _container(self.team, _with_check_digit(f"MSKU{self.added:06d}"))
+            container = _container(self.team, with_check_digit(f"MSKU{self.added:06d}"))
             ShipmentContainer.objects.create(shipment=self.shipment, container=container)
             ingest_maersk_events(self.team, container, shipment=self.shipment)
             place_container_at(self.team, container, self.oceanterminalen)
@@ -666,15 +667,3 @@ def _params(**kwargs):
         else:
             query[key] = value
     return query
-
-
-def _with_check_digit(body: str) -> str:
-    """Complete a ten-character ISO 6346 body into a valid container number.
-
-    Computed rather than hard-coded so the query-count test can generate as many
-    containers as it needs without a table of magic numbers.
-    """
-    from apps.scm.containers.utils import calculate_check_digit
-
-    digit = calculate_check_digit(body[:3], body[3], body[4:10])
-    return f"{body[:10]}{digit}"

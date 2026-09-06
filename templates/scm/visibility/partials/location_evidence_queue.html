@@ -1,0 +1,134 @@
+{% load i18n %}
+
+{% comment %}
+  Usage:
+    {% include "scm/visibility/partials/location_evidence_queue.html" with rows=quality.ambiguous_evidence hidden=quality.ambiguous_hidden total=quality.ambiguous_total section="ambiguous" %}
+
+  One section of the evidence queue. The same markup for both statuses because the
+  row is the same shape and the action is the same action; only the reason differs,
+  and the reason is what the two headers say.
+
+  A row is a decision, not an event. Repeated evidence — one provider, one reported
+  name, one reported code — is grouped, so a carrier that has said "GOTHENBURG" four
+  hundred times is one line of work. The event count is how much evidence is
+  currently unattached, not a severity.
+
+  Ambiguous rows carry the resolver's own candidate list: the places it could not
+  choose between. They are shown and not chosen from automatically, which is the
+  point — a port and a terminal inside it legitimately share a UN/LOCODE, and
+  picking one on the operator's behalf is exactly the confidently-wrong answer the
+  resolver refuses to give.
+
+  Recording an alias changes what the *next* resolution decides. It does not rewrite
+  the events already stored, and this section says so rather than leaving somebody to
+  wonder why the row is still here.
+{% endcomment %}
+
+<section class="app-card mt-6">
+  {% if section == "ambiguous" %}
+    {% include "scm/components/section_header.html" with title=_("Ambiguous location evidence") count=total subtitle=_("Matched several canonical locations, so none was chosen") %}
+  {% else %}
+    {% include "scm/components/section_header.html" with title=_("Unresolved location evidence") count=total subtitle=_("No canonical location claims these places") %}
+  {% endif %}
+
+  {% if rows %}
+    <div class="overflow-x-auto">
+      <table class="table table-sm w-full">
+        <thead>
+          <tr>
+            <th>{% translate "Reported place" %}</th>
+            <th>{% translate "Source" %}</th>
+            <th>{% translate "UN/LOCODE" %}</th>
+            <th class="text-right">{% translate "Events" %}</th>
+            <th class="text-right">{% translate "Containers" %}</th>
+            <th>{% translate "Last seen" %}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td class="text-sm font-medium">
+                {{ row.label }}
+                {% if row.is_ambiguous and row.has_candidates %}
+                  <div class="text-xs text-base-content/50 mt-0.5">
+                    {% translate "Could be:" %}
+                    {% for candidate in row.candidates %}
+                      <a href="{% url 'containers:location_detail' candidate.pk %}" class="link link-hover">{{ candidate.full_name }}</a>{% if not forloop.last %}, {% endif %}
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </td>
+              <td><span class="badge badge-ghost badge-sm font-mono">{{ row.provider_code|default:"—" }}</span></td>
+              <td class="text-sm font-mono text-base-content/60">{{ row.raw_unlocode|default:"—" }}</td>
+              <td class="text-sm text-right tabular-nums">{{ row.event_count }}</td>
+              <td class="text-sm text-right tabular-nums">{{ row.container_count }}</td>
+              <td class="text-sm text-base-content/60">
+                {% if row.last_seen_at %}{{ row.last_seen_at|date:"j M Y" }}{% else %}—{% endif %}
+              </td>
+              <td class="text-right whitespace-nowrap">
+                {% if row.is_aliased %}
+                  {% comment %}
+                    The decision has been taken and the historic rows have not
+                    changed, because nothing here rewrites stored evidence. Said
+                    plainly so the row's continued presence is not read as a failure.
+                  {% endcomment %}
+                  <span class="text-xs text-success" title="{% translate 'Stored events keep their original resolution. The next refresh of these events uses the alias.' %}">
+                    <i class="fa fa-link"></i>
+                    {% blocktranslate trimmed with location=row.alias_location.full_name %}
+                      Alias set — {{ location }}
+                    {% endblocktranslate %}
+                  </span>
+                {% elif row.can_record_alias %}
+                  <button
+                    class="btn btn-xs btn-primary"
+                    hx-get="{% url 'containers:location_evidence_alias' %}?source={{ row.provider_code|urlencode }}&name={{ row.raw_name|urlencode }}&unlocode={{ row.raw_unlocode|urlencode }}"
+                    hx-target="#modal-container"
+                    hx-swap="innerHTML"
+                  >
+                    {% translate "Map to location" %}
+                  </button>
+                {% else %}
+                  {% comment %}
+                    Evidence with no reported name. An alias matches on the name, so
+                    there is nothing to record — the code has to go on a location, or
+                    the locations sharing it have to be arranged into the hierarchy
+                    they really form.
+                  {% endcomment %}
+                  <a href="{% url 'containers:location_list' %}" class="text-xs link link-hover">
+                    {% translate "Set this code on a location" %}
+                  </a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if hidden %}
+      <p class="text-xs text-base-content/40 mt-3">
+        {% blocktranslate trimmed count count=hidden %}
+          {{ count }} more decision is not shown.
+        {% plural %}
+          {{ count }} more decisions are not shown.
+        {% endblocktranslate %}
+      </p>
+    {% endif %}
+
+    <p class="text-xs text-base-content/40 mt-3 pt-3 border-t border-base-300">
+      {% blocktranslate trimmed %}
+        An alias records what one source calls a place. It is applied the next time
+        these events are refreshed or re-parsed — stored evidence is never rewritten.
+      {% endblocktranslate %}
+    </p>
+  {% else %}
+    <p class="text-sm text-base-content/50">
+      {% if section == "ambiguous" %}
+        {% translate "No evidence is currently ambiguous." %}
+      {% else %}
+        {% translate "Every place a provider has named resolves to a canonical location." %}
+      {% endif %}
+    </p>
+  {% endif %}
+</section>

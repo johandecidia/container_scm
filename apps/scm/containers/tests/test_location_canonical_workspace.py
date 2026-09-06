@@ -20,7 +20,7 @@ from django.utils import timezone
 from apps.scm.containers.choices import LocationType
 from apps.scm.containers.location_workspace import get_location_workspace
 from apps.scm.containers.models import Container, ContainerLocation, EquipmentType, LocationAlias
-from apps.scm.containers.selectors import get_location_subtree_ids, get_unresolved_external_locations
+from apps.scm.containers.selectors import get_location_subtree_ids
 from apps.scm.containers.services import create_location, create_location_alias
 from apps.scm.containers.utils import calculate_check_digit
 from apps.scm.shipments.models import Shipment, ShipmentContainer
@@ -169,59 +169,11 @@ class ExpectedArrivalsIsolationTest(TestCase):
         self.assertEqual(workspace.expected.objects, [])
 
 
-class UnresolvedEvidenceTest(TestCase):
-    """The bridge between the layers: places carriers name that nothing claims."""
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.team = Team.objects.create(name="Unresolved", slug="loc-unresolved")
-        cls.provider = TrackingProvider.objects.create(code="traqo", name="Traqo")
-
-    def _event(self, name, status, unlocode="", fingerprint=""):
-        return TrackingEvent.objects.create(
-            team=self.team,
-            provider=self.provider,
-            event_fingerprint=fingerprint,
-            location_name=name,
-            location_unlocode=unlocode,
-            location_resolution_status=status,
-            event_datetime=timezone.now(),
-        )
-
-    def test_repeated_evidence_for_one_place_is_one_row_of_work(self):
-        for index in range(3):
-            self._event("GOTHENBURG", "unresolved", fingerprint=f"fp-{index}")
-        rows = get_unresolved_external_locations(self.team)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["location_name"], "GOTHENBURG")
-        self.assertEqual(rows[0]["event_count"], 3)
-
-    def test_an_ambiguous_place_is_listed_and_marked_as_such(self):
-        self._event("GOTHENBURG", "ambiguous", unlocode="SEGOT", fingerprint="fp-amb")
-        rows = get_unresolved_external_locations(self.team)
-        self.assertTrue(rows[0]["is_ambiguous"])
-        self.assertEqual(rows[0]["unlocode"], "SEGOT")
-
-    def test_resolved_evidence_is_not_listed_as_work(self):
-        self._event("GOTHENBURG", "resolved", fingerprint="fp-res")
-        self.assertEqual(get_unresolved_external_locations(self.team), [])
-
-    def test_evidence_naming_no_place_is_not_listed(self):
-        """A booking confirmation names nowhere. There is nothing to decide."""
-        self._event("", "unresolved", fingerprint="fp-empty")
-        self.assertEqual(get_unresolved_external_locations(self.team), [])
-
-    def test_another_teams_unresolved_evidence_is_not_mine_to_fix(self):
-        other = Team.objects.create(name="Theirs", slug="loc-unresolved-theirs")
-        TrackingEvent.objects.create(
-            team=other,
-            provider=self.provider,
-            event_fingerprint="fp-theirs",
-            location_name="ROTTERDAM",
-            location_resolution_status="unresolved",
-            event_datetime=timezone.now(),
-        )
-        self.assertEqual(get_unresolved_external_locations(self.team), [])
+# The aggregation of unmatched carrier evidence used to be tested here, against
+# `get_unresolved_external_locations`. LOC-5 moved it to
+# `apps.scm.visibility.location_quality`, which groups the same evidence, counts the
+# containers behind it and can act on it; the tests moved with it, to
+# `apps/scm/visibility/tests/test_location_quality.py`.
 
 
 @override_settings(STORAGES=_TEST_STORAGES)
@@ -342,7 +294,8 @@ class LocationUiTest(TestCase):
         response = self.client.get(reverse("containers:location_detail", kwargs={"location_id": self.terminal.pk}))
         self.assertContains(response, "SHP-100001")
 
-    def test_the_list_shows_unmatched_carrier_locations_when_there_are_any(self):
+    def test_the_list_points_at_the_data_quality_queue_when_there_is_work(self):
+        """The rows themselves live on the queue now. This is the pointer to it."""
         provider = TrackingProvider.objects.create(code="traqo", name="Traqo")
         TrackingEvent.objects.create(
             team=self.team,
@@ -353,12 +306,14 @@ class LocationUiTest(TestCase):
             event_datetime=timezone.now(),
         )
         response = self.client.get(reverse("containers:location_list"))
-        self.assertContains(response, "Unmatched carrier locations")
-        self.assertContains(response, "GOTHENBURG")
+        self.assertContains(response, "Fix location coverage")
+        self.assertContains(response, reverse("visibility:location_quality"))
 
-    def test_the_list_does_not_nag_when_nothing_is_unmatched(self):
+    def test_the_list_does_not_nag_when_the_location_data_is_complete(self):
+        """Both locations here carry coordinates, and nothing is unmatched."""
+        ContainerLocation.objects.filter(team=self.team).update(latitude="57.7", longitude="11.9")
         response = self.client.get(reverse("containers:location_list"))
-        self.assertNotContains(response, "Unmatched carrier locations")
+        self.assertNotContains(response, "Fix location coverage")
 
     # -- aliases -------------------------------------------------------------
 

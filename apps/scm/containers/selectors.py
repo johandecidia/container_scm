@@ -1,12 +1,9 @@
 # Container selectors — all read/query operations.
-from collections.abc import Iterable
-from typing import cast
-
 from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 
 from apps.teams.models import Team
 
-from .choices import LocationAliasSource, LocationResolutionStatus
+from .choices import LocationAliasSource
 from .location_workspace import (
     LocationWorkspace,
     get_location_inventory,
@@ -151,49 +148,13 @@ def get_location_subtree_ids(team: Team, location: ContainerLocation) -> list[in
     return ids
 
 
-def get_unresolved_external_locations(team: Team, limit: int = 25) -> list[dict]:
-    """External places that carrier evidence names but no canonical location claims.
-
-    The operational bridge between the two layers: each row is a place a provider
-    keeps reporting that MCR has not decided about yet, and the fix for every one of
-    them is to record an alias. Grouped by provider and reported name so a carrier
-    that has said "GOTHENBURG" four hundred times is one row to deal with, not four
-    hundred.
-
-    ``AMBIGUOUS`` rows sit alongside unresolved ones because they need the same
-    action for a different reason — the evidence matched several canonical locations
-    and an alias is what breaks the tie.
-    """
-    from apps.scm.tracking.models import TrackingEvent
-
-    # `.values(...).annotate(...)` yields dicts, which the model-typed stubs for
-    # `values()` do not express. Cast rather than restructure the query.
-    rows = cast(
-        "Iterable[dict]",
-        TrackingEvent.objects.filter(
-            team=team,
-            location_resolution_status__in=(
-                LocationResolutionStatus.UNRESOLVED,
-                LocationResolutionStatus.AMBIGUOUS,
-            ),
-        )
-        .exclude(location_name="")
-        .values("provider__code", "provider__name", "location_name", "location_unlocode", "location_resolution_status")
-        .annotate(event_count=Count("pk"))
-        .order_by("-event_count", "location_name")[:limit],
-    )
-    return [
-        {
-            "provider_code": row["provider__code"],
-            "provider_name": row["provider__name"],
-            "location_name": row["location_name"],
-            "unlocode": row["location_unlocode"],
-            "status": row["location_resolution_status"],
-            "is_ambiguous": row["location_resolution_status"] == LocationResolutionStatus.AMBIGUOUS,
-            "event_count": row["event_count"],
-        }
-        for row in rows
-    ]
+# Unmatched external place names used to be aggregated here, for a panel on the
+# Locations list. LOC-5 moved that to
+# :func:`apps.scm.visibility.location_quality.get_location_data_quality`, which
+# groups the same evidence, counts the containers behind it and can act on it. There
+# is deliberately no copy left here: two aggregations of the same rows would
+# eventually give the Locations list and the data-quality queue different answers
+# about how much work there is.
 
 
 def filter_containers(
@@ -271,5 +232,4 @@ __all__ = [
     "get_team_containers",
     "get_team_locations",
     "get_team_locations_with_counts",
-    "get_unresolved_external_locations",
 ]

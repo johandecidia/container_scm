@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
@@ -28,6 +29,7 @@ from .forms import (
     ContainerLocationForm,
     ContainerMovementForm,
     LocationAliasForm,
+    LocationEvidenceAliasForm,
     PlannedContainerForm,
 )
 from .models import Container, ContainerLocation, LocationAlias, PlannedContainer, PlannedContainerStatus
@@ -42,7 +44,6 @@ from .selectors import (
     get_location_overview_movements,
     get_location_workspace,
     get_team_locations_with_counts,
-    get_unresolved_external_locations,
 )
 from .services import (
     create_location,
@@ -396,23 +397,46 @@ def planned_container_run_discovery(request):
 # Container location views
 # ---------------------------------------------------------------------------
 
+# Where a location form sends the operator when it was opened from somewhere other
+# than the location list. A flag mapped to a named route rather than a URL taken
+# from the request, so this can only ever mean one of the pages listed here and
+# there is nothing to redirect openly to.
+_LOCATION_FORM_RETURNS = {"location_quality": "visibility:location_quality"}
+
+
+def _location_form_return(request):
+    """An HTMX redirect back to the page a location form was opened from, or None.
+
+    204 with ``HX-Redirect``: the form lives in a modal, so there is no element to
+    swap on success — the operator came from a queue and belongs back on a freshly
+    built one, with the row they just fixed gone from it.
+    """
+    route = _LOCATION_FORM_RETURNS.get(request.POST.get("return_to", ""))
+    if route is None:
+        return None
+    response = HttpResponse(status=204)
+    response["HX-Redirect"] = reverse(route)
+    return response
+
 
 @scm_login_required
 def container_location_list(request):
-    """The canonical locations, and the external places still waiting on a decision.
+    """The canonical locations, and how healthy the master data behind them is.
 
-    The unresolved panel is here rather than on a location's own page because that
-    is where it belongs: an external name nothing claims is not the property of any
-    one location, and the work it implies — deciding which place it is — starts from
-    the list of places.
+    The list used to carry its own table of unmatched carrier place names. LOC-5
+    replaced that with the Location Data Quality queue, which aggregates the same
+    evidence and can act on it, so what is left here is a pointer carrying the
+    counts — two queries, and no second table of the same rows to keep in step.
     """
+    from apps.scm.visibility.location_quality import get_location_quality_summary
+
     team = request.default_team
     return render(
         request,
         "scm/containers/pages/container_location_list.html",
         {
             "locations": get_team_locations_with_counts(team),
-            "unresolved_locations": get_unresolved_external_locations(team),
+            "quality": get_location_quality_summary(team),
             "team_slug": team.slug,
         },
     )
@@ -472,14 +496,46 @@ def container_location_detail(request, location_id):
     return render(request, "scm/containers/pages/container_location_detail.html", context)
 
 
+def _location_form_context(request, form, *, team, title: str) -> dict:
+    """Context for the location modal, carrying the page it was opened from.
+
+    ``return_to`` arrives as a query parameter on the way in and travels back as a
+    hidden field, so the round trip through a validation error does not lose it. It
+    is filtered against the known flags here rather than trusted, and it decides the
+    modal's HTMX target too: a form opened from the location list swaps that list's
+    table, and one opened from anywhere else has no table to swap and stays in the
+    modal until the view redirects it.
+    """
+    requested = request.POST.get("return_to") or request.GET.get("return_to", "")
+    return_to = requested if requested in _LOCATION_FORM_RETURNS else ""
+    return {
+        "form": form,
+        "modal_title": title,
+        "form_action": request.path,
+        "return_to": return_to,
+        "form_target": "#modal-container" if return_to else "#location-table",
+        "form_swap": "innerHTML" if return_to else "outerHTML",
+        "team_slug": team.slug,
+    }
+
+
 @scm_login_required
 def container_location_create(request):
-    """Create a new container location."""
+    """Create a new container location.
+
+    Also the escape hatch from the Location Data Quality queue, for a place a
+    provider keeps naming that genuinely is not in the network yet. It is the
+    ordinary form, filled in by a person: nothing creates a location from carrier
+    text, which is how a location list ends up with four spellings of Göteborg.
+    """
     team = request.default_team
     if request.method == "POST":
         form = ContainerLocationForm(request.POST, team=team)
         if form.is_valid():
             create_location(team=team, data=form.cleaned_data)
+            if (back := _location_form_return(request)) is not None:
+                messages.success(request, _("Location created."))
+                return back
             if request.htmx:
                 locations = get_team_locations_with_counts(team)
                 return render(
@@ -489,30 +545,33 @@ def container_location_create(request):
                 )
             messages.success(request, _("Location created."))
             return redirect("containers:location_list")
-        if request.htmx:
-            return render(
-                request,
-                "scm/containers/partials/container_location_form.html",
-                {"form": form, "modal_title": _("New Location"), "form_action": request.path, "team_slug": team.slug},
-            )
     else:
         form = ContainerLocationForm(team=team)
     return render(
         request,
         "scm/containers/partials/container_location_form.html",
-        {"form": form, "modal_title": _("New Location"), "form_action": request.path, "team_slug": team.slug},
+        _location_form_context(request, form, team=team, title=_("New Location")),
     )
 
 
 @scm_login_required
 def container_location_update(request, location_id):
-    """Edit an existing container location."""
+    """Edit an existing container location.
+
+    Reached from the location list, from the Location Workspace, and from the
+    Location Data Quality queue — where the edit being made is almost always the
+    coordinates. It is the same form and the same ``update_location`` in every case,
+    so validation stays where LOC-4 put it, on ``ContainerLocation.clean``.
+    """
     team = request.default_team
     location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
     if request.method == "POST":
         form = ContainerLocationForm(request.POST, instance=location, team=team)
         if form.is_valid():
             update_location(location=location, data=form.cleaned_data)
+            if (back := _location_form_return(request)) is not None:
+                messages.success(request, _("Location updated."))
+                return back
             if request.htmx:
                 locations = get_team_locations_with_counts(team)
                 return render(
@@ -522,18 +581,12 @@ def container_location_update(request, location_id):
                 )
             messages.success(request, _("Location updated."))
             return redirect("containers:location_list")
-        if request.htmx:
-            return render(
-                request,
-                "scm/containers/partials/container_location_form.html",
-                {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
-            )
     else:
         form = ContainerLocationForm(instance=location, team=team)
     return render(
         request,
         "scm/containers/partials/container_location_form.html",
-        {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
+        _location_form_context(request, form, team=team, title=_("Edit Location")),
     )
 
 
@@ -607,6 +660,94 @@ def container_location_alias_delete(request, location_id, alias_id):
         return _alias_panel(request, team, location)
     messages.success(request, _("Alias removed."))
     return redirect("containers:location_detail", location_id=location.pk)
+
+
+@scm_login_required
+def location_evidence_alias(request):
+    """Record a row of the Location Data Quality queue as an alias. LOC-5's action.
+
+    The queue is a read model in the visibility app, which writes nothing; this is
+    where its one action lands, beside the rest of the location master data it
+    changes. What it does is exactly what an operator does by hand on a location's
+    own page — ``create_location_alias``, the same service, the same constraints —
+    with the evidence carried in rather than retyped.
+
+    Three refusals, all of them the point of the feature:
+
+    *No location is created.* The operator chooses one that exists.
+
+    *No evidence is rewritten.* The historic ``TrackingEvent`` rows keep saying
+    exactly what the carrier said and what the resolver concluded at the time. The
+    alias changes what the *next* resolution will decide — see the module docstring
+    of :mod:`apps.scm.containers.location_resolver` — and the queue says so.
+
+    *No string is accepted on trust.* ``has_unmatched_evidence`` establishes that
+    this team really has unresolved or ambiguous evidence under this provider and
+    name. Without it the endpoint would be a general-purpose "record an alias for
+    anything" URL wearing a queue's clothes, and one team could file an alias
+    against evidence it cannot see.
+    """
+    from apps.scm.visibility.location_quality import has_unmatched_evidence
+
+    team = request.default_team
+    queue_url = reverse("visibility:location_quality")
+
+    if request.method == "POST":
+        form = LocationEvidenceAliasForm(request.POST, team=team)
+        if form.is_valid():
+            source = form.cleaned_data["source"]
+            external_name = form.cleaned_data["external_name"]
+            if not has_unmatched_evidence(team, source=source, raw_name=external_name):
+                form.add_error(None, _("No unmatched evidence from that source names this place."))
+            else:
+                try:
+                    create_location_alias(
+                        team=team,
+                        location=form.cleaned_data["location"],
+                        data=form.alias_data(),
+                    )
+                except ValidationError as error:
+                    # A duplicate is the common one: the unique constraints on
+                    # (team, source, code) and (team, source, name) are what let the
+                    # resolver treat an alias hit as certain, so a collision has to
+                    # be shown here rather than surface as a database fault.
+                    form.add_error(None, error)
+                else:
+                    messages.success(
+                        request,
+                        _("“%(name)s” from %(source)s now resolves to %(location)s.")
+                        % {
+                            "name": external_name,
+                            "source": source,
+                            "location": form.cleaned_data["location"].full_name,
+                        },
+                    )
+                    if request.htmx:
+                        response = HttpResponse(status=204)
+                        response["HX-Redirect"] = queue_url
+                        return response
+                    return redirect(queue_url)
+    else:
+        form = LocationEvidenceAliasForm(
+            team=team,
+            initial={
+                "source": request.GET.get("source", ""),
+                "external_name": request.GET.get("name", ""),
+            },
+        )
+
+    return render(
+        request,
+        "scm/containers/partials/location_evidence_alias_form.html",
+        {
+            "form": form,
+            "form_action": request.path,
+            "raw_name": form.data.get("external_name") or request.GET.get("name", ""),
+            "raw_unlocode": request.POST.get("unlocode") or request.GET.get("unlocode", ""),
+            "provider_code": form.data.get("source") or request.GET.get("source", ""),
+            "team_slug": team.slug,
+        },
+    )
 
 
 @scm_login_required

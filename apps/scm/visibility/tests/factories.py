@@ -97,6 +97,19 @@ def equipment_type() -> EquipmentType:
     )[0]
 
 
+def with_check_digit(body: str) -> str:
+    """Complete a ten-character ISO 6346 body into a valid container number.
+
+    Computed rather than hard-coded so a test needing a hundred containers does not
+    need a table of magic numbers. Lives here rather than in one test module because
+    more than one of them generates fleets now.
+    """
+    from apps.scm.containers.utils import calculate_check_digit
+
+    digit = calculate_check_digit(body[:3], body[3], body[4:10])
+    return f"{body[:10]}{digit}"
+
+
 def make_container(team: Team, number: str = FIXTURE_CONTAINER_NUMBER) -> Container:
     """Create the Container the fixture's events belong to."""
     return Container.objects.create(
