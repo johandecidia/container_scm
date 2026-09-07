@@ -5,6 +5,11 @@ from datetime import timedelta
 from django.db import models
 from django.utils import timezone
 
+from apps.scm.integrations.carriers.registry import (
+    UnknownCarrierError,
+    get_carrier_definition,
+    resolve_carrier_code,
+)
 from apps.teams.models import Team
 
 from .models import TrackingEvent, TrackingProvider, TrackingSubscription, TrackingSyncRun
@@ -82,6 +87,140 @@ def get_verified_container_subscriptions(team: Team, container) -> list[Tracking
         .select_related("provider", "shipment")
         .order_by("created_at")
     )
+
+
+# ---------------------------------------------------------------------------
+# Provenance
+#
+# Three questions the system has to be able to answer separately, because the answers
+# can be three different names:
+#
+#     Who is the carrier?              ONE
+#     How do we know?                  Vizion ACI
+#     Who supplies the tracking data?  Traqo
+#
+# Before carrier identity lived on the subscription there was only one name available —
+# the provider's — and it was used for all three. Anything reading these must therefore
+# go through the read model below rather than the provider row, or it will quietly go
+# back to answering the first question with the third one's answer.
+# ---------------------------------------------------------------------------
+
+
+class TrackingProvenance:
+    """Who is carrying a container, how that was established, and who supplies the data.
+
+    A thin read model over one subscription. Deliberately not a dataclass built by hand
+    at each call site: the fallbacks — an unrecorded carrier, a provider that is also the
+    carrier — have to read the same way everywhere, and the one that matters most is that
+    an unknown carrier reads as unknown rather than as the aggregator's name.
+    """
+
+    __slots__ = ("subscription",)
+
+    def __init__(self, subscription: TrackingSubscription) -> None:
+        self.subscription = subscription
+
+    @property
+    def carrier_code(self) -> str:
+        """The carrier's registry code, falling back only where that is not a guess.
+
+        A watch whose provider *is* a registered carrier needs no recorded carrier to
+        answer this: Maersk supplying the data and Maersk carrying the box are the same
+        fact, and reading the provider code as a carrier code there is exact rather than
+        inferred. This is what keeps every direct watch created before carrier identity
+        existed — and every one created by code that has no carrier to pass — reading
+        correctly.
+
+        For an aggregator the fallback is refused, because there it *would* be a guess,
+        and a specific wrong one: it would name Traqo as the carrier.
+        """
+        recorded = self.subscription.carrier_code
+        if recorded:
+            return recorded
+        return resolve_carrier_code(self.provider_code) or ""
+
+    @property
+    def carrier_name(self) -> str:
+        """The carrier, or "" when none has been established for this watch."""
+        if self.subscription.carrier_code:
+            return self.subscription.carrier_label
+        code = self.carrier_code
+        if not code:
+            return ""
+        # The registry's name rather than the provider row's, so the carrier is spelled
+        # the same way everywhere however a provider row happened to be labelled.
+        try:
+            return get_carrier_definition(code).name
+        except UnknownCarrierError:  # pragma: no cover — the code came from the registry
+            return self.provider_name
+
+    @property
+    def carrier_known(self) -> bool:
+        return bool(self.carrier_code)
+
+    @property
+    def carrier_recorded(self) -> bool:
+        """True when the carrier was established and stored, rather than derived here.
+
+        The difference matters for provenance: only a recorded carrier has a
+        ``carrier_source`` saying how it was established.
+        """
+        return bool(self.subscription.carrier_code)
+
+    @property
+    def carrier_source(self) -> str:
+        return self.subscription.carrier_source
+
+    @property
+    def carrier_source_label(self) -> str:
+        """How we know, in words — "Vizion Auto Carrier Identification"."""
+        return self.subscription.get_carrier_source_display() if self.subscription.carrier_source else ""
+
+    @property
+    def provider_code(self) -> str:
+        return self.subscription.provider.code if self.subscription.provider_id else ""
+
+    @property
+    def provider_name(self) -> str:
+        provider = self.subscription.provider if self.subscription.provider_id else None
+        return (provider.name or provider.code) if provider is not None else ""
+
+    @property
+    def is_direct(self) -> bool:
+        """True when the carrier itself supplies the data."""
+        return self.carrier_known and self.carrier_code == self.provider_code
+
+    @property
+    def provider_label(self) -> str:
+        """How to describe the data source in one phrase.
+
+        "Direct API" for a carrier watching its own box, and the provider's name
+        otherwise. Never the carrier's name for an aggregator watch, which is the whole
+        reason this is derived in one place.
+        """
+        from django.utils.translation import gettext
+
+        if self.is_direct:
+            return gettext("Direct API")
+        return self.provider_name
+
+    @property
+    def provider_reference(self) -> str:
+        return self.subscription.provider_reference
+
+    def __str__(self) -> str:
+        return f"{self.carrier_name or 'unknown carrier'} via {self.provider_label}"
+
+
+def get_container_tracking_provenance(team: Team, container) -> list[TrackingProvenance]:
+    """Return provenance for every verified source this container has, oldest first.
+
+    One entry per source, because a container legitimately has several — an ocean carrier
+    for the sea leg, an aggregator for the onward move — and each answers the three
+    questions differently. Collapsing them to one would have to pick a winner, and there
+    is not always one to pick.
+    """
+    return [TrackingProvenance(subscription) for subscription in get_verified_container_subscriptions(team, container)]
 
 
 def get_latest_tracking_event_for_shipment(team: Team, shipment) -> TrackingEvent | None:

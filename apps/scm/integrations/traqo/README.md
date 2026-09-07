@@ -252,11 +252,37 @@ carrier sync drives, so:
 - a genuinely misconfigured *carrier* still reports `NOT_CONFIGURED` and still degrades,
   which is the behaviour that surfaces real faults.
 
-Fetching Traqo on a schedule remains out of scope, and still needs somewhere to persist
-the SCAC per subscription — `TrackingSubscription` has no metadata field. Re-run
-`traqo_test` to refresh a Traqo subscription. The container refresh button still reports
-a Traqo source as "not configured": correct about the *action*, misleading about the
-container, and a known gap rather than something Phase 2.1 redesigned the UI to fix.
+Fetching Traqo on a schedule remains out of scope, but the reason it was *blocked* is
+gone: `TrackingSubscription.provider_reference` now holds the sealine, so a later fetch
+has what it needs to ask the same question again. Re-run `traqo_test` to refresh a Traqo
+subscription by hand in the meantime.
+
+### Traqo as a routed tracking provider (TRACK-ROUTING)
+
+Traqo is no longer only something a POC command drives. When carrier resolution
+establishes a carrier that has no usable direct adapter, `tracking/provider_routing.py`
+selects Traqo and `tracking/activation.py` calls `ingest_traqo_container()` with the
+carrier's sealine — so Traqo is asked *about ONE* rather than guessing, and the carrier
+stays Container SCM's own answer even though the data is Traqo's.
+
+The subscription records both facts separately:
+
+```
+provider.code       traqo         who supplies the data
+carrier_code        one           who is moving the box
+carrier_source      vizion_aci    how we know
+provider_reference  ONEY          what a later fetch needs
+```
+
+`ingest_traqo_container()` takes `carrier_code` / `carrier_name` / `carrier_source`
+optionally. Left empty — as the benchmark and the POC command leave them, having supplied
+only a sealine — the carrier stays honestly unknown rather than being back-inferred from
+the sealine, because a sealine says which carrier was *asked about*, not which one is
+verified.
+
+The container refresh button no longer reports a routed Traqo source as "not configured".
+It reports the carrier, with "via Traqo" as the data source. See
+`apps/scm/tracking/README.md` for the discovery and routing order.
 
 Correcting how a *stored* response is read needs no fetch at all:
 

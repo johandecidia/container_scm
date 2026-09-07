@@ -113,12 +113,23 @@ def ingest_traqo_container(
     sealine: str,
     sandbox: bool = True,
     client=None,
+    carrier_code: str = "",
+    carrier_name: str = "",
+    carrier_source: str = "",
 ) -> TraqoIngestResult:
     """Fetch a container from Traqo and persist the result through tracking ingestion.
 
     The subscription is Traqo's own: an existing carrier subscription for the same
     container is neither replaced nor touched, so a container can be watched through
     Maersk Direct and through Traqo at once and the two can be compared.
+
+    ``carrier_code`` / ``carrier_name`` / ``carrier_source`` record *who is moving the
+    box*, which for a Traqo watch is not Traqo. They are recorded on the subscription
+    beside ``provider = traqo`` so the container reads as "carrier ONE, tracked via
+    Traqo" rather than as though Traqo were the line. Left empty — as the benchmark and
+    the POC command do, where the caller supplied only a sealine — the carrier stays
+    honestly unknown rather than being back-inferred from the sealine, because the
+    sealine says which carrier was *asked about*, not which one is verified.
 
     Raises the client's typed carrier errors — nothing is written when the fetch fails.
     """
@@ -142,8 +153,14 @@ def ingest_traqo_container(
     subscription = get_or_create_container_subscription(
         team=team,
         container=container,
-        carrier_code=PROVIDER_CODE,
-        carrier_name=PROVIDER_NAME,
+        provider_code=PROVIDER_CODE,
+        provider_name=PROVIDER_NAME,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+        carrier_source=carrier_source,
+        # The sealine is what a later fetch needs in order to ask Traqo the same
+        # question again — the gap the README recorded as blocking scheduled refresh.
+        provider_reference=sealine,
     )
     if subscription is None:  # pragma: no cover — only if the provider code is blank
         raise RuntimeError("Could not resolve a Traqo tracking subscription.")

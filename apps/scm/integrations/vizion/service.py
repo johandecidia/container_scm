@@ -232,6 +232,9 @@ def ingest_vizion_container(
     client=None,
     updates: list[dict] | None = None,
     reference: VizionReference | None = None,
+    carrier_code: str = "",
+    carrier_name: str = "",
+    carrier_source: str = "",
 ) -> VizionIngestResult:
     """Fetch a reference's updates and persist them through tracking ingestion.
 
@@ -244,10 +247,18 @@ def ingest_vizion_container(
     ``updates`` and ``reference`` may be supplied by a caller that has already fetched
     them — the POC command resolves the carrier and then ingests without asking twice.
 
+    ``carrier_code`` / ``carrier_name`` / ``carrier_source`` record who is moving the box,
+    which is not Vizion. Where they are not supplied but the reference itself names a
+    carrier, that is used: a reference ACI has attached a carrier to *is* Vizion's answer
+    to the carrier question, and discarding it here would throw away the very thing the
+    reference was paid for.
+
     Raises the client's typed carrier errors — nothing is written when the fetch fails.
     """
+    from apps.scm.integrations.carriers.registry import resolve_carrier_code_from_scac
     from apps.scm.tracking.eta_observations import record_provider_eta_observation
     from apps.scm.tracking.manual_refresh import get_or_create_container_subscription
+    from apps.scm.tracking.models import CarrierSource
     from apps.scm.tracking.services import create_sync_run
     from apps.scm.tracking.sync import apply_sync_outcome, store_verified_carrier_result
 
@@ -261,11 +272,22 @@ def ingest_vizion_container(
     # Ensures the provider row carries Vizion's base URL before the subscription helper
     # get_or_creates the same row by code.
     get_vizion_provider()
+    if not carrier_code and reference is not None and reference.identified:
+        carrier_code = resolve_carrier_code_from_scac(reference.carrier_identifier) or ""
+        carrier_name = carrier_name or reference.carrier_name
+        carrier_source = carrier_source or CarrierSource.VIZION_ACI
+
     subscription = get_or_create_container_subscription(
         team=team,
         container=container,
-        carrier_code=PROVIDER_CODE,
-        carrier_name=PROVIDER_NAME,
+        provider_code=PROVIDER_CODE,
+        provider_name=PROVIDER_NAME,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+        carrier_source=carrier_source,
+        # The reference id is what a later fetch needs; without it a Vizion watch can
+        # never be refreshed without creating — and paying for — a second reference.
+        provider_reference=reference_id,
     )
     if subscription is None:  # pragma: no cover — only if the provider code is blank
         raise RuntimeError("Could not resolve a Vizion tracking subscription.")

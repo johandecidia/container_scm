@@ -9,8 +9,37 @@ from apps.teams.models import BaseTeamModel
 from apps.utils.models import BaseModel
 
 
+class CarrierSource(models.TextChoices):
+    """How we know which carrier is moving a container.
+
+    Provenance, kept as a field because "who is the carrier" and "how do we know" are
+    two different answers and only the second says how much the first is worth. A
+    carrier a person chose and a carrier an aggregator guessed are not interchangeable,
+    and a system that stored only the name could never tell them apart again.
+
+    Ordered strongest-evidence first, which is also the order carrier resolution tries:
+    a fact already held beats a free lookup, which beats a direct probe, which beats a
+    paid identification.
+    """
+
+    MANUAL = "manual", _("Chosen by a person")
+    SHIPMENT = "shipment", _("From the shipment")
+    PLANNED_CONTAINER = "planned_container", _("From the planned container")
+    EXISTING_VERIFIED_SOURCE = "existing_verified_source", _("Already verified for this container")
+    TRAQO_LOOKUP = "traqo_lookup", _("Traqo carrier lookup")
+    DIRECT_API = "direct_api", _("Direct carrier tracking events")
+    VIZION_ACI = "vizion_aci", _("Vizion Auto Carrier Identification")
+
+
 class TrackingProvider(BaseModel):
-    """Represents an external tracking source (carrier API, scraping, webhook, manual)."""
+    """The *technical* source a tracking payload is fetched from.
+
+    Not the carrier. Most rows here do name a shipping line, because Container SCM calls
+    most lines directly and one code serves as both — but an aggregator is a provider
+    too, and ``TrackingSubscription.carrier_code`` is where the carrier's own identity
+    lives. ``provider.code = traqo`` with ``carrier_code = one`` is a valid and expected
+    combination: Traqo supplies the data, ONE is moving the box.
+    """
 
     class ProviderType(models.TextChoices):
         API = "api", _("API")
@@ -91,8 +120,44 @@ class TrackingSubscription(BaseTeamModel):
         on_delete=models.PROTECT,
         related_name="subscriptions",
         verbose_name=_("provider"),
+        help_text=_("The technical provider whose API supplies this watch's data — not necessarily the carrier."),
     )
+
+    # Carrier identity, kept apart from the provider above.
+    #
+    # For a direct watch these agree: Maersk supplies the data and Maersk is moving the
+    # box. For an aggregator they do not, and that is the whole reason these fields
+    # exist — ``provider.code = traqo`` alongside ``carrier_code = one`` is the shape a
+    # container tracked through Traqo under ONE actually has.
+    #
+    # Blank is honest and expected: a watch created before the carrier was separated
+    # out, or one whose provider named no carrier, genuinely does not know. Nothing
+    # infers a carrier from the provider to fill it in.
+    carrier_code = models.CharField(
+        _("carrier code"),
+        max_length=50,
+        blank=True,
+        help_text=_("The registry code of the carrier moving this container, when it is known."),
+    )
+    carrier_name = models.CharField(_("carrier name"), max_length=200, blank=True)
+    carrier_source = models.CharField(
+        _("carrier identified via"),
+        max_length=30,
+        choices=CarrierSource.choices,
+        blank=True,
+        help_text=_("How the carrier was established. Blank when no carrier is recorded."),
+    )
+
     tracking_reference = models.CharField(_("tracking reference"), max_length=200)
+    provider_reference = models.CharField(
+        _("provider reference"),
+        max_length=200,
+        blank=True,
+        help_text=_(
+            "The provider's own handle for this watch — Traqo's sealine, Vizion's reference id. "
+            "What a later fetch needs in order to ask the same question again."
+        ),
+    )
     reference_type = models.CharField(
         _("reference type"), max_length=30, choices=ReferenceType.choices, default=ReferenceType.CONTAINER_NUMBER
     )
@@ -134,10 +199,26 @@ class TrackingSubscription(BaseTeamModel):
             models.Index(fields=["team", "container"]),
             models.Index(fields=["next_sync_at"]),
             models.Index(fields=["team", "tracking_status"]),
+            models.Index(fields=["team", "carrier_code"]),
         ]
 
     def __str__(self) -> str:
         return f"{self.tracking_reference} ({self.get_reference_type_display()})"
+
+    @property
+    def is_direct(self) -> bool:
+        """True when the provider supplying the data is the carrier itself."""
+        return bool(self.carrier_code) and self.carrier_code == self.provider.code
+
+    @property
+    def carrier_label(self) -> str:
+        """The carrier to show for this watch, or "" when none is recorded.
+
+        Deliberately never falls back to the provider's name. A watch through Traqo whose
+        carrier is unknown must read as "carrier unknown", not as "carrier: Traqo" —
+        naming the aggregator would be the exact conflation these fields exist to end.
+        """
+        return self.carrier_name or self.carrier_code
 
 
 class TrackingEvent(BaseTeamModel):

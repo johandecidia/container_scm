@@ -410,10 +410,42 @@ non-carrier source, so:
   leaves `tracking_status` exactly as it was;
 - a genuinely misconfigured *carrier* still reports `NOT_CONFIGURED` and still degrades.
 
-Scheduled fetching needs somewhere to persist the Vizion reference id per subscription, and
-`TrackingSubscription` has no metadata field. Re-run `vizion_test --reference <uuid> --track`
-to refresh. The container refresh button still reports a Vizion source as "not configured":
-correct about the *action*, misleading about the container, and a known gap shared with Traqo.
+Scheduled fetching is still out of scope, but no longer blocked for want of somewhere to
+put the reference id: `TrackingSubscription.provider_reference` holds it. Re-run
+`vizion_test --reference <uuid> --track` to refresh by hand in the meantime.
+
+### ACI as the last discovery step (TRACK-ROUTING)
+
+The architectural claim this package was built on is now enforced by code outside it.
+`integrations/vizion/discovery.py` wraps `resolve_carrier_via_aci()` in the five-valued
+vocabulary the rest of discovery speaks, and `carrier_resolution.py` places it **last**:
+
+```
+trusted knowledge → Traqo free lookup → direct carrier APIs → Vizion ACI
+```
+
+Last because it is the only step that costs money on every call. A container an earlier
+step has already explained never reaches it, and
+`integrations/tests/test_carrier_resolution.py` asserts that by spying on the call rather
+than on the result.
+
+**Vizion is not routed to for tracking.** `provider_routing.py` selects direct carriers
+first and Traqo second, and stops. ACI has already created the reference that would make
+Vizion tracking nearly free, and routing to it anyway would turn every unresolvable
+container into a purchase. Adding it later is one branch in that module — the discovery
+side is deliberately separate from tracking so that stays true.
+
+When ACI does answer, the carrier is translated through
+`registry.resolve_carrier_code_from_scac()` — `ONEY → one` — and recorded as
+`carrier_source = vizion_aci` on whichever subscription ends up tracking the box, which
+for the acceptance case is a Traqo one. That is the state this package's docstring said
+Container SCM must be able to reach:
+
+```
+Carrier: ONE      Resolved by: Vizion      Tracked by: Traqo
+```
+
+See `apps/scm/tracking/README.md`.
 
 Correcting how a *stored* response is read needs no fetch at all — the existing re-parse
 command works because `read_stored_payload` is registered in `tracking/sources.py`:

@@ -204,20 +204,42 @@ def get_verified_container_subscription(*, team, container):
     return subscriptions[-1] if subscriptions else None
 
 
-def get_or_create_container_subscription(*, team, container, carrier_code: str, carrier_name: str = ""):
-    """Start tracking this container with this carrier, or return the existing watch.
+def get_or_create_container_subscription(
+    *,
+    team,
+    container,
+    provider_code: str,
+    provider_name: str = "",
+    carrier_code: str = "",
+    carrier_name: str = "",
+    carrier_source: str = "",
+    provider_reference: str = "",
+):
+    """Start watching this container through this provider, or return the existing watch.
 
-    Only ever called once the carrier has returned tracking data for the container:
-    a subscription is an assertion that this carrier is a verified tracking source,
-    not a note of who we intend to ask.
+    Only ever called once tracking data has actually been returned for the container: a
+    subscription is an assertion that this provider is a verified tracking source, not a
+    note of who we intend to ask.
 
-    Matches what container discovery creates, on the same natural key, so a container
-    that discovery later finds does not end up with two watches.
+    ``provider_code`` names *who supplies the data* — a carrier for a direct watch,
+    ``traqo`` for an aggregator one. The carrier arguments name *who is moving the box*,
+    which for an aggregator is a different thing entirely and for a direct watch is the
+    same code passed twice. Passing no carrier is allowed and means the carrier is
+    genuinely unknown; nothing infers one from the provider to fill the gap.
+
+    The natural key is unchanged — team, provider, container, reference type — so this
+    matches what container discovery creates and a container discovery later finds does
+    not end up with two watches. Carrier identity is deliberately *not* part of the key:
+    a provider learning the carrier it had been watching must enrich the existing watch,
+    not create a second one beside it.
     """
     from apps.scm.integrations.carriers.auto_link import get_or_create_tracking_provider
     from apps.scm.shipments.models import ShipmentContainer
 
-    provider = get_or_create_tracking_provider(carrier_code=carrier_code, carrier_name=carrier_name or carrier_code)
+    provider = get_or_create_tracking_provider(
+        carrier_code=provider_code,
+        carrier_name=provider_name or provider_code,
+    )
     if provider is None:
         return None
 
@@ -236,15 +258,74 @@ def get_or_create_container_subscription(*, team, container, carrier_code: str, 
             "shipment": link.shipment if link else None,
             "tracking_reference": container.container_id,
             "status": TrackingSubscription.Status.ACTIVE,
+            "carrier_code": carrier_code,
+            "carrier_name": carrier_name,
+            "carrier_source": carrier_source,
+            "provider_reference": provider_reference,
         },
     )
     if created:
         logger.info(
-            "Created TrackingSubscription for container %s: provider %s returned tracking data for it.",
+            "Created TrackingSubscription for container %s: provider %s returned tracking data for it "
+            "(carrier %s via %s).",
             container.container_id,
             provider.code,
+            carrier_code or "unknown",
+            carrier_source or "unknown",
+        )
+    else:
+        record_subscription_carrier(
+            subscription,
+            carrier_code=carrier_code,
+            carrier_name=carrier_name,
+            carrier_source=carrier_source,
+            provider_reference=provider_reference,
         )
     return subscription
+
+
+def record_subscription_carrier(
+    subscription,
+    *,
+    carrier_code: str = "",
+    carrier_name: str = "",
+    carrier_source: str = "",
+    provider_reference: str = "",
+) -> bool:
+    """Fill in a watch's carrier identity where it is missing. Returns True if it changed.
+
+    Only ever *adds*. An existing carrier is never overwritten, because the watch's own
+    record is the earlier and better-evidenced one — a later lookup disagreeing with a
+    carrier that already returned this container's events is not grounds for silently
+    replacing it, and a disagreement about who is moving a box is a thing for a person to
+    settle. What this does cover is the ordinary case of a watch created before the
+    carrier was known, or before carrier identity existed as a field at all.
+
+    ``provider_reference`` is refreshed rather than protected: it is the provider's own
+    handle for the same watch, and a newer one is simply more current.
+    """
+    updates: dict[str, str] = {}
+    if carrier_code and not subscription.carrier_code:
+        updates["carrier_code"] = carrier_code
+        updates["carrier_name"] = carrier_name or carrier_code
+        updates["carrier_source"] = carrier_source
+    elif carrier_name and subscription.carrier_code == carrier_code and not subscription.carrier_name:
+        updates["carrier_name"] = carrier_name
+    if provider_reference and provider_reference != subscription.provider_reference:
+        updates["provider_reference"] = provider_reference
+
+    if not updates:
+        return False
+
+    for field_name, value in updates.items():
+        setattr(subscription, field_name, value)
+    subscription.save(update_fields=[*updates, "updated_at"])
+    logger.info(
+        "Subscription %s carrier identity recorded: %s.",
+        subscription.pk,
+        ", ".join(f"{name}={value}" for name, value in updates.items()),
+    )
+    return True
 
 
 def refresh_container_tracking(*, team, container) -> RefreshResult:
@@ -329,17 +410,7 @@ def _sync_verified_subscriptions(subscriptions: list[TrackingSubscription]) -> R
 
 def _sync_one_source(subscription: TrackingSubscription) -> RefreshResult:
     """Run one sync cycle for one of the container's sources and describe it."""
-    from apps.scm.integrations.carriers.registry import (
-        UnknownCarrierError,
-        get_carrier_definition,
-        resolve_carrier_code,
-    )
-
-    carrier_code = resolve_carrier_code(subscription.provider.code) or subscription.provider.code
-    try:
-        carrier_name = get_carrier_definition(carrier_code).name
-    except UnknownCarrierError:
-        carrier_name = subscription.provider.name or carrier_code
+    carrier_code, carrier_name = describe_subscription_carrier(subscription)
 
     sync_run = sync_tracking_subscription(subscription)
     if sync_run is None:
@@ -358,6 +429,28 @@ def _sync_one_source(subscription: TrackingSubscription) -> RefreshResult:
         reference=subscription.tracking_reference,
         tracked=True,
     )
+
+
+def describe_subscription_carrier(subscription: TrackingSubscription) -> tuple[str, str]:
+    """Return ``(carrier_code, carrier_name)`` for one watch, for a message about it.
+
+    One call onto :class:`~apps.scm.tracking.selectors.TrackingProvenance`, which owns the
+    single rule for reading a watch's carrier — recorded carrier first, the provider code
+    only where the provider is itself a registered carrier. Two implementations of that
+    rule would eventually disagree about the same subscription in a message and on the
+    page.
+
+    Where no carrier can be established at all, the *provider's* name is returned as the
+    display value. That is honest for the sentence this feeds — "no tracking data found at
+    Traqo" is about who was asked, which is the provider — while ``carrier_code`` stays
+    empty, so nothing downstream mistakes it for a carrier.
+    """
+    from .selectors import TrackingProvenance
+
+    provenance = TrackingProvenance(subscription)
+    if provenance.carrier_known:
+        return provenance.carrier_code, provenance.carrier_name
+    return "", provenance.provider_name
 
 
 # Which result speaks for a multi-source refresh, worst news first: a reader needs to
@@ -432,54 +525,164 @@ def _discover_and_activate(*, team, container) -> RefreshResult:
 
 
 def _run_discovery(*, team, container) -> RefreshResult:
-    """Sweep the candidate carriers and act on the first one with data.
+    """Resolve who is carrying this container, then start tracking through the best provider.
 
-    The subscription is created between the two halves of this function, and only
-    there: everything above it can leave the container unassigned, everything below
-    it runs because a carrier produced events. A carrier that has nothing, is down
-    or rejects our credentials is therefore never recorded as a tracking source, and
-    the same container can be tried against a different carrier tomorrow.
+    Three steps, each of which can end the refresh, and only the third of which writes:
 
-    The attempts themselves are not lost — each HTTP call is in IntegrationRequestLog,
-    and the sweep is logged by the discovery service against the container number.
+        carrier resolution   trusted knowledge → Traqo lookup → direct APIs → Vizion ACI
+        provider routing     the carrier's own API, else Traqo, else nothing
+        activation           fetch and store through the existing tracking write path
+
+    Resolution replaces what used to be a bare direct sweep. The sweep is still in
+    there — it is the third step of the chain, unchanged — but a container moving with a
+    carrier whose direct adapter cannot answer is no longer a dead end, because an
+    aggregator can name the carrier and a second decision can pick somebody else to ask.
+
+    Nothing above activation can leave the container changed, and activation only ever
+    runs because a provider produced data. So a carrier that has nothing, is down or
+    rejects our credentials is still never recorded as a tracking source, and the same
+    container can be tried again tomorrow.
+
+    The attempts are not lost — each HTTP call is in IntegrationRequestLog, and the whole
+    chain is logged as one line against the container number.
     """
-    from apps.scm.integrations.carriers.carrier_discovery import discover_carrier_for_container
+    from apps.scm.integrations.carriers.carrier_resolution import resolve_carrier_for_container
+
+    from .activation import activate_tracking_route
 
     reference = container.container_id
     preferred = get_preferred_carrier_codes_for_container(team, container)
 
+    # One HTTP budget for the whole chain: somebody is waiting, and the chain may reach
+    # three providers before it stops.
     with interactive_carrier_requests():
-        outcome = discover_carrier_for_container(
+        resolution = resolve_carrier_for_container(
             team=team,
-            container_number=reference,
+            container=container,
             preferred_carrier_codes=preferred,
+            # Trusted knowledge is *not* consulted here. A shipment's carrier and a
+            # planned container's carrier are hints, and this path exists precisely
+            # because the container has no verified source yet — accepting a hint as the
+            # answer would route straight to a carrier nobody has confirmed and skip the
+            # sweep that would have found the real one. They still order the sweep, via
+            # ``preferred_carrier_codes`` above.
+            use_trusted_knowledge=False,
         )
 
-    if not outcome.found:
-        return _describe_no_match(outcome)
+        if not resolution.resolved:
+            return _describe_unresolved(resolution)
 
+        activation = activate_tracking_route(team=team, container=container, resolution=resolution)
+
+    return _describe_activation(resolution, activation, reference=reference)
+
+
+def _describe_activation(resolution, activation, *, reference: str) -> RefreshResult:
+    """Report an activation attempt for a carrier that was successfully resolved."""
+    checked = _carriers_checked(resolution)
     common: dict[str, Any] = {
-        "carrier_code": outcome.carrier_code,
-        "carrier_name": outcome.carrier_name,
-        "carriers_checked": tuple(outcome.carrier_names(outcome.answered)),
+        "carrier_code": resolution.carrier_code,
+        "carrier_name": resolution.carrier_name,
+        "carriers_checked": checked,
     }
-    subscription, sync_run = store_discovered_carrier_source(team=team, container=container, outcome=outcome)
-    if subscription is None or sync_run is None:
+
+    if activation.sync_run is None:
+        # Routed nowhere, or the provider refused before anything was stored. The carrier
+        # is known and is worth saying so — that is more than this path could report at
+        # all before, and it tells the reader the gap is in the setup rather than in the
+        # container.
+        level, message = _unactivated_message(resolution, activation)
         return RefreshResult(
-            level=ERROR,
-            state=NOT_CONFIGURED,
-            message=_("Could not start tracking %(reference)s.") % {"reference": reference},
+            level=level,
+            state=NOT_CONFIGURED if activation.state == "not_configured" else UNAVAILABLE,
+            message=message,
             **common,
         )
 
     return _describe(
-        sync_run,
-        carrier_name=outcome.carrier_name,
-        carrier_code=outcome.carrier_code,
+        activation.sync_run,
+        carrier_name=resolution.carrier_name,
+        carrier_code=resolution.carrier_code,
         reference=reference,
         tracked=True,
         discovered=True,
-        carriers_checked=common["carriers_checked"],
+        carriers_checked=checked,
+        via_provider=_provider_label(activation),
+    )
+
+
+def _provider_label(activation) -> str:
+    """The provider's name when it is not the carrier itself, else "".
+
+    Empty for a direct watch on purpose: "Tracking found via Maersk (Maersk)" says
+    nothing twice. It is only worth a phrase when the two differ.
+    """
+    route = activation.route
+    if route is None or route.is_direct:
+        return ""
+    return route.provider_name or route.provider_code
+
+
+def _unactivated_message(resolution, activation) -> tuple[str, StrOrPromise]:
+    """Say that the carrier is known but nothing could be asked, without provider detail."""
+    from . import provider_routing
+
+    route = activation.route
+    carrier = resolution.carrier_name or resolution.carrier_code
+
+    if route is not None and route.reason == provider_routing.DIRECT_PROVIDER_NOT_CONNECTED:
+        return WARNING, _("%(carrier)s is carrying this container, but it is not connected for this team yet.") % {
+            "carrier": carrier
+        }
+
+    if activation.state == "not_configured":
+        return WARNING, _(
+            "%(carrier)s is carrying this container, but no tracking provider is configured that can be asked about it."
+        ) % {"carrier": carrier}
+
+    return ERROR, _("Tracking for %(carrier)s is temporarily unavailable.") % {"carrier": carrier}
+
+
+def _carriers_checked(resolution) -> tuple[str, ...]:
+    """The carriers the direct sweep actually reached, for a "we checked these" line.
+
+    Empty when the chain never got as far as the sweep — a Traqo lookup that answered
+    immediately reached no carrier at all, and claiming otherwise would misreport what
+    the refresh did.
+    """
+    discovery = resolution.discovery
+    if discovery is None:
+        return ()
+    return tuple(discovery.carrier_names(discovery.answered))
+
+
+def _describe_unresolved(resolution) -> RefreshResult:
+    """Explain a chain that could not work out who is carrying the container.
+
+    Falls through to the existing sweep-based wording whenever the sweep ran, because it
+    already distinguishes the three cases that need different advice. Where the sweep did
+    not run — every step skipped or unconfigured — that is its own answer and gets one.
+    """
+    from apps.scm.integrations.carriers import carrier_resolution
+
+    discovery = resolution.discovery
+    if discovery is not None:
+        return _describe_no_match(discovery)
+
+    direct = resolution.step_for(carrier_resolution.STEP_DIRECT_API)
+    if direct is not None and direct.outcome == carrier_resolution.SKIPPED:
+        # The chain stopped before the sweep. That only happens when a caller turned the
+        # sweep off, which no production path does.
+        return RefreshResult(  # pragma: no cover
+            level=WARNING,
+            state=NOT_CONFIGURED,
+            message=_("Tracking is not configured for this container."),
+        )
+
+    return RefreshResult(
+        level=ERROR,
+        state=CARRIER_UNKNOWN,
+        message=_("No carrier integration is connected that can be asked about this container."),
     )
 
 
@@ -501,11 +704,19 @@ def store_discovered_carrier_source(
 
     Returns (None, None) when the provider could not be resolved at all.
     """
+    from apps.scm.tracking.models import CarrierSource
+
     subscription = get_or_create_container_subscription(
         team=team,
         container=container,
+        # A direct sweep's answer is a carrier answering about its own container, so
+        # provider and carrier are the same code here — recorded twice rather than
+        # inferred once, so the two facts stay separable for every other source.
+        provider_code=outcome.carrier_code,
+        provider_name=outcome.carrier_name,
         carrier_code=outcome.carrier_code,
         carrier_name=outcome.carrier_name,
+        carrier_source=CarrierSource.DIRECT_API,
     )
     if subscription is None:
         return None, None
@@ -628,6 +839,7 @@ def _describe(
     tracked: bool,
     discovered: bool = False,
     carriers_checked: tuple[str, ...] = (),
+    via_provider: str = "",
 ) -> RefreshResult:
     """Turn a finished sync run into something worth reading.
 
@@ -635,6 +847,11 @@ def _describe(
     can carry a carrier response body — it belongs in the log, not on the page.
     ``discovered`` says the carrier was just found rather than already known, which
     is worth telling the user once.
+
+    ``via_provider`` names the aggregator when the data did not come from the carrier
+    itself, so the sentence reads "Tracking found for ONE via Traqo" — the carrier named
+    as the carrier and the provider as the provider. Empty for a direct watch, where the
+    two are the same and saying it twice would only obscure it.
     """
     statuses = TrackingSyncRun.Status
     common: dict[str, Any] = {
@@ -686,7 +903,13 @@ def _describe(
             **common,
         )
 
-    if discovered:
+    if discovered and via_provider:
+        message = _("Tracking found for %(carrier)s via %(provider)s. %(total)s tracking events retrieved.") % {
+            "carrier": carrier_name,
+            "provider": via_provider,
+            "total": total,
+        }
+    elif discovered:
         message = _("Tracking found via %(carrier)s. %(total)s tracking events retrieved.") % {
             "carrier": carrier_name,
             "total": total,

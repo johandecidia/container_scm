@@ -13,9 +13,14 @@ class TrackingProviderAdmin(admin.ModelAdmin):
 
 @admin.register(TrackingSubscription)
 class TrackingSubscriptionAdmin(admin.ModelAdmin):
+    # Carrier and provider side by side, because the interesting rows are the ones where
+    # they differ — carrier ONE, provider Traqo — and a list showing only the provider
+    # is what made that invisible.
     list_display = [
         "tracking_reference",
         "reference_type",
+        "carrier_code",
+        "carrier_source",
         "provider",
         "status",
         "team",
@@ -23,8 +28,8 @@ class TrackingSubscriptionAdmin(admin.ModelAdmin):
         "consecutive_failures",
         "created_at",
     ]
-    list_filter = ["status", "reference_type", "provider", "team"]
-    search_fields = ["tracking_reference"]
+    list_filter = ["status", "reference_type", "carrier_source", "provider", "team"]
+    search_fields = ["tracking_reference", "carrier_code", "carrier_name", "provider_reference"]
     readonly_fields = ["created_at", "updated_at", "last_synced_at", "last_error_at"]
     date_hierarchy = "created_at"
 

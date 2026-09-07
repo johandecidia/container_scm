@@ -148,11 +148,50 @@ class ContainerWorkspace:
         One name, for the places that can only show one — the list column, the
         carrier filter. Where several sources have reported this box,
         :attr:`tracking_sources` is the honest answer and this is the primary of them.
+
+        The watch's *carrier* — never an aggregator standing in for one. A container
+        tracked through Traqo under ONE reads as ONE; before carrier identity was a field
+        it read as "Traqo Ocean", which named an aggregator as though it moved boxes. A
+        watch through an aggregator with no carrier established returns "" and the panel
+        says so, because "we do not know who is carrying it" is a true answer and the
+        provider's name is not. A *direct* watch still reads as its carrier whether or not
+        one was recorded — see
+        :attr:`apps.scm.tracking.selectors.TrackingProvenance.carrier_code`.
         """
+        provenance = self.tracking_provenance
+        return provenance.carrier_name if provenance is not None else ""
+
+    @property
+    def tracking_provenance(self):
+        """Carrier, evidence and data source for the watch the status line speaks for.
+
+        None when nothing tracks this container. See
+        :class:`apps.scm.tracking.selectors.TrackingProvenance` — the three questions it
+        answers are three different questions, and this is the one place the panel gets
+        all three from.
+        """
+        from apps.scm.tracking.selectors import TrackingProvenance
+
         subscription = self.active_subscription
-        if subscription is not None and subscription.provider_id:
-            return subscription.provider.name
-        return ""
+        return TrackingProvenance(subscription) if subscription is not None else None
+
+    @property
+    def tracking_provider_label(self) -> str:
+        """How this container's tracking data arrives: "Direct API" or a provider name."""
+        provenance = self.tracking_provenance
+        return provenance.provider_label if provenance is not None else ""
+
+    @property
+    def carrier_source_label(self) -> str:
+        """How the carrier was established, in words, or "" when no carrier is recorded."""
+        provenance = self.tracking_provenance
+        return provenance.carrier_source_label if provenance is not None else ""
+
+    @property
+    def tracking_is_direct(self) -> bool:
+        """True when the carrier itself is supplying the tracking data."""
+        provenance = self.tracking_provenance
+        return provenance is not None and provenance.is_direct
 
     @property
     def tracking_sources(self) -> list[JourneySource]:
@@ -537,8 +576,14 @@ class ContainerWorkspace:
 
 
 def _not_configured_message(subscription) -> str:
-    carrier = subscription.provider.name if subscription.provider_id else "This carrier"
-    return f"{carrier} is not configured for live tracking yet, so no data is being fetched."
+    """Say which *provider* cannot be fetched from — the fault is in the connection.
+
+    The provider's name, not the carrier's: what is misconfigured is the thing we call,
+    and telling somebody "ONE is not configured" when the broken connection is Traqo's
+    would point them at the wrong setting.
+    """
+    provider = subscription.provider.name if subscription.provider_id else "This provider"
+    return f"{provider} is not configured for live tracking yet, so no data is being fetched."
 
 
 def get_container_workspace(team: Team, container: Container) -> ContainerWorkspace:
