@@ -130,11 +130,12 @@ def container_update(request, container_id):
         if form.is_valid():
             container = update_container(container=container, user=request.user, data=form.get_container_data())
             if request.htmx:
-                return render(
-                    request,
-                    "scm/containers/partials/container_row.html",
-                    {"container": container, "team_slug": team.slug},
-                )
+                # The whole page, for the same reason a movement reloads it: this
+                # modal is opened from both the list and the workspace, and an edit
+                # changes the header, the Overview panel and the row at once.
+                response = HttpResponse(status=204)
+                response["HX-Refresh"] = "true"
+                return response
             messages.success(request, _("Container updated."))
             return redirect("containers:detail", container_id=container_id)
         if request.htmx:

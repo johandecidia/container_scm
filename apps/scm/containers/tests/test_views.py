@@ -152,7 +152,7 @@ class ContainerUpdateTest(TestCase):
         response = client.get(url)
         self.assertEqual(response.status_code, 200)
 
-    def test_update_htmx_returns_row_partial(self):
+    def test_update_htmx_saves_and_refreshes(self):
         _et()
         client = Client()
         client.force_login(self.user)
@@ -166,8 +166,11 @@ class ContainerUpdateTest(TestCase):
             "color_system": "UNKNOWN",
         }
         response = client.post(url, data=data, HTTP_HX_REQUEST="true")
-        # HTMX valid update returns row partial
-        self.assertIn(response.status_code, [200, 302])
+        # A valid HTMX update saves and asks the page to reload.
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["HX-Refresh"], "true")
+        self.container.refresh_from_db()
+        self.assertEqual(self.container.condition, "FAIR")
 
 
 @override_settings(STORAGES=_TEST_STORAGES)
