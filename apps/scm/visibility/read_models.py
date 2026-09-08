@@ -261,6 +261,42 @@ class VisibilityObject:
         return any(workspace.is_tracked for workspace in self.workspaces)
 
     @property
+    def is_actively_tracked(self) -> bool:
+        """True when at least one of this object's containers is still being watched.
+
+        What the Control Tower's Tracking view is built from. Read off
+        :attr:`~apps.scm.containers.workspace.ContainerWorkspace.has_live_tracking`,
+        which reads
+        :data:`~apps.scm.tracking.selectors.LIVE_SUBSCRIPTION_STATUSES` — so there is
+        one definition of being tracked and the board cannot develop a second.
+
+        Deliberately not a status. ``Container.status`` and ``Shipment.status`` are
+        set by hand and by transport rules; neither is evidence that anybody is
+        fetching anything, and a board that read IN_TRANSIT as "tracked" would list
+        boxes no carrier has been asked about for a month.
+
+        *Any* container, not all: a shipment one of whose boxes is still being
+        watched is still something the platform is receiving news about, and dropping
+        it because the other nineteen finished would hide the leg still running.
+        """
+        return any(workspace.has_live_tracking for workspace in self.workspaces)
+
+    @property
+    def tracking_provider_label(self) -> str:
+        """Where this object's tracking data comes from — "Traqo Ocean", "Direct API".
+
+        Provenance, shown *beside* the carrier and never instead of it. Which of the
+        two a name answers for is decided in
+        :class:`~apps.scm.tracking.selectors.TrackingProvenance`; this is the second
+        of its three questions reaching the board.
+        """
+        for workspace in self.workspaces:
+            label = workspace.tracking_provider_label
+            if label:
+                return label
+        return ""
+
+    @property
     def vessel_name(self) -> str:
         lead = self.lead
         return lead.vessel_name if lead else ""

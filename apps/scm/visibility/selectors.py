@@ -15,16 +15,22 @@ in one query each for the whole page.
 **Current state, not history.** The overview says where things are now. Full event
 history is loaded only by the shipment and container journey maps, which are about
 one object at a time.
+
+**One selection, read twice.** The Control Tower's board and its map are two
+renderings of the same filtered list — see :class:`VisibilityView` and
+:func:`apply_view`. Neither fetches its own, which is what stops a filter change
+narrowing the list while the map keeps drawing the whole fleet.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import cast
 
-from django.db.models import Q
+from django.db.models import Q, TextChoices
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 from apps.scm.containers.models import Container
 from apps.scm.containers.workspace import get_container_workspaces
@@ -66,39 +72,142 @@ _EXCEPTION_FIELDS = (
 )
 
 
+class VisibilityView(TextChoices):
+    """Which operational question the Control Tower is answering right now.
+
+    Three views over one read model, not three pages. The board, the map and the
+    counts are all built from whichever of these is selected, which is what stops a
+    filter narrowing the list while the map keeps drawing the fleet.
+
+    ``TRACKING`` is the default and leads on purpose. "What are we watching, and what
+    is coming next" is the question an operator opens this page with; exceptions and
+    delays are what they turn to when something is wrong, and a board that opened on
+    them described the platform as a list of problems.
+    """
+
+    TRACKING = "tracking", _("Tracking")
+    EXCEPTIONS = "exceptions", _("Exceptions")
+    DELAYED = "delayed", _("Delayed")
+
+
+# What ``view`` means when it is not set at all: every object, narrowed by nothing.
+#
+# Not reachable from the UI, and not the default a request gets — see
+# :func:`parse_visibility_filters`, which supplies TRACKING for a URL that names no
+# view. It is the honest default for the *filter object*, so that
+# ``VisibilityFilters()`` still means "no filters applied" for the callers that
+# compose these reads rather than serving them.
+VIEW_ALL = ""
+
+
 @dataclass
 class VisibilityFilters:
     """The overview's filter state, parsed once from the query string."""
 
+    # The operational view. One of :class:`VisibilityView`, or :data:`VIEW_ALL`.
+    view: str = VIEW_ALL
     status: str = ""
     carrier: str = ""
     eta_window: str = ""
-    delayed_only: bool = False
-    exceptions_only: bool = False
     search: str = ""
 
     @property
     def is_active(self) -> bool:
-        return bool(
-            self.status or self.carrier or self.eta_window or self.delayed_only or self.exceptions_only or self.search
-        )
+        """True when the board is showing something narrower than its default.
+
+        The Tracking view does not count. It is where the page starts, so treating it
+        as an active filter would offer a Clear button that clears nothing and label
+        an empty fleet as an over-narrow search.
+        """
+        return bool(self.status or self.carrier or self.eta_window or self.search or self.is_narrowed_view)
+
+    @property
+    def is_narrowed_view(self) -> bool:
+        return self.view not in (VIEW_ALL, VisibilityView.TRACKING)
+
+    @property
+    def selected_view(self) -> str:
+        """The view a control should render as chosen — TRACKING where none was."""
+        return self.view or VisibilityView.TRACKING
 
 
 @dataclass
 class VisibilityOverview:
-    """Everything the overview page renders."""
+    """Everything the overview page renders.
+
+    Two lists, and the difference between them is the whole of how the view filter
+    works. ``objects`` is what the board and the map show — the selected view, with
+    every other filter applied. ``universe`` is everything before any of that, and it
+    is what the view counts are taken from: a Tracking chip reading the length of the
+    list it is already showing would say the same number whichever view was selected,
+    and an Exceptions count of nothing while three exceptions sit one click away is
+    worse than no count at all.
+    """
 
     objects: list[VisibilityObject] = field(default_factory=list)
     filters: VisibilityFilters = field(default_factory=VisibilityFilters)
     carrier_choices: list[str] = field(default_factory=list)
 
+    # Every object the team has, before the view and the filters narrowed anything.
+    universe: list[VisibilityObject] = field(default_factory=list)
+
     @property
     def active_shipments(self) -> int:
         return sum(1 for obj in self.objects if obj.kind == ObjectKind.SHIPMENT)
 
+    # -- the three views -------------------------------------------------------
+    #
+    # Each reads one existing verdict and adds no definition of its own: the tracking
+    # domain decides what being watched means, the exception engine what an exception
+    # is, and the delay engine what a delay is. All three are taken from `universe`,
+    # so the numbers describe the views a click would switch to rather than the one
+    # already on screen.
+
     @property
-    def tracked_containers(self) -> int:
-        return sum(obj.container_count for obj in self.objects if obj.is_tracked)
+    def tracking_objects(self) -> list[VisibilityObject]:
+        return [obj for obj in self.universe if obj.is_actively_tracked]
+
+    @property
+    def tracking_container_count(self) -> int:
+        """Distinct containers under a live watch.
+
+        Containers rather than watches, and distinct rather than summed: a box
+        tracked through an aggregator that also carries an older direct watch is one
+        container being tracked, and counting subscriptions would report two. It is
+        also why this is not a sum over the objects — a container can be reached
+        through more than one of them.
+        """
+        return len({container.pk for obj in self.tracking_objects for container in obj.containers})
+
+    @property
+    def delayed_total(self) -> int:
+        return sum(1 for obj in self.universe if obj.is_delayed)
+
+    @property
+    def exception_total(self) -> int:
+        return sum(1 for obj in self.universe if obj.has_exception)
+
+    @property
+    def view(self) -> str:
+        return self.filters.selected_view
+
+    @property
+    def view_label(self) -> str:
+        return str(VisibilityView(self.view).label)
+
+    @property
+    def view_choices(self) -> list[tuple[str, str, int]]:
+        """The three view buttons: value, label, and how much is in each.
+
+        Built here rather than in the template so the order and the counts are the
+        read model's answer, and Tracking leads wherever this is rendered.
+        """
+        counts = {
+            VisibilityView.TRACKING: len(self.tracking_objects),
+            VisibilityView.EXCEPTIONS: self.exception_total,
+            VisibilityView.DELAYED: self.delayed_total,
+        }
+        return [(value, str(VisibilityView(value).label), counts[value]) for value in VisibilityView.values]
 
     @property
     def arriving_soon(self) -> list[VisibilityObject]:
@@ -145,7 +254,12 @@ class VisibilityOverview:
 
     @property
     def needs_attention(self) -> list[VisibilityObject]:
-        """The Control Tower's attention queue: exceptions first, then delays.
+        """The attention panel's list: exceptions first, then delays.
+
+        Built from ``objects``, so it describes the view currently on screen. Kept
+        as one list beside the two separate views on purpose: a view answers "show me
+        the delayed ones", and this answers "what is wrong here", which is a question
+        about the selection rather than a way of narrowing it.
 
         A composition of the two lists above rather than a new idea of what is
         wrong — the exception engine and the delay engine remain the only things
@@ -169,25 +283,52 @@ class VisibilityOverview:
 
 
 def parse_visibility_filters(params) -> VisibilityFilters:
-    """Read filter state out of a request's query parameters."""
+    """Read filter state out of a request's query parameters.
+
+    ``view`` is explicit in the URL so a selection can be linked, bookmarked and
+    read back off the address bar. A request that names no view — or names one that
+    does not exist, which is what a hand-edited or stale link sends — gets Tracking,
+    the same forgiveness :func:`~apps.scm.visibility.map_positions.parse_map_filters`
+    applies for the same reason: a query string is not a form, and a bad one should
+    show the default board rather than a 500.
+    """
     return VisibilityFilters(
+        view=_parse_view(params),
         status=(params.get("status") or "").strip(),
         carrier=(params.get("carrier") or "").strip(),
         eta_window=(params.get("eta") or "").strip(),
-        delayed_only=params.get("delayed") == "1",
-        exceptions_only=params.get("exceptions") == "1",
         search=(params.get("search") or "").strip(),
     )
 
 
+def _parse_view(params) -> str:
+    """The view a request is asking for, defaulting to Tracking.
+
+    Links written before the views existed carried the two operational filters as
+    flags of their own — ``?exceptions=1``, ``?delayed=1`` — and they are still out
+    there in bookmarks and in the KPI cards' own history. They are read as the
+    equivalent view rather than left to select nothing, which is what keeps an old
+    link showing the list it was saved for.
+    """
+    requested = (params.get("view") or "").strip()
+    if requested in VisibilityView.values:
+        return requested
+    if params.get("exceptions") == "1":
+        return VisibilityView.EXCEPTIONS
+    if params.get("delayed") == "1":
+        return VisibilityView.DELAYED
+    return VisibilityView.TRACKING
+
+
 def get_visibility_overview(team: Team, filters: VisibilityFilters | None = None) -> VisibilityOverview:
-    """Return the composed overview for a team, with filters applied."""
+    """Return the composed overview for a team, with the view and filters applied."""
     filters = filters or VisibilityFilters()
     objects = list_visibility_objects(team)
     return VisibilityOverview(
         objects=_apply_filters(objects, filters),
         filters=filters,
         carrier_choices=sorted({obj.carrier_name for obj in objects if obj.carrier_name}),
+        universe=objects,
     )
 
 
@@ -414,26 +555,79 @@ def _exception_reports(team: Team, container_ids) -> dict[int, ExceptionReport]:
 
 
 def _apply_filters(objects: list[VisibilityObject], filters: VisibilityFilters) -> list[VisibilityObject]:
-    """Narrow the object list.
+    """Narrow the object list to the selected view, then to the other filters.
 
     Applied in Python rather than SQL because every one of these values is derived
     from tracking rather than stored — filtering in the database would mean a second
     implementation of the derivations, which is exactly what this layer avoids.
     """
-    result = objects
+    result = apply_view(objects, filters.view)
     if filters.status:
         result = [obj for obj in result if obj.journey_state == filters.status]
     if filters.carrier:
         result = [obj for obj in result if obj.carrier_name == filters.carrier]
-    if filters.delayed_only:
-        result = [obj for obj in result if obj.is_delayed]
-    if filters.exceptions_only:
-        result = [obj for obj in result if obj.has_exception]
     if filters.eta_window:
         result = filter_by_eta_window(result, filters.eta_window)
     if filters.search:
         result = [obj for obj in result if matches_search(obj, filters.search.lower())]
-    return result
+    return sort_by_arrival(result)
+
+
+def apply_view(objects: list[VisibilityObject], view: str) -> list[VisibilityObject]:
+    """Narrow *objects* to one operational view.
+
+    Three reads of three existing verdicts. Nothing here decides what an exception
+    or a delay is — the engines do, and the separate Exceptions queue asks them the
+    same question — and nothing here decides what being tracked means either.
+
+    Exceptions and Delayed are separate datasets rather than one attention list: an
+    object that is both appears in both, because the two views are asking different
+    questions about it. The combined list is still
+    :attr:`VisibilityOverview.needs_attention`, which is what the attention panel and
+    the Exceptions queue read.
+
+    An unrecognised view narrows nothing rather than raising, for the same reason
+    the parser forgives one.
+    """
+    if view == VisibilityView.TRACKING:
+        return [obj for obj in objects if obj.is_actively_tracked]
+    if view == VisibilityView.EXCEPTIONS:
+        return [obj for obj in objects if obj.has_exception]
+    if view == VisibilityView.DELAYED:
+        return [obj for obj in objects if obj.is_delayed]
+    return list(objects)
+
+
+def sort_by_arrival(objects: list[VisibilityObject]) -> list[VisibilityObject]:
+    """Order the board by what arrives soonest, then by what we heard about most recently.
+
+    ETA ascending with nulls last. The operational question the Control Tower is
+    open to answer is "what is coming next", and an object with no ETA cannot answer
+    it — so it goes after everything that can, rather than sorting as though it were
+    arriving in 1970.
+
+    Freshness breaks the tie among those, newest first. It is the only ordering that
+    is useful for a box nobody has forecast: the ones we have just heard from are the
+    ones something is happening to. ``key`` is the final tiebreak, so two objects with
+    the same ETA and the same silence come out in the same order on every request —
+    a list that reshuffles between two identical loads reads as data changing.
+
+    Sorted in Python rather than in SQL, and deliberately: ``current_eta`` is the read
+    model's own answer about which of a shipment's date and a carrier's forecast to
+    believe, and ordering in the database would need a second implementation of that
+    rule. It costs no queries — every value is already on the loaded workspaces — so
+    this is a sort over a list in memory, not an N+1.
+    """
+    return sorted(objects, key=_arrival_sort_key)
+
+
+def _arrival_sort_key(obj: VisibilityObject) -> tuple:
+    eta = obj.current_eta
+    activity = obj.last_event_at or obj.last_synced_at
+    # Negated so a *descending* freshness rides inside an ascending sort, and
+    # infinite so an object nobody has heard from sorts last among its equals.
+    freshness = -activity.timestamp() if activity is not None else float("inf")
+    return (eta is None, eta or date.min, freshness, obj.key)
 
 
 def filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[VisibilityObject]:

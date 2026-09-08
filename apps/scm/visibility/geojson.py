@@ -154,11 +154,16 @@ def container_journey_feature_collection(journey, *, container_number: str = "",
 
 
 def _group_point(group) -> dict:
-    """One marker: a canonical place, a position class and how many boxes.
+    """One marker: a place, a position class and how many boxes.
 
     ``container_number`` is filled in only for a group of one. A marker covering
     eighty containers has no single number, and putting the first one on it would
     read as a label for the whole group.
+
+    A marker standing on a place the resolver never matched carries no
+    ``location_id`` and no ``panel_url``: there is no canonical location to open and
+    nothing to count as also standing there. ``is_canonical`` states which kind it
+    is, so the browser never has to infer it from a missing id.
     """
     from .map_positions import PositionClass
 
@@ -171,10 +176,11 @@ def _group_point(group) -> dict:
         # know that a destination is not a current position.
         "is_current": group.is_current,
         "is_destination": group.position_class == PositionClass.DESTINATION,
-        "location_id": group.location.pk,
+        "is_canonical": group.is_canonical,
+        "location_id": group.location_id,
         "location_name": group.place_label,
-        "location_unlocode": group.location.unlocode,
-        "location_type_label": group.location.get_location_type_display(),
+        "location_unlocode": group.unlocode,
+        "location_type_label": group.type_label,
         "container_count": group.count,
         "container_number": lead.container_number if lead is not None else "",
         # "At Oceanterminalen", never a coordinate: the point locates the terminal,
@@ -194,7 +200,7 @@ def _group_point(group) -> dict:
         "overdue_count": group.overdue_count,
         "eta_display": _date_display(lead.eta) if lead is not None else "",
         "destination_label": lead.destination_label if lead is not None else "",
-        "panel_url": reverse("visibility:map_location_panel", args=[group.position_class, group.location.pk]),
+        "panel_url": _panel_url(group),
         "container_url": reverse("containers:detail", args=[lead.container_id]) if lead is not None else "",
     }
     # Both coordinates are set: a group with either missing never becomes a marker.
@@ -248,8 +254,21 @@ def location_feature_collection(location, container_count: int = 0) -> dict:
     return feature_collection([point] if point is not None else [])
 
 
+def _panel_url(group) -> str:
+    """The marker's container list, or "" when the place has no canonical identity.
+
+    Empty rather than absent, so the browser's click handler reads one property and
+    finds nothing to open — see ``loadPanel`` in ``map.js``. The panel lists what is
+    standing at a *location*; a place a carrier merely named has nothing to list.
+    """
+    location_id = group.location_id
+    if location_id is None:
+        return ""
+    return reverse("visibility:map_location_panel", args=[group.position_class, location_id])
+
+
 def _position_point(position) -> dict:
-    """One canonical marker for a single container.
+    """One marker for a single container.
 
     Built as a group of one rather than with its own property builder, so a marker
     on the Container Workspace and the same marker on the Control Tower carry
@@ -259,8 +278,8 @@ def _position_point(position) -> dict:
 
     group = MapLocationGroup(
         position_class=position.position_class,
-        # Non-None: only plottable positions reach here, and those have a location.
-        location=position.location,
+        # Non-None: only plottable positions reach here, and those have a place.
+        place=position.place,
         positions=[position],
     )
     return _group_point(group)

@@ -70,6 +70,50 @@ def get_tracking_events_for_container(team: Team, container):
     )
 
 
+# The watch statuses that mean "we are still tracking this".
+#
+# Stated once, because "are we tracking this box" is asked by the container panel, by
+# the Control Tower's Tracking view and by anything that comes after them, and two
+# answers to it would put a container in one list and not the other.
+#
+# It is the sync engine's own runnable set — see :func:`get_due_tracking_subscriptions`
+# — expressed as statuses rather than as due-ness, so a read model can ask whether a
+# container is being watched without also asking whether it is due this minute.
+#
+# Each exclusion is a refusal rather than an oversight:
+#
+# ``CANCELLED``
+#     Somebody stopped this watch on purpose. Counting it would report tracking that
+#     was deliberately switched off.
+# ``COMPLETED``
+#     The leg it covered is over. Its events remain part of the journey — see
+#     :func:`get_verified_container_subscriptions` — but nothing is coming from it.
+# ``PAUSED``
+#     The watch exists and nothing is being fetched for it. "Suspended" is a true
+#     answer and "tracking" is not.
+#
+# FAILED and SYNCING are included, both deliberately. A failing watch is a container
+# we believe we are tracking and are not, which is precisely what a control tower
+# exists to surface; and a watch mid-sync must not blink out of the list for the
+# duration of its own refresh.
+LIVE_SUBSCRIPTION_STATUSES: tuple[str, ...] = (
+    TrackingSubscription.Status.ACTIVE,
+    TrackingSubscription.Status.SYNCING,
+    TrackingSubscription.Status.FAILED,
+)
+
+
+def has_live_subscription(subscriptions) -> bool:
+    """True when any of *subscriptions* is a watch still being run.
+
+    The in-Python form of :data:`LIVE_SUBSCRIPTION_STATUSES`, for callers that have
+    already loaded a container's watches — the workspace builders load all of them in
+    bulk, so asking the database again would be a query per container on the one page
+    that covers a whole fleet.
+    """
+    return any(subscription.status in LIVE_SUBSCRIPTION_STATUSES for subscription in subscriptions)
+
+
 def get_verified_container_subscriptions(team: Team, container) -> list[TrackingSubscription]:
     """Return every tracking source this container has proved, oldest first.
 

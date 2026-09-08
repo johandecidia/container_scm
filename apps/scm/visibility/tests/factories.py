@@ -22,7 +22,12 @@ from apps.scm.containers.choices import (
 from apps.scm.containers.models import Container, ContainerLocation, EquipmentType
 from apps.scm.containers.movements import record_container_movement
 from apps.scm.tracking.ingestion import persist_normalised_events
-from apps.scm.tracking.models import TrackingEvent, TrackingProvider, TrackingSubscription
+from apps.scm.tracking.models import (
+    CarrierSource,
+    TrackingEvent,
+    TrackingProvider,
+    TrackingSubscription,
+)
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
 from apps.users.models import CustomUser
@@ -218,6 +223,94 @@ def resolve_tracking_to(
     event.location_resolution_method = LocationResolutionMethod.UNLOCODE
     event.save(update_fields=["location", "location_resolution_status", "location_resolution_method"])
     return event
+
+
+def watch_container(
+    team: Team,
+    container: Container,
+    *,
+    shipment=None,
+    provider_code: str = "maersk",
+    status: str = TrackingSubscription.Status.ACTIVE,
+) -> TrackingSubscription:
+    """Put a live carrier watch on a container, without ingesting a payload.
+
+    For fixtures whose subject is something other than tracking — an attention
+    queue, a KPI card — but which have to be *on* the Control Tower to be tested at
+    all, because its default view is what the platform is actively watching.
+    """
+    return TrackingSubscription.objects.create(
+        team=team,
+        provider=make_provider(code=provider_code, name=provider_code.title()),
+        container=container,
+        shipment=shipment,
+        tracking_reference=container.container_id,
+        status=status,
+        tracking_status=TrackingSubscription.TrackingStatus.TRACKING,
+    )
+
+
+def make_aggregator_subscription(
+    team: Team,
+    container: Container,
+    *,
+    provider_code: str = "traqo",
+    provider_name: str = "Traqo Ocean",
+    carrier_code: str = "one",
+    carrier_name: str = "ONE (Ocean Network Express)",
+    status: str = TrackingSubscription.Status.ACTIVE,
+    shipment=None,
+) -> TrackingSubscription:
+    """A watch whose provider is not the carrier — the Traqo-through-ONE shape.
+
+    The case worth having a factory for, because it is the one where every read that
+    conflated provider with carrier goes wrong at once: the provider is ``traqo`` and
+    the carrier is ``one``, so anything that filtered on ``provider == carrier``, or
+    read the provider's name as the carrier's, drops the container or mislabels it.
+    """
+    provider = make_provider(code=provider_code, name=provider_name)
+    return TrackingSubscription.objects.create(
+        team=team,
+        provider=provider,
+        container=container,
+        shipment=shipment,
+        tracking_reference=container.container_id,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+        carrier_source=CarrierSource.TRAQO_LOOKUP,
+        status=status,
+        tracking_status=TrackingSubscription.TrackingStatus.TRACKING,
+    )
+
+
+def strip_reported_coordinates(team: Team, container: Container) -> int:
+    """Drop the coordinates from every carrier event on a container.
+
+    The places the carrier named are left in place. What remains is a state a great
+    many real containers are in — a named port nothing has resolved, and no
+    coordinates to fall back on — and it is the only way to reach "the domain cannot
+    place this at all" with a fixture whose every event carries a real latitude.
+
+    Needed since the map read model gained its carrier-reported tier: coordinates on
+    an observed event are now drawable on their own, so a test that wants nothing
+    plottable has to say which of the two reasons it means.
+    """
+    return TrackingEvent.objects.filter(team=team, container=container).update(
+        location_latitude=None, location_longitude=None
+    )
+
+
+def set_reported_coordinates(team: Team, container: Container, latitude: str, longitude: str) -> int:
+    """Put one coordinate pair on every carrier event of a container.
+
+    The mirror of :func:`strip_reported_coordinates`, for the cases that need the
+    carrier's evidence to be drawable while the *canonical* answer is not — a box
+    accepted into a depot nobody has recorded a latitude for, say, whose carrier has
+    been reporting positions all along.
+    """
+    return TrackingEvent.objects.filter(team=team, container=container).update(
+        location_latitude=latitude, location_longitude=longitude
+    )
 
 
 def payload_for_container(payload: dict, container_number: str) -> dict:

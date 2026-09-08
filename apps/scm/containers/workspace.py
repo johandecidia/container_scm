@@ -374,11 +374,34 @@ class ContainerWorkspace:
 
     @property
     def is_tracking_active(self) -> bool:
-        """True when a live watch exists — the panel's green dot."""
+        """True when the watch the panel speaks for is running — the green dot."""
         from apps.scm.tracking.models import TrackingSubscription
 
         subscription = self.active_subscription
         return subscription is not None and subscription.status == TrackingSubscription.Status.ACTIVE
+
+    @property
+    def has_live_tracking(self) -> bool:
+        """True when this container is still being watched by anything.
+
+        Deliberately a different question from :attr:`is_tracking_active`, which
+        speaks for the one subscription the panel's status line names and is the
+        panel's green dot: a watch that is failing must not show a green dot, and a
+        container whose watch is failing is emphatically still one the Control Tower
+        is tracking. Which statuses count is
+        :data:`~apps.scm.tracking.selectors.LIVE_SUBSCRIPTION_STATUSES`, stated
+        there once.
+
+        Also different from :attr:`is_tracked`, which asks whether a carrier has
+        *ever* been verified for this box. That stays true forever, which is right
+        for the journey and wrong for "what are we watching now".
+
+        Reads the subscriptions already loaded, so it costs nothing per container on
+        a bulk-built workspace.
+        """
+        from apps.scm.tracking.selectors import has_live_subscription
+
+        return has_live_subscription(self.tracking_subscriptions)
 
     @property
     def has_tracking_error(self) -> bool:

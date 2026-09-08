@@ -13,10 +13,16 @@ top of the same read layer. Three things are worth a test rather than a comment:
   board would look fine and break panning, so the partial is asserted to contain the
   source URL and no map element.
 
-* **Every KPI card is an action.** Arriving, Delayed and Exceptions are the numbers
-  an operator acts on, and clicking them has to reach the same filtered board a URL
-  would. The two totals — active shipments and containers — lead out to the lists
-  they count, by route name rather than by a written-out path.
+* **Every KPI card is an action.** Tracking, Delayed and Exceptions are the numbers
+  an operator acts on, and since TRACK-UX clicking one selects the matching view of
+  this board — the same board a ``?view=`` URL would reach. Arriving still drills
+  into the Arrivals queue, and Active shipments leads out to the list it counts, by
+  route name rather than by a written-out path.
+
+* **Tracking is the default view.** The board opens on what the platform is actively
+  watching. Every fixture here therefore has a live watch on it: under TRACK-UX a
+  shipment with carrier events and no subscription is not something we are tracking,
+  and a fixture without one would be testing an empty board.
 """
 
 from __future__ import annotations
@@ -35,10 +41,11 @@ from apps.scm.visibility.read_models import ObjectKind, VisibilityObject
 from apps.scm.visibility.selectors import (
     VisibilityFilters,
     VisibilityOverview,
+    VisibilityView,
     get_visibility_overview,
 )
 
-from .factories import TEST_STORAGES, make_container, make_provider, make_user_and_team
+from .factories import TEST_STORAGES, make_container, make_provider, make_user_and_team, watch_container
 
 
 def _object(pk: int, *, delayed: bool = False, exception: bool = False) -> VisibilityObject:
@@ -112,6 +119,11 @@ class ControlTowerPageTest(TestCase):
             location_name="Gothenburg",
             description="Customs hold",
         )
+        # A live watch on each shipment, so both are on the default Tracking board.
+        cls.late_container = make_container(cls.team, "MSKU0000006")
+        ShipmentContainer.objects.create(shipment=cls.delayed, container=cls.late_container)
+        for shipment, container in ((cls.held, cls.container), (cls.delayed, cls.late_container)):
+            watch_container(cls.team, container, shipment=shipment)
 
     def setUp(self):
         self.client = Client()
@@ -158,29 +170,23 @@ class ControlTowerPageTest(TestCase):
         """
         return f'<a href="{url}" class="stat bg-base-200'
 
-    def test_the_operational_kpi_cards_drill_into_the_work_queues(self):
-        """Since UX-3 the Control Tower is the summary and the queues are the work.
+    def test_the_three_operational_kpi_cards_select_this_boards_views(self):
+        """Tracking, Delayed and Exceptions are the board's own views.
 
-        Arriving and Exceptions lead to their queues; Delayed leads to the same
-        queue with its issue filter applied, because a delay is one of the things
-        that queue is about rather than a fourth destination.
+        A change from UX-3, where all three left for a work queue: they now have a
+        view here to switch to, so a click narrows the list and the map beside it
+        rather than navigating away. The queues are still one click from the section
+        headers, which is what the drill-down was for.
         """
-        response = self.get()
-        for url in (
-            reverse("visibility:arrivals"),
-            reverse("visibility:exceptions"),
-            f"{reverse('visibility:exceptions')}?issue=delay",
-        ):
-            with self.subTest(url=url):
-                self.assertContains(response, self._kpi_card(url))
-
-    def test_no_kpi_card_still_filters_the_board_it_sits_on(self):
-        """A card that reloaded the same page with a filter is no longer a drill-down."""
         overview_url = reverse("visibility:overview")
         response = self.get()
-        for query in ("?eta=7", "?delayed=1", "?exceptions=1"):
-            with self.subTest(query=query):
-                self.assertNotContains(response, self._kpi_card(f"{overview_url}{query}"))
+        for view in VisibilityView.values:
+            with self.subTest(view=view):
+                self.assertContains(response, self._kpi_card(f"{overview_url}?view={view}"))
+
+    def test_the_arrival_kpi_cards_still_drill_into_the_arrivals_queue(self):
+        """Untouched by TRACK-UX: arrivals are worked in their own queue."""
+        self.assertContains(self.get(), self._kpi_card(reverse("visibility:arrivals")))
 
     def test_the_attention_panel_offers_the_queue_it_summarises(self):
         self.assertContains(self.get(), f'href="{reverse("visibility:exceptions")}" class="text-xs link')
@@ -192,8 +198,15 @@ class ControlTowerPageTest(TestCase):
         """A total is not a filter — it links to the list it counts."""
         self.assertContains(self.get(), self._kpi_card(reverse("shipments:list")))
 
-    def test_the_containers_kpi_leads_to_the_container_list(self):
-        self.assertContains(self.get(), self._kpi_card(reverse("containers:list")))
+    def test_the_tracking_kpi_counts_distinct_containers_under_a_live_watch(self):
+        """One box with two sources is one tracked container, not two."""
+        from .factories import make_aggregator_subscription
+
+        make_aggregator_subscription(self.team, self.container, shipment=self.held)
+
+        overview = get_visibility_overview(self.team)
+
+        self.assertEqual(overview.tracking_container_count, 2)
 
     def test_no_kpi_card_is_a_dead_total(self):
         """metric_card falls back to a bare `div.stat` without an href. None should.
@@ -203,10 +216,49 @@ class ControlTowerPageTest(TestCase):
         """
         self.assertNotContains(self.get(), '<div class="stat bg-base-200')
 
+    # -- the views ----------------------------------------------------------
+
+    def test_the_board_opens_on_tracking(self):
+        """No query parameter is the Tracking view, and the control shows it chosen."""
+        response = self.get()
+        self.assertEqual(response.context["overview"].view, VisibilityView.TRACKING)
+        # The one selected button in the view group, rendered server-side.
+        html = response.content.decode()
+        self.assertEqual(html.count('class="btn join-item btn-sm btn-primary"'), 1)
+        selected = html.split('class="btn join-item btn-sm btn-primary"', 1)[1]
+        self.assertIn('value="tracking"', selected.split("</label>", 1)[0])
+
+    def test_asking_for_tracking_explicitly_shows_the_same_board(self):
+        default = {obj.key for obj in self.get().context["overview"].objects}
+        explicit = {obj.key for obj in self.get(view="tracking").context["overview"].objects}
+        self.assertEqual(default, explicit)
+
+    def test_the_exceptions_view_uses_the_exception_engines_own_findings(self):
+        response = self.get(view="exceptions")
+        keys = {obj.key for obj in response.context["overview"].objects}
+        attention = {obj.key for obj in get_visibility_overview(self.team).needs_attention}
+        self.assertTrue(keys)
+        self.assertTrue(keys <= attention)
+        self.assertTrue(all(obj.has_exception for obj in response.context["overview"].objects))
+
+    def test_the_delayed_view_uses_the_delay_engines_own_verdict(self):
+        response = self.get(view="delayed")
+        objects = response.context["overview"].objects
+        self.assertTrue(objects)
+        self.assertTrue(all(obj.is_delayed for obj in objects))
+
+    def test_the_three_views_are_three_separate_datasets(self):
+        keys = {
+            view: {obj.key for obj in self.get(view=view).context["overview"].objects} for view in VisibilityView.values
+        }
+        self.assertNotEqual(keys[VisibilityView.EXCEPTIONS], keys[VisibilityView.DELAYED])
+        self.assertNotEqual(keys[VisibilityView.TRACKING], keys[VisibilityView.EXCEPTIONS])
+
     # -- backwards compatibility -------------------------------------------
     #
-    # The KPI cards and the navigation stopped pointing at these in UX-3, but the
-    # URLs are in bookmarks and in links people have shared. They keep working.
+    # The KPI cards and the navigation stopped pointing at the flag URLs in UX-3, but
+    # they are in bookmarks and in links people have shared. They keep working, now
+    # by selecting the equivalent view.
 
     def test_the_old_exceptions_filter_url_still_filters_the_board(self):
         response = self.get(exceptions="1")
@@ -313,7 +365,7 @@ class ControlTowerIsolationTest(TestCase):
         cls.user_a, cls.team_a = make_user_and_team("ct-a@example.com", "ct-team-a")
         cls.user_b, cls.team_b = make_user_and_team("ct-b@example.com", "ct-team-b")
         for team, number in ((cls.team_a, "SHP-CT-A"), (cls.team_b, "SHP-CT-B")):
-            Shipment.objects.create(
+            shipment = Shipment.objects.create(
                 team=team,
                 shipment_number=number,
                 carrier="Maersk",
@@ -321,6 +373,10 @@ class ControlTowerIsolationTest(TestCase):
                 eta=timezone.localdate() + timedelta(days=12),
                 original_eta=timezone.localdate() + timedelta(days=2),
             )
+            # A live watch, so each team's shipment is on its own default board.
+            container = make_container(team)
+            ShipmentContainer.objects.create(shipment=shipment, container=container)
+            watch_container(team, container, shipment=shipment)
 
     def test_the_attention_queue_is_scoped_to_the_callers_team(self):
         labels = {obj.label for obj in get_visibility_overview(self.team_a).needs_attention}
@@ -341,7 +397,6 @@ class ControlTowerIsolationTest(TestCase):
         self.assertNotContains(response, "SHP-CT-B")
 
     def test_a_filtered_visibility_overview_for_the_other_team_shows_only_its_own(self):
-        labels = {
-            obj.label for obj in get_visibility_overview(self.team_b, VisibilityFilters(delayed_only=True)).objects
-        }
+        filters = VisibilityFilters(view=VisibilityView.DELAYED)
+        labels = {obj.label for obj in get_visibility_overview(self.team_b, filters).objects}
         self.assertEqual(labels, {"SHP-CT-B"})

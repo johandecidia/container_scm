@@ -157,7 +157,14 @@ def get_latest_container_position(team, container) -> ContainerPosition | None:
     confirmed at a named terminal. The most recent *located* observation wins, and
     its timestamp is when the box was there.
     """
-    events = TrackingEvent.objects.filter(team=team, container=container).exclude(event_datetime__isnull=True)
+    # The provider travels with the anchor: the map read model names the feed that
+    # carried the observation, and following the FK afterwards would be a query per
+    # container on any page that asks about more than one.
+    events = (
+        TrackingEvent.objects.filter(team=team, container=container)
+        .exclude(event_datetime__isnull=True)
+        .select_related("provider")
+    )
 
     # The created_at tiebreak makes the answer deterministic when a carrier reports
     # two events at the same instant, and matches what the bulk builder in

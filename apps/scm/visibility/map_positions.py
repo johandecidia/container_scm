@@ -12,35 +12,43 @@ The three, kept strictly apart:
     ``Container.current_location``: the projection of the accepted movement history
     (LOC-2). The strongest thing the platform says about where a box is.
 ``TRACKING``
-    The newest observed carrier event that resolved to one of MCR's own canonical
-    locations (LOC-1). External evidence, labelled as evidence.
+    Where a carrier last observed the box. Either resolved to one of MCR's own
+    canonical locations (LOC-1), or — when nothing resolved — the place the carrier
+    named with the coordinates the carrier sent. External evidence either way, and
+    labelled as evidence. See :class:`MapPlace`.
 ``DESTINATION``
     ``Shipment.destination_location``. Where something is *going*. Not a position,
     never counted as one, and drawn only when somebody asks for it.
 
-**Precedence is decided here and nowhere else.** PHYSICAL, then TRACKING, then no
-marker at all. A destination is never promoted into a current position: a container
-whose carrier has gone quiet is somewhere we do not know, and drawing it on its
-destination would assert the arrival the whole of LOC-3 exists to be careful about.
-The browser receives the answer, never the rule — see
-:mod:`apps.scm.visibility.geojson`.
+**Precedence is decided here and nowhere else.** PHYSICAL, then canonically-resolved
+TRACKING, then carrier-reported TRACKING, then no marker at all. A destination is
+never promoted into a current position: a container whose carrier has gone quiet is
+somewhere we do not know, and drawing it on its destination would assert the arrival
+the whole of LOC-3 exists to be careful about. The browser receives the answer, never
+the rule — see :mod:`apps.scm.visibility.geojson`.
 
 **Nothing is recalculated.** The physical position is read off the projection, the
 arrival state off the LOC-3 interpreter, the canonical identity off LOC-1's
-resolver. A second implementation of any of them here would eventually disagree
-with the page the map is drawn on.
+resolver, and the carrier-reported position off the very
+:class:`~apps.scm.tracking.positions.ContainerPosition` the Container Workspace's
+position panel shows. A second implementation of any of them here would eventually
+disagree with the page the map is drawn on — which is exactly what happened while
+this module read canonical locations only: a container whose events had never
+resolved was named at Shanghai on its own workspace and drawn nowhere at all on the
+Control Tower.
 
-**Coordinates come from the canonical location, and are never invented.** A
-location with no latitude and longitude is a valid canonical place that cannot be
-drawn yet — not an error, and not an invitation to geocode its name.
-:class:`MapCoverage` reports how much of the fleet that accounts for, because an
-empty map with no explanation is indistinguishable from an empty business.
+**Coordinates are read, never invented.** They come from the canonical location, or
+from the carrier's own event. A canonical location with no latitude and longitude is
+a valid place that cannot be drawn yet — not an error, and not an invitation to
+geocode its name. :class:`MapCoverage` reports how much of the fleet that accounts
+for, because an empty map with no explanation is indistinguishable from an empty
+business.
 
-**A canonical coordinate locates the place, not the box inside it.**
-Oceanterminalen is one point; the eighty containers standing in it are *at that
-terminal*, not at that latitude. Positions are therefore grouped by canonical
-location and every label says "at" the place rather than quoting a fix. Scattering
-them apart with jitter would draw a precision the data does not have.
+**A coordinate locates the place, not the box inside it.** Oceanterminalen is one
+point; the eighty containers standing in it are *at that terminal*, not at that
+latitude. Positions are therefore grouped by place and every label says "at" the
+place rather than quoting a fix. Scattering them apart with jitter would draw a
+precision the data does not have.
 """
 
 from __future__ import annotations
@@ -60,6 +68,7 @@ if TYPE_CHECKING:
 
     from apps.scm.containers.models import Container, ContainerLocation
     from apps.scm.shipments.models import Shipment
+    from apps.scm.tracking.positions import ContainerPosition
     from apps.teams.models import Team
 
     from .read_models import VisibilityObject
@@ -86,6 +95,108 @@ CURRENT_POSITION_CLASSES: tuple[str, ...] = (PositionClass.PHYSICAL, PositionCla
 
 
 @dataclass(frozen=True)
+class MapPlace:
+    """Somewhere a marker can stand, and how well MCR knows it.
+
+    Two kinds, and the difference is not cosmetic.
+
+    *Canonical* — one of MCR's own :class:`~apps.scm.containers.models.ContainerLocation`
+    rows, at the coordinates an operator recorded. The place has an identity: it can
+    be opened, its containers listed, its master data fixed.
+
+    *Reported* — the place a carrier named on an event, at the coordinates that
+    carrier sent. Real evidence, and the same evidence the Container Workspace's
+    position panel shows — but with no canonical identity, because
+    :func:`~apps.scm.containers.location_resolver.resolve_location` could not match it
+    to a location MCR believes in. It draws, and it does not pretend to be a
+    location: no id, no marker panel, no count of what else is standing there. The
+    master-data task that would turn it into a canonical place is already on the
+    Location Data Quality queue, which reads the resolution statuses directly.
+
+    Keeping both behind one type is what stops the two map surfaces disagreeing.
+    Before it existed the Control Tower drew canonical places only, so a container
+    the workspace confidently placed at a named port was simply absent from the fleet
+    map — which reads as "we have no idea where this is" rather than "the carrier
+    told us, and we have not filed the port yet".
+    """
+
+    name: str = ""
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+
+    # The canonical row, when this place is one. None makes it a reported place, and
+    # is the single thing every consumer branches on.
+    location: ContainerLocation | None = None
+
+    unlocode: str = ""
+    # "Terminal", "Port" — the canonical location's kind. Empty for a reported place:
+    # a carrier names a place without saying what sort of place it is, and guessing
+    # would be an interpretation rather than a reading.
+    type_label: str = ""
+
+    @classmethod
+    def from_location(cls, location: ContainerLocation) -> MapPlace:
+        """One of MCR's own locations, labelled inside its parent where it has one."""
+        return cls(
+            name=location.full_name,
+            latitude=location.latitude,
+            longitude=location.longitude,
+            location=location,
+            unlocode=location.unlocode,
+            type_label=str(location.get_location_type_display()),
+        )
+
+    @classmethod
+    def from_position(cls, position: ContainerPosition) -> MapPlace:
+        """The place a carrier reported, exactly as it reported it.
+
+        Nothing is upgraded. ``position`` already carries the quality of the
+        observation — see :class:`~apps.scm.tracking.positions.PositionType` — and the
+        name is the carrier's own word for the place, or its UN/LOCODE where that is
+        all it sent.
+        """
+        return cls(
+            name=position.label,
+            latitude=position.latitude,
+            longitude=position.longitude,
+            unlocode=position.location_unlocode,
+        )
+
+    @property
+    def is_canonical(self) -> bool:
+        return self.location is not None
+
+    @property
+    def location_id(self) -> int | None:
+        return self.location.pk if self.location is not None else None
+
+    @property
+    def has_coordinates(self) -> bool:
+        return self.latitude is not None and self.longitude is not None
+
+    @property
+    def group_key(self) -> tuple:
+        """What makes two positions the same marker.
+
+        A canonical place is its row: two locations that happen to share a coordinate
+        are two places MCR chose to record separately, and must stay two markers.
+
+        A reported place has no row, so its identity is the carrier's word for it
+        *and* the coordinates that came with it. Deliberately both: the name alone
+        would move a container onto another container's fix, and the coordinates alone
+        would merge two differently-named places a carrier happens to locate at one
+        point. Names are normalised through the resolver's own canonicaliser, so
+        ``GOTHENBURG`` and ``Gothenburg`` are one marker rather than two on top of
+        each other.
+        """
+        from apps.scm.containers.location_identity import normalize_location_name
+
+        if self.location is not None:
+            return ("canonical", self.location.pk)
+        return ("reported", normalize_location_name(self.name), str(self.latitude), str(self.longitude))
+
+
+@dataclass(frozen=True)
 class MapPosition:
     """One container, one place, and what kind of statement that is.
 
@@ -99,7 +210,10 @@ class MapPosition:
 
     container: Container
     position_class: str
-    location: ContainerLocation | None = None
+
+    # Where, and how well known — see :class:`MapPlace`. None means the domain cannot
+    # place this container at all, which only :class:`MapCoverage` reports.
+    place: MapPlace | None = None
     occurred_at: datetime | None = None
 
     # Who says so, and what they said: "Manual" / "Gate In", or "Maersk" /
@@ -138,12 +252,23 @@ class MapPosition:
         return self.shipment.pk if self.shipment is not None else None
 
     @property
+    def location(self) -> ContainerLocation | None:
+        """The canonical location this position names, or None.
+
+        None for a position at a place the resolver never matched — the place is
+        still on the map, it simply has no canonical row behind it. Callers that need
+        a location's identity (the marker panel, the coordinate-gap counts) branch on
+        this; callers that only need somewhere to draw read :attr:`place`.
+        """
+        return self.place.location if self.place is not None else None
+
+    @property
     def latitude(self) -> Decimal | None:
-        return self.location.latitude if self.location is not None else None
+        return self.place.latitude if self.place is not None else None
 
     @property
     def longitude(self) -> Decimal | None:
-        return self.location.longitude if self.location is not None else None
+        return self.place.longitude if self.place is not None else None
 
     @property
     def has_coordinates(self) -> bool:
@@ -153,11 +278,11 @@ class MapPosition:
     def is_plottable(self) -> bool:
         """True when this position can honestly be drawn.
 
-        A position with a canonical location and no coordinates is not plottable and
-        is not broken either — the place is real, MCR simply has not recorded where
-        on earth it is.
+        A position at a canonical place with no coordinates is not plottable and is
+        not broken either — the place is real, MCR simply has not recorded where on
+        earth it is.
         """
-        return self.location is not None and self.has_coordinates
+        return self.place is not None and self.has_coordinates
 
     @property
     def is_current(self) -> bool:
@@ -166,8 +291,8 @@ class MapPosition:
 
     @property
     def place_label(self) -> str:
-        """The canonical place, inside its parent where it has one."""
-        return self.location.full_name if self.location is not None else ""
+        """The place, inside its parent where it is canonical and has one."""
+        return self.place.name if self.place is not None else ""
 
     @property
     def destination_label(self) -> str:
@@ -204,21 +329,22 @@ class MapPosition:
 
 @dataclass(frozen=True)
 class MapLocationGroup:
-    """Every container of one position class standing at one canonical location.
+    """Every container of one position class standing at one place.
 
     The unit the map draws, rather than the container, because a terminal's
     coordinate is the terminal's: eighty boxes at Oceanterminalen are eighty
     identical markers stacked on one point, and the honest rendering of that is one
     marker saying eighty.
 
-    Grouped by ``(position_class, location)`` and never by coordinate alone. Two
-    canonical locations that happen to share a coordinate are two places MCR chose
-    to record separately, and a physical position and a destination that coincide
-    are two different statements which must not merge into one marker.
+    Grouped by ``(position_class, place.group_key)`` and never by coordinate alone.
+    Two canonical locations that happen to share a coordinate are two places MCR
+    chose to record separately, and a physical position and a destination that
+    coincide are two different statements which must not merge into one marker. What
+    makes two *reported* places one is stated on :attr:`MapPlace.group_key`.
     """
 
     position_class: str
-    location: ContainerLocation
+    place: MapPlace
     positions: list[MapPosition] = field(default_factory=list)
 
     @property
@@ -236,15 +362,36 @@ class MapLocationGroup:
 
     @property
     def latitude(self) -> Decimal | None:
-        return self.location.latitude
+        return self.place.latitude
 
     @property
     def longitude(self) -> Decimal | None:
-        return self.location.longitude
+        return self.place.longitude
 
     @property
     def place_label(self) -> str:
-        return self.location.full_name
+        return self.place.name
+
+    @property
+    def location(self) -> ContainerLocation | None:
+        """The canonical location behind this marker, or None for a reported place."""
+        return self.place.location
+
+    @property
+    def location_id(self) -> int | None:
+        return self.place.location_id
+
+    @property
+    def is_canonical(self) -> bool:
+        return self.place.is_canonical
+
+    @property
+    def unlocode(self) -> str:
+        return self.place.unlocode
+
+    @property
+    def type_label(self) -> str:
+        return self.place.type_label
 
     @property
     def position_class_label(self) -> str:
@@ -437,7 +584,9 @@ def get_operational_map(
 
     Two queries whatever the size of the fleet — the winning state movements, and
     the newest canonical observations — both keyed by container id. The canonical
-    locations themselves arrive with the containers and shipments the caller loaded.
+    locations themselves arrive with the containers and shipments the caller loaded,
+    and the carrier-reported fallback position is read off the workspaces, which the
+    caller has already built in bulk.
     """
     filters = filters or MapFilters()
     positions, coverage = build_map_positions(team, objects)
@@ -505,13 +654,18 @@ def build_map_positions(
 
     for obj in objects:
         lifecycles = _lifecycles_by_container(obj)
-        for container in obj.containers:
+        # Iterated as workspaces rather than containers because the third precedence
+        # tier reads the workspace's own carrier position — the same value its
+        # position panel prints — and it is already loaded.
+        for workspace in obj.workspaces:
+            container = workspace.container
             current = _current_position(
                 container,
                 obj=obj,
                 lifecycle=lifecycles.get(container.pk),
                 movement=movements.get(container.pk),
                 observation=observations.get(container.pk),
+                reported=workspace.position,
             )
             if current is not None:
                 positions.append(current)
@@ -519,7 +673,10 @@ def build_map_positions(
                 unplottable += 1
             elif not current.is_plottable:
                 # A real canonical place with no coordinates on it. Counted twice on
-                # purpose: it cannot be drawn, and it is the fixable kind.
+                # purpose: it cannot be drawn, and it is the fixable kind. Only a
+                # canonical place reaches here — a reported place without coordinates
+                # never becomes a position, because there would be nothing to say
+                # about it that the resolution queue does not already say.
                 unplottable += 1
                 missing_coordinates += 1
                 # `location` is set — that is what distinguishes this from None.
@@ -546,13 +703,13 @@ def build_map_positions(
 
 
 def group_positions(positions: Iterable[MapPosition]) -> list[MapLocationGroup]:
-    """Collapse positions onto one marker per canonical location per class.
+    """Collapse positions onto one marker per place per class.
 
     Ordered largest group first, so the busiest place is the one a reader's eye and
     a legend both reach first, with the place name breaking ties deterministically.
     """
-    grouped: dict[tuple[str, int], list[MapPosition]] = {}
-    locations: dict[int, ContainerLocation] = {}
+    grouped: dict[tuple, list[MapPosition]] = {}
+    places: dict[tuple, MapPlace] = {}
     for position in positions:
         # Belt and braces beside get_operational_map's own filter: a group with no
         # coordinates cannot become a marker, and one built anyway would be a
@@ -560,13 +717,14 @@ def group_positions(positions: Iterable[MapPosition]) -> list[MapLocationGroup]:
         if not position.is_plottable:
             continue
         # Non-None: that is half of what is_plottable asserts.
-        location = cast("ContainerLocation", position.location)
-        locations[location.pk] = location
-        grouped.setdefault((position.position_class, location.pk), []).append(position)
+        place = cast("MapPlace", position.place)
+        key = (position.position_class, place.group_key)
+        places[key] = place
+        grouped.setdefault(key, []).append(position)
 
     groups = [
-        MapLocationGroup(position_class=position_class, location=locations[location_id], positions=members)
-        for (position_class, location_id), members in grouped.items()
+        MapLocationGroup(position_class=key[0], place=places[key], positions=members)
+        for key, members in grouped.items()
     ]
     return sorted(groups, key=lambda group: (-group.count, group.place_label, group.position_class))
 
@@ -594,6 +752,7 @@ def _current_position(
     lifecycle,
     movement,
     observation,
+    reported: ContainerPosition | None = None,
 ) -> MapPosition | None:
     """The container's current position, or None when the domain cannot place it.
 
@@ -604,19 +763,29 @@ def _current_position(
        recorded about it. Nothing outranks that — in particular a carrier event that
        arrived later but *happened* earlier does not, because the projection has
        already weighed the two and this reads its answer instead of re-deciding.
-    2. **TRACKING.** No accepted physical position, but a carrier observed the box
-       somewhere MCR recognises. Weaker, and labelled as the carrier's word.
-    3. **None.** No marker. The container is in the list beside the map, and
+    2. **TRACKING, canonical.** No accepted physical position, but a carrier observed
+       the box somewhere MCR recognises. Weaker, and labelled as the carrier's word.
+       Preferred over step 3 because a resolved place carries an identity: the marker
+       can be opened, counted and acted on.
+    3. **TRACKING, reported.** Nothing resolved, but the carrier named a place and
+       sent coordinates for it. This is the container's
+       :class:`~apps.scm.tracking.positions.ContainerPosition` — the same value its
+       workspace prints on the position panel — so the two surfaces name the same
+       place from the same evidence. Without this step a container whose events never
+       resolved was placed on its own page and absent from the fleet map, and the
+       absence read as ignorance rather than as unfiled master data.
+    4. **None.** No marker. The container is in the list beside the map, and
        :class:`MapCoverage` counts it, which is where "we cannot place this" belongs.
 
-    There is deliberately no fourth step. Falling back to the destination would draw
-    a container at a place it has not reached.
+    A forecast is refused at step 3. An ESTIMATED position says where a carrier
+    expects the box to be, and drawing it is the same mistake as falling back to the
+    destination — which is why there is deliberately no fifth step either.
     """
     if container.current_location_id is not None:
         return MapPosition(
             container=container,
             position_class=PositionClass.PHYSICAL,
-            location=container.current_location,
+            place=MapPlace.from_location(container.current_location),
             # The movement's own time when a movement is behind the position, and the
             # container's stamp when the position predates the movement history —
             # both are records of when this became true, and neither is invented.
@@ -633,7 +802,7 @@ def _current_position(
         return MapPosition(
             container=container,
             position_class=PositionClass.TRACKING,
-            location=observation.location,
+            place=MapPlace.from_location(observation.location),
             occurred_at=observation.event_datetime,
             source_label=observation.provider.name if observation.provider_id else "",
             detail=observation.display_title,
@@ -643,7 +812,43 @@ def _current_position(
             **_lifecycle_fields(lifecycle),
         )
 
+    if _is_drawable_report(reported):
+        # Non-None and coordinated: that is what _is_drawable_report asserts.
+        reported = cast("ContainerPosition", reported)
+        event = reported.event
+        return MapPosition(
+            container=container,
+            position_class=PositionClass.TRACKING,
+            place=MapPlace.from_position(reported),
+            occurred_at=reported.observed_at,
+            # The provider whose feed carried the observation, as step 2 names it.
+            # Never the carrier: which of the two a name answers for is decided in
+            # :class:`~apps.scm.tracking.selectors.TrackingProvenance`, and the row
+            # beside the map is where the carrier is printed.
+            source_label=(event.provider.name if event is not None and event.provider_id else ""),
+            detail=event.display_title if event is not None else "",
+            shipment=obj.shipment,
+            destination=obj.destination_location,
+            eta=obj.current_eta,
+            **_lifecycle_fields(lifecycle),
+        )
+
     return None
+
+
+def _is_drawable_report(reported: ContainerPosition | None) -> bool:
+    """True when a carrier's own position can honestly become a marker.
+
+    Coordinates, and an observation rather than a forecast. The quality of the fix is
+    deliberately *not* filtered on beyond that: a facility coordinate and a vessel
+    position are both true statements about where the box was last seen, and the
+    marker says "last reported at" rather than quoting either as a fix.
+    """
+    from apps.scm.tracking.positions import PositionType
+
+    if reported is None or not reported.has_coordinates:
+        return False
+    return reported.position_type != PositionType.ESTIMATED
 
 
 def _destination_position(container: Container, *, obj: VisibilityObject, lifecycle) -> MapPosition | None:
@@ -667,7 +872,7 @@ def _destination_position(container: Container, *, obj: VisibilityObject, lifecy
     return MapPosition(
         container=container,
         position_class=PositionClass.DESTINATION,
-        location=destination,
+        place=MapPlace.from_location(destination),
         # A destination has no observation time. The ETA is the shipment's, and it
         # travels as the object's ETA rather than being restated as a position time
         # that somebody could mistake for an observation.

@@ -18,8 +18,8 @@ from django.urls import reverse
 from apps.scm.containers.models import ContainerLocation
 from apps.scm.visibility.map_positions import PositionClass
 
-from .factories import make_location, make_user_and_team, place_container_at
-from .map_surface_scenarios import MapSurfaceTestCase
+from .factories import make_location, make_user_and_team, place_container_at, set_reported_coordinates
+from .map_surface_scenarios import ROTTERDAM, MapSurfaceTestCase
 
 
 class ContainerWorkspaceMapTest(MapSurfaceTestCase):
@@ -83,12 +83,28 @@ class ContainerWorkspaceMapTest(MapSurfaceTestCase):
         self.assertTrue(current)
         self.assertEqual(self._flagged_events(), [])
 
-    def test_the_journey_keeps_its_current_halo_when_nothing_canonical_is_drawn(self):
-        """Without a canonical current marker the halo is still the best answer.
+    def test_the_journey_keeps_its_current_halo_when_no_marker_can_be_drawn(self):
+        """A current position the map cannot draw leaves the journey's claim standing.
+
+        A carrier gate-in resolved to a depot nobody has recorded a latitude for, so
+        there is an accepted position — which outranks everything — and no marker for
+        it. The same carrier's events do carry coordinates, so the journey is on the
+        map, and its own current point keeps the halo because nothing replaced it.
+
+        The position's source is what makes the journey's current location the
+        carrier's point rather than our own: a location derived from a tracking event
+        is not an independent observation, so ``build_physical_observation`` declines
+        to make one of it.
 
         The destination marker is present and does not count: it says where the box
         is going, so it takes nothing away from the journey's claim about now.
         """
+        from apps.scm.containers.choices import LocationSource
+
+        depot = make_location(self.team, "John Evans Depot")
+        set_reported_coordinates(self.team, self.container, ROTTERDAM[0], ROTTERDAM[1])
+        place_container_at(self.team, self.container, depot, source=LocationSource.TRACKING_EVENT)
+
         classes = {p["position_class"] for p in self._positions()}
 
         self.assertEqual(classes, {PositionClass.DESTINATION})

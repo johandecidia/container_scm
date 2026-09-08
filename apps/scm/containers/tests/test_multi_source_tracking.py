@@ -297,6 +297,17 @@ class JourneyMapUsesEverySourceTest(MultiSourceTestBase):
             location_longitude=Decimal(longitude),
         )
 
+    def _journey_points(self):
+        """The journey's own event points.
+
+        Filtered on ``object_type`` rather than on geometry, because the container's
+        map carries two kinds of point: the events, which are the evidence, and the
+        current-position marker, which is the conclusion drawn from them. Only the
+        first carry a reporting source, and since TRACK-UX the second is present for
+        a container whose places never resolved as well as for one whose did.
+        """
+        return [f for f in self.map_data()["features"] if f["properties"].get("object_type") == "event"]
+
     def test_both_providers_contribute_points(self):
         self._located(
             self.cma, TrackingEvent.EventType.DISCHARGED, DISCHARGED_AT_BORN, "Born", "NLBON", "50.887", "5.808"
@@ -305,7 +316,7 @@ class JourneyMapUsesEverySourceTest(MultiSourceTestBase):
             self.cosco, TrackingEvent.EventType.GATE_OUT, AT_GOTHENBURG, "Gothenburg", "SEGOT", "57.708", "11.974"
         )
 
-        points = [f for f in self.map_data()["features"] if f["geometry"]["type"] == "Point"]
+        points = self._journey_points()
 
         self.assertEqual({point["properties"]["source_name"] for point in points}, {"CMA CGM", "COSCO Shipping"})
 
@@ -314,7 +325,7 @@ class JourneyMapUsesEverySourceTest(MultiSourceTestBase):
             self.cma, TrackingEvent.EventType.DISCHARGED, DISCHARGED_AT_BORN, "Born", "NLBON", "50.887", "5.808"
         )
 
-        point = next(f for f in self.map_data()["features"] if f["geometry"]["type"] == "Point")
+        point = self._journey_points()[0]
 
         self.assertEqual(point["properties"]["source_name"], "CMA CGM")
         self.assertEqual(point["properties"]["source_label"], "CMA CGM")
@@ -334,12 +345,21 @@ class JourneyMapUsesEverySourceTest(MultiSourceTestBase):
             "5.808",
         )
 
-        points = [f for f in self.map_data()["features"] if f["geometry"]["type"] == "Point"]
+        points = self._journey_points()
 
         self.assertEqual(len(points), 1)
         self.assertEqual(points[0]["properties"]["source_label"], "CMA CGM · COSCO Shipping")
 
     def test_the_current_marker_follows_the_derived_current_location(self):
+        """One thing on the map claims "now", and it is at the place the domain says.
+
+        Since TRACK-UX the claim is carried by the position marker rather than by a
+        halo on a journey point: the carrier reported coordinates for Gothenburg, so
+        there is a current position to draw, and ``geojson`` drops the journey's own
+        halo when one is — two rings claiming now at two coordinates is a
+        contradiction on screen. Which place it names is unchanged, and that is what
+        this test is about.
+        """
         self._located(
             self.cma, TrackingEvent.EventType.DISCHARGED, DISCHARGED_AT_BORN, "Born", "NLBON", "50.887", "5.808"
         )
@@ -350,7 +370,9 @@ class JourneyMapUsesEverySourceTest(MultiSourceTestBase):
         current = [f for f in self.map_data()["features"] if f["properties"].get("is_current")]
 
         self.assertEqual(len(current), 1)
-        self.assertEqual(current[0]["properties"]["position_label"], "Gothenburg")
+        self.assertEqual(current[0]["properties"]["object_type"], "map_position")
+        self.assertEqual(current[0]["properties"]["location_name"], "Gothenburg")
+        self.assertEqual(current[0]["properties"]["place_statement"], "Last reported at Gothenburg")
 
     def test_nothing_is_marked_current_when_the_container_is_somewhere_unmappable(self):
         """A physical observation has no coordinates, so no point may claim to be it."""

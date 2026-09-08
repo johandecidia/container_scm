@@ -17,7 +17,11 @@ it puts the box at a terminal it has not reached.
 
 **An unresolved place is not a canonical place.** The resolver refuses to choose
 between two candidate terminals; a map that picks one anyway makes that refusal
-worthless.
+worthless. Since TRACK-UX the carrier's own report *is* drawn where nothing
+resolved — but as the carrier's place, carrying no ``location_id`` and no marker
+panel, because the resolver still has not said which of MCR's terminals it is.
+Drawing the report and claiming a canonical identity for it are two different
+things, and the tests below hold the second one shut.
 
 **A carrier's word does not outrank an accepted movement.** LOC-2's projection has
 already weighed a late-arriving event against an operator's gate-in. The map reads
@@ -54,6 +58,7 @@ from .factories import (
     make_user_and_team,
     place_container_at,
     resolve_tracking_to,
+    strip_reported_coordinates,
     with_check_digit,
 )
 
@@ -111,11 +116,21 @@ class MapFixture(TestCase):
             eta=eta,
         )
 
-    def tracked_container(self, shipment=None, number: str | None = None):
+    def tracked_container(self, shipment=None, number: str | None = None, *, coordinates: bool = True):
+        """A container the carrier has reported on.
+
+        ``coordinates=False`` strips the coordinates off those reports, leaving the
+        places the carrier named. That is what makes a container genuinely
+        unplaceable — the fixture's events all carry real latitudes, which the map
+        now draws on their own — so a test asking for nothing on the map says which
+        of the two reasons it means.
+        """
         container = make_container(self.team) if number is None else _container(self.team, number)
         if shipment is not None:
             ShipmentContainer.objects.create(shipment=shipment, container=container)
         ingest_maersk_events(self.team, container, shipment=shipment)
+        if not coordinates:
+            strip_reported_coordinates(self.team, container)
         return container
 
     def build_map(self, filters: MapFilters | None = None):
@@ -187,20 +202,56 @@ class PositionPrecedenceTest(MapFixture):
         self.assertEqual(marker["place_statement"], "At Oceanterminalen")
         self.assertTrue(marker["age_display"])
 
+    def test_a_carrier_report_answers_when_nothing_has_resolved(self):
+        """The third tier, and the bug TRACK-UX fixed.
+
+        The fixture's events name places and carry the carrier's coordinates for
+        them, and none of them resolved — the state the Container Workspace has
+        always shown a position for. The Control Tower now names the same place from
+        the same evidence instead of drawing nothing.
+        """
+        container = self.tracked_container(self.make_shipment())
+
+        markers = self.markers()
+
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0]["position_class"], PositionClass.TRACKING)
+        self.assertFalse(markers[0]["is_canonical"])
+        self.assertIsNone(markers[0]["location_id"])
+        self.assertTrue(markers[0]["location_name"])
+        self.assertEqual(container.tracking_events.filter(location__isnull=False).count(), 0)
+
     def test_no_current_marker_when_only_a_destination_is_known(self):
         """The refusal that matters most.
 
-        Nothing has been accepted, nothing usable has been reported, and the box is
-        booked to Oceanterminalen. A marker there would say it had arrived.
+        Nothing has been accepted, nothing at all has been reported that can be
+        placed, and the box is booked to Oceanterminalen. A marker there would say it
+        had arrived.
+        """
+        shipment = self.make_shipment(destination=self.oceanterminalen)
+        self.tracked_container(shipment, coordinates=False)
+
+        self.assertEqual(self.markers(), [])
+
+    def test_a_destination_is_never_promoted_even_when_a_report_is_drawn(self):
+        """The same refusal with the third tier in play.
+
+        A carrier report places the box somewhere; the booking says where it is
+        going. Only the first may be a current position, and the destination stays
+        off the map until it is asked for.
         """
         shipment = self.make_shipment(destination=self.oceanterminalen)
         self.tracked_container(shipment)
 
-        self.assertEqual(self.markers(), [])
+        places = self.classes_by_place()
+
+        self.assertNotIn((PositionClass.PHYSICAL, "Oceanterminalen"), places)
+        self.assertNotIn((PositionClass.TRACKING, "Oceanterminalen"), places)
+        self.assertEqual({position_class for position_class, _place in places}, {PositionClass.TRACKING})
 
     def test_a_container_with_no_position_is_counted_rather_than_hidden(self):
         shipment = self.make_shipment(destination=self.oceanterminalen)
-        self.tracked_container(shipment)
+        self.tracked_container(shipment, coordinates=False)
 
         coverage = self.build_map().coverage
 
@@ -211,9 +262,20 @@ class PositionPrecedenceTest(MapFixture):
         """Gated out and nowhere else recorded is not "still at the terminal".
 
         LOC-2 projects ``current_location`` to NULL for a departure, and the map
-        follows it rather than keeping the last place it knew.
+        follows it rather than keeping the last place it knew. What it falls back to
+        is the carrier's report — never the terminal the box left.
         """
         container = self.tracked_container(self.make_shipment())
+        place_container_at(self.team, container, self.oceanterminalen)
+        place_container_at(self.team, container, None, movement_type=MovementType.GATE_OUT)
+
+        places = self.classes_by_place()
+
+        self.assertNotIn((PositionClass.PHYSICAL, "Oceanterminalen"), places)
+        self.assertEqual({position_class for position_class, _place in places}, {PositionClass.TRACKING})
+
+    def test_a_gated_out_container_with_nothing_reported_has_no_marker_at_all(self):
+        container = self.tracked_container(self.make_shipment(), coordinates=False)
         place_container_at(self.team, container, self.oceanterminalen)
         place_container_at(self.team, container, None, movement_type=MovementType.GATE_OUT)
 
@@ -304,10 +366,26 @@ class TrackingEvidenceTest(MapFixture):
         """The resolver refused to choose between two terminals sharing SEGOT.
 
         Choosing one here would make that refusal pointless and put the box in the
-        wrong half of a port.
+        wrong half of a port. The carrier's own report is still drawn — it is what
+        the carrier said — and it names neither candidate: no ``location_id``, and no
+        panel offering to list what else is standing at a place nobody has decided
+        on.
         """
         shipment = self.make_shipment(destination=self.stockholm)
         container = self.tracked_container(shipment)
+        resolve_tracking_to(self.team, container, self.goteborg, status=LocationResolutionStatus.AMBIGUOUS)
+
+        markers = self.markers()
+
+        self.assertEqual(len(markers), 1)
+        self.assertFalse(markers[0]["is_canonical"])
+        self.assertIsNone(markers[0]["location_id"])
+        self.assertEqual(markers[0]["panel_url"], "")
+        self.assertNotIn(markers[0]["location_name"], ("Göteborg", "Oceanterminalen"))
+
+    def test_an_ambiguous_place_with_nothing_to_draw_produces_no_marker(self):
+        shipment = self.make_shipment(destination=self.stockholm)
+        container = self.tracked_container(shipment, coordinates=False)
         resolve_tracking_to(self.team, container, self.goteborg, status=LocationResolutionStatus.AMBIGUOUS)
 
         self.assertEqual(self.markers(), [])
@@ -317,20 +395,42 @@ class TrackingEvidenceTest(MapFixture):
         container = self.tracked_container(shipment)
         resolve_tracking_to(self.team, container, self.goteborg, status=LocationResolutionStatus.UNRESOLVED)
 
-        self.assertEqual(self.markers(), [])
+        markers = self.markers()
 
-    def test_raw_carrier_coordinates_alone_do_not_place_a_container(self):
+        self.assertEqual(len(markers), 1)
+        self.assertFalse(markers[0]["is_canonical"])
+        self.assertIsNone(markers[0]["location_id"])
+
+    def test_raw_carrier_coordinates_place_a_container_as_the_carriers_word(self):
         """The fixture's events carry real coordinates and no canonical identity.
 
-        They are evidence, and they are drawn on the container's own journey map.
-        They are not a canonical position, because nobody has said which of MCR's
-        places they are.
+        They are evidence, and they are drawn — on the container's own journey map,
+        and since TRACK-UX on the fleet map too, because the alternative was a
+        container the workspace could place and the Control Tower could not.
+
+        What they are not is a canonical position. The marker says "last reported
+        at", it carries no location identity, and the master-data task that would
+        give it one is on the Location Data Quality queue.
         """
         container = self.tracked_container(self.make_shipment())
         located = TrackingEvent.objects.filter(team=self.team, container=container, location_latitude__isnull=False)
 
+        marker = self.markers()[0]
+
         self.assertTrue(located.exists())
-        self.assertEqual(self.markers(), [])
+        self.assertEqual(marker["position_class"], PositionClass.TRACKING)
+        self.assertTrue(marker["place_statement"].startswith("Last reported at"))
+        self.assertFalse(marker["is_canonical"])
+
+    def test_a_reported_position_is_counted_as_plotted_tracking(self):
+        """Coverage counts what the map can draw, whoever named the place."""
+        self.tracked_container(self.make_shipment())
+
+        coverage = self.build_map().coverage
+
+        self.assertEqual(coverage.tracking_containers, 1)
+        self.assertEqual(coverage.unplottable_containers, 0)
+        self.assertEqual(coverage.containers_missing_coordinates, 0)
 
 
 class MissingCoordinatesTest(MapFixture):
@@ -498,14 +598,20 @@ class DestinationOverlayTest(MapFixture):
 
         self.assertEqual(classes, {PositionClass.PHYSICAL})
 
-    def test_a_shipment_with_no_canonical_destination_contributes_nothing(self):
-        """Not matched to a location by the booking's free text."""
+    def test_a_shipment_with_no_canonical_destination_contributes_no_overlay(self):
+        """Not matched to a location by the booking's free text.
+
+        Asserted against the destination class alone: the container's own position is
+        drawn from the carrier's report and has nothing to do with the overlay.
+        """
         shipment = self.make_shipment()
         shipment.destination_port = "Gothenburg"
         shipment.save(update_fields=["destination_port"])
         self.tracked_container(shipment)
 
-        self.assertEqual(self.markers(MapFilters(show_destinations=True)), [])
+        markers = self.markers(MapFilters(show_destinations=True))
+
+        self.assertEqual([m for m in markers if m["position_class"] == PositionClass.DESTINATION], [])
 
 
 class ArrivalLifecycleOnTheMapTest(MapFixture):

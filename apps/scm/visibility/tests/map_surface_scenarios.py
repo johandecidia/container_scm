@@ -1,7 +1,7 @@
 """Shared setup for the LOC-4 map surface tests.
 
-One inbound container with a canonical destination and nowhere to be drawn, used by
-the Control Tower and the workspace modules so both are tested against the same
+One inbound container with a canonical destination and no canonical position, used
+by the Control Tower and the workspace modules so both are tested against the same
 shape of data.
 """
 
@@ -20,6 +20,7 @@ from .factories import (
     make_container,
     make_location,
     make_user_and_team,
+    strip_reported_coordinates,
 )
 
 OCEANTERMINALEN = ("57.696629", "11.858448")
@@ -38,6 +39,13 @@ class MapSurfaceTestCase(TestCase):
     has to handle honestly (nothing plottable, a destination and no position) would
     be unreachable.
 
+    The reported coordinates are then stripped, for the same reason and one step
+    further on. Since the map read model gained its carrier-reported tier, an
+    observed event with coordinates *is* drawable on its own — so leaving them would
+    place this container and make "a destination and no position" unreachable again.
+    What is left is the other half of the same real state: a carrier that named a
+    place, nothing resolved, and no coordinates to fall back on.
+
     Tests that want a position therefore establish one explicitly, which is also
     how they say what they are testing.
     """
@@ -55,6 +63,7 @@ class MapSurfaceTestCase(TestCase):
         )
         ShipmentContainer.objects.create(shipment=cls.shipment, container=cls.container)
         ingest_maersk_events(cls.team, cls.container, shipment=cls.shipment)
+        strip_reported_coordinates(cls.team, cls.container)
 
         cls.terminal = make_location(
             cls.team, "Oceanterminalen", unlocode="SEGOT", latitude=OCEANTERMINALEN[0], longitude=OCEANTERMINALEN[1]
