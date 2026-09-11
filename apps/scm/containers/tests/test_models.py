@@ -153,9 +153,9 @@ class ContainerModelTest(TestCase):
         c = self._create()
         self.assertEqual(str(c), c.container_id)
 
-    def test_color_display_combines_code_and_system(self):
+    def test_color_display_combines_system_and_code(self):
         c = self._create(color_code="5010", color_system=ColorSystem.RAL)
-        self.assertEqual(c.color_display, "5010 (RAL)")
+        self.assertEqual(c.color_display, "RAL5010")
 
     def test_color_display_omits_unknown_system(self):
         c = self._create(color_code="dark blue", color_system=ColorSystem.UNKNOWN)

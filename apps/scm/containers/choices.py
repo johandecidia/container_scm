@@ -33,9 +33,10 @@ class ContainerStatus(TextChoices):
 
 class ContainerCondition(TextChoices):
     NEW = "NEW", _("New")
-    GOOD = "GOOD", _("Good")
-    FAIR = "FAIR", _("Fair")
-    DAMAGED = "DAMAGED", _("Damaged")
+    IICL = "IICL", _("IICL")
+    CW = "CW", _("Cargo Worthy")
+    WW = "WW", _("Wind & Water Tight")
+    AI = "AI", _("As is")
 
 
 class ColorSystem(TextChoices):
