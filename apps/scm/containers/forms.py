@@ -19,12 +19,84 @@ from .utils import parse_container_id, validate_container_id
 MAX_PASTED_CONTAINERS = 500
 
 
-class QuickContainerForm(forms.Form):
+class ContainerAttributesForm(forms.Form):
+    """The attributes an intake writes onto every container it creates.
+
+    Single, paste and CSV offer the same four, so they are declared once here and
+    inherited by all three intake forms — and validated through this same class when
+    a previewed import is confirmed, since the choices have to make that round trip
+    as hidden fields.
+
+    Every field is optional on purpose. Left alone, equipment type falls back to the
+    configured default and the rest to the model's own, which is what quick
+    registration did before these fields existed.
+    """
+
+    ATTRIBUTE_FIELDS = ("equipment_type", "condition", "color_code", "color_system")
+
+    equipment_type = forms.ModelChoiceField(
+        label=_("Equipment type"),
+        queryset=EquipmentType.objects.filter(is_active=True),
+        required=False,
+        empty_label=_("— Default type —"),
+        widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
+    )
+    condition = forms.ChoiceField(
+        label=_("Condition"),
+        choices=[
+            ("", _("— Default condition —")),
+            *cast(list[tuple[str, str]], Container._meta.get_field("condition").choices),
+        ],
+        required=False,
+        widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
+    )
+    color_code = forms.CharField(
+        label=_("Color code"),
+        max_length=50,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered input-sm w-full", "placeholder": "5010"}),
+    )
+    color_system = forms.ChoiceField(
+        label=_("Color system"),
+        choices=[
+            ("", _("— Not specified —")),
+            *cast(list[tuple[str, str]], Container._meta.get_field("color_system").choices),
+        ],
+        required=False,
+        widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
+    )
+
+    @property
+    def attribute_fields(self) -> list[forms.BoundField]:
+        """The attribute fields alone, so a template can render them as one block."""
+        return [self[name] for name in self.ATTRIBUTE_FIELDS]
+
+    def container_attributes(self) -> dict:
+        """Return the chosen attributes as ``create_container`` keyword arguments.
+
+        Blanks are left out rather than passed as empty strings, so "not chosen" stays
+        distinguishable from "chosen as empty" and the model's own defaults still apply.
+        """
+        chosen = {name: self.cleaned_data.get(name) for name in self.ATTRIBUTE_FIELDS}
+        return {name: value for name, value in chosen.items() if value}
+
+    def selected_values(self) -> dict:
+        """The same choices as plain form values, for re-submitting them after a preview.
+
+        A preview is its own request, so what was chosen on the way in has to travel
+        with the previewed list to survive the trip back to the confirm.
+        """
+        return {
+            name: value.pk if name == "equipment_type" else value for name, value in self.container_attributes().items()
+        }
+
+
+class QuickContainerForm(ContainerAttributesForm):
     """The primary "Add Container" form: a container number, and nothing else required.
 
-    Everything technical — the four ID components, equipment type, status and
-    condition — is derived or defaulted, and can be changed afterwards through the
-    normal edit form.
+    The four ID components are derived from the number. Equipment type, condition and
+    colour can be set here but need not be, and everything else — status included — is
+    defaulted and changed afterwards through the normal edit form.
     """
 
     container_number = forms.CharField(
@@ -55,7 +127,7 @@ class QuickContainerForm(forms.Form):
         return f"{parts['owner_code']}{parts['category_id']}{parts['serial_number']}{parts['check_digit']}"
 
 
-class ContainerPasteForm(forms.Form):
+class ContainerPasteForm(ContainerAttributesForm):
     """Bulk intake by pasting a list of container numbers."""
 
     numbers = forms.CharField(
@@ -90,7 +162,7 @@ class ContainerPasteForm(forms.Form):
         return self.cleaned_data["numbers"]
 
 
-class ContainerCsvImportForm(forms.Form):
+class ContainerCsvImportForm(ContainerAttributesForm):
     """Bulk intake from a small CSV: a ``container_number`` column, optional ``carrier``."""
 
     file = forms.FileField(

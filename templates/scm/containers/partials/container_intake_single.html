@@ -47,6 +47,8 @@
     {% endfor %}
   </div>
 
+  {% include "scm/containers/partials/container_intake_attributes.html" %}
+
   {% for error in form.non_field_errors %}
     <p class="text-error text-sm mb-2">{{ error }}</p>
   {% endfor %}

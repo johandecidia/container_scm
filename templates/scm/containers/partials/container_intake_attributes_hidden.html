@@ -1,0 +1,11 @@
+{% comment %}
+  Carries the chosen container attributes across the preview step, the same way the
+  purchase order is carried. A preview is its own request, so without this the
+  equipment type, condition and colour picked on the way in would be gone by the
+  time the import is confirmed.
+
+  Renders nothing when none were chosen. Re-validated server-side on the confirm —
+  these values have been through the browser.
+{% endcomment %}
+{% for name, value in attribute_values.items %}<input type="hidden" name="{{ name }}" value="{{ value }}">
+{% endfor %}

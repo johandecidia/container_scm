@@ -438,7 +438,7 @@ class Container(BaseTeamModel):
         _("condition"),
         max_length=10,
         choices=ContainerCondition.choices,
-        default=ContainerCondition.GOOD,
+        default=ContainerCondition.NEW,
     )
 
     color_code = models.CharField(_("color code"), max_length=50, blank=True)
@@ -525,7 +525,7 @@ class Container(BaseTeamModel):
             return ""
         if not self.color_system or self.color_system == ColorSystem.UNKNOWN:
             return self.color_code
-        return f"{self.color_code} ({self.get_color_system_display()})"
+        return f"{self.get_color_system_display()}{self.color_code}"
 
     def clean(self) -> None:
         super().clean()
