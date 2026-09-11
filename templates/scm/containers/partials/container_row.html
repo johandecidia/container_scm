@@ -25,6 +25,7 @@
     {% endif %}
   </td>
   <td class="text-sm">{{ container.get_condition_display }}</td>
+  <td class="text-sm text-base-content/60 whitespace-nowrap">{{ container.color_display|default:"—" }}</td>
   <td class="text-sm text-base-content/60">{{ container.current_location.name|default:"—" }}</td>
   <td class="text-sm text-base-content/60">{{ container.manufacturer|default:"—" }}</td>
   <td class="text-right">

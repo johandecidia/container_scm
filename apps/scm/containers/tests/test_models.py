@@ -5,7 +5,7 @@ from django.db import IntegrityError
 from django.db.models import ProtectedError
 from django.test import TestCase
 
-from apps.scm.containers.choices import ContainerCondition, ContainerStatus
+from apps.scm.containers.choices import ColorSystem, ContainerCondition, ContainerStatus
 from apps.scm.containers.models import Container, EquipmentType, PlannedContainer, PlannedContainerStatus
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import BaseTeamModel, Team
@@ -152,6 +152,18 @@ class ContainerModelTest(TestCase):
     def test_str_is_container_id(self):
         c = self._create()
         self.assertEqual(str(c), c.container_id)
+
+    def test_color_display_combines_code_and_system(self):
+        c = self._create(color_code="5010", color_system=ColorSystem.RAL)
+        self.assertEqual(c.color_display, "5010 (RAL)")
+
+    def test_color_display_omits_unknown_system(self):
+        c = self._create(color_code="dark blue", color_system=ColorSystem.UNKNOWN)
+        self.assertEqual(c.color_display, "dark blue")
+
+    def test_color_display_empty_without_code(self):
+        c = self._create(color_system=ColorSystem.RAL)
+        self.assertEqual(c.color_display, "")
 
     def test_default_status_available(self):
         c = self._create()

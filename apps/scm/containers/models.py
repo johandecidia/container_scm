@@ -513,6 +513,20 @@ class Container(BaseTeamModel):
     def container_id(self) -> str:
         return f"{self.owner_code}{self.category_id}{self.serial_number}{self.check_digit}"
 
+    @property
+    def color_display(self) -> str:
+        """The colour as one string, e.g. ``5010 (RAL)``, or empty if none is recorded.
+
+        A code only means something alongside the system it belongs to, so the two are
+        shown together. The system is left off when it is unknown, because naming it
+        adds nothing to the code the operator already sees.
+        """
+        if not self.color_code:
+            return ""
+        if not self.color_system or self.color_system == ColorSystem.UNKNOWN:
+            return self.color_code
+        return f"{self.color_code} ({self.get_color_system_display()})"
+
     def clean(self) -> None:
         super().clean()
         validate_container_id(
