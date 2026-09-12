@@ -684,6 +684,22 @@ VIZION_BASE_URL = env.str("VIZION_BASE_URL", default="https://prod.vizionapi.com
 VIZION_DEMO_BASE_URL = env.str("VIZION_DEMO_BASE_URL", default="https://demo.vizionapi.com")
 VIZION_API_KEY = env.str("VIZION_API_KEY", default="")
 
+# The suite may never reach an aggregator. A developer's .env holds working Traqo and
+# Vizion credentials, and both aggregators sit in carrier resolution's chain — so a test
+# that exercises the chain without injecting its provider calls would, on that machine,
+# spend a Traqo shipment slot or buy a Vizion reference per run. The carrier adapters are
+# already safe by construction (no per-team Integration, no call — see
+# apps/scm/integrations/tests/test_carrier_no_live_api.py); the aggregators read their
+# credential from settings, so this is where the same guarantee has to be made.
+#
+# Tests that need an aggregator "configured" say so with @override_settings, which wins
+# over this, and every one of them injects the call or a fake session.
+if "test" in sys.argv:
+    TRAQO_ENABLED = False
+    TRAQO_API_KEY = ""
+    VIZION_ENABLED = False
+    VIZION_API_KEY = ""
+
 # SCM Business Central
 # Pauses the scheduled Business Central dispatcher without removing the schedule or
 # the implementation. Manual and per-integration syncs are unaffected.

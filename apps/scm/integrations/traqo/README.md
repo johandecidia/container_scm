@@ -42,6 +42,13 @@ make manage ARGS='traqo_test MRSU6859427 --sealine maersk --sandbox --dry-run'
 Live calls need `TRAQO_ENABLED=true` and `TRAQO_API_KEY` in `.env`. `TRAQO_ENABLED`
 gates production only — the sandbox is always reachable.
 
+**The test suite can never reach Traqo.** `settings.py` blanks `TRAQO_ENABLED` and
+`TRAQO_API_KEY` under `manage.py test`, because Traqo now sits inside carrier resolution
+in two places and one of them spends shipment calls: on a developer machine with working
+credentials, a test that exercised the chain without injecting its provider calls would
+have spent them. Tests that need Traqo "configured" say so with `@override_settings` and
+inject the call or a fake session.
+
 ## Configuration, and why it is not per-team
 
 Carrier credentials live on a team's `Integration` record because each team holds its
@@ -283,6 +290,48 @@ verified.
 The container refresh button no longer reports a routed Traqo source as "not configured".
 It reports the carrier, with "via Traqo" as the data source. See
 `apps/scm/tracking/README.md` for the discovery and routing order.
+
+### Traqo as a carrier-discovery step, twice over (TRACK-DISCOVERY)
+
+Traqo now appears in carrier resolution in two places, because it has two endpoints with
+two budgets and two kinds of answer:
+
+| step | endpoint | cost | produces |
+|---|---|---|---|
+| `traqo_lookup` (`discovery.py`) | `carriers/lookup` | free, own quota, creates nothing | a carrier **named** → `carrier_source = traqo_lookup`, `verified = False` |
+| `traqo_candidate_probe` (`carrier_probe.py`) | `container/<no>?sealine=X` | may consume a shipment slot | a carrier **proved** → `carrier_source = traqo_probe`, `verified = True` |
+
+The probe exists because of BBCU3273070. Traqo's lookup did not recognise the number;
+Vizion was paid to identify ONE; Traqo then tracked the box perfectly once told
+`sealine=ONEY`. Traqo had the shipment all along — it simply cannot answer "who moves
+this" without being told who to ask about. So the probe asks: `build_traqo_probe_candidates()`
+orders a few likely carriers (named carriers first, then the ISO 6346 owner prefix as a
+tie-breaker, then `DEFAULT_TRAQO_DISCOVERY_ORDER`, which ONE heads), and
+`probe_candidate_carriers()` asks about each until one answers, stopping at
+`MAX_TRAQO_PROBE_ATTEMPTS = 5`. The cap is there because the order is a guess and every
+attempt is a shipment call; a container none of the five explains is handed on to the
+direct sweep.
+
+**A sealine on the wire is the question, not the answer.** A probe is FOUND only when the
+shipment returned is the one asked about, the mapper produces events, and the SCAC — taken
+from the *response* where Traqo states one — belongs to a routable carrier. A 200 with no
+events proves nothing and is reported NOT_FOUND. A 401, a 402 or a rejected container
+number stops the remaining candidates: those are about the account or the request, and
+four more calls would be told the same thing. A timeout or a 5xx is one candidate's bad
+moment and the next is still asked.
+
+**One fetch, one write path.** `service.py` splits into
+`fetch_and_map_traqo_container()` (one request, mapped, nothing written) and
+`store_traqo_container_result()` (the writes, no request); `ingest_traqo_container()` is
+the two in order. The probe uses the first alone — it asks several carriers and only one
+answer is worth keeping — and activation hands that answer to the second. So a probed
+container is stored by exactly the same function, in the same order, with the same ETA
+observation, as one fetched the ordinary way, and there is no second opinion about what a
+usable Traqo payload is.
+
+**No probing for containers that are already tracked.** Probing belongs to carrier
+discovery, which the refresh reaches only where there is no verified subscription. A
+container with a Traqo watch is refreshed through that watch; it is never re-guessed.
 
 Correcting how a *stored* response is read needs no fetch at all:
 

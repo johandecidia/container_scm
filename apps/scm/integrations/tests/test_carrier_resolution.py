@@ -11,8 +11,9 @@ called** at least as often as on what came back. Vizion creates a billable refer
 every call; a regression that let it run after Traqo had already answered would be
 invisible in an assertion about the returned carrier and expensive in production.
 
-Nothing here touches a live API. Both aggregator calls are injected, and the direct
-carriers go through the same fake clients the discovery-sweep tests drive.
+Nothing here touches a live API. All three aggregator calls — Traqo's free lookup, Traqo
+candidate probing and Vizion's ACI — are injected, and the direct carriers go through the
+same fake clients the discovery-sweep tests drive.
 """
 
 from django.test import TestCase, override_settings
@@ -22,12 +23,14 @@ from apps.scm.integrations.carriers import carrier_resolution
 from apps.scm.integrations.carriers.carrier_resolution import (
     STEP_DIRECT_API,
     STEP_TRAQO_LOOKUP,
+    STEP_TRAQO_PROBE,
     STEP_TRUSTED,
     STEP_VIZION_ACI,
     get_trusted_carrier_for_container,
     resolve_carrier_for_container,
 )
 from apps.scm.integrations.models import Integration
+from apps.scm.integrations.traqo import carrier_probe as traqo_probe_module
 from apps.scm.integrations.traqo import discovery as traqo_discovery
 from apps.scm.integrations.vizion import discovery as vizion_discovery
 from apps.scm.shipments.models import Shipment, ShipmentContainer
@@ -88,6 +91,89 @@ class Spy:
     def __call__(self, container_number):
         self.calls.append(container_number)
         return self.result
+
+
+class ProbeSpy:
+    """A stand-in for the Traqo candidate probe, which resolution calls with keywords.
+
+    Records the arguments as well as the fact of the call: the probe's cost depends on
+    what it is told to try, so "was it called" and "what with" are both assertions the
+    cost tests make.
+    """
+
+    def __init__(self, result):
+        self.result = result
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+    @property
+    def container_numbers(self) -> list[str]:
+        return [call["container_number"] for call in self.calls]
+
+
+def _probe_event():
+    """One mapped Traqo event, which is what makes a probe evidence rather than an echo."""
+    from apps.scm.integrations.carriers.dcsa.schemas import NormalisedTrackingEvent
+
+    return NormalisedTrackingEvent(
+        event_type="EQUIPMENT",
+        event_code="GTIN",
+        container_number=ACCEPTANCE_NUMBER,
+        source_provider="traqo",
+    )
+
+
+def _probe_found(carrier_code="one", sealine="ONEY", events=1):
+    return traqo_probe_module.TraqoCarrierProbeResult(
+        container_number=ACCEPTANCE_NUMBER,
+        outcome=traqo_probe_module.FOUND,
+        carrier_code=carrier_code,
+        carrier_name="Ocean Network Express (ONE)",
+        sealine=sealine,
+        events=tuple(_probe_event() for _ in range(events)),
+        raw_payload={"success": True, "data": {"sealine": sealine, "reference_number": ACCEPTANCE_NUMBER}},
+        attempts=(
+            traqo_probe_module.TraqoProbeAttempt(
+                carrier_code=carrier_code, sealine=sealine, outcome=traqo_probe_module.FOUND
+            ),
+        ),
+    )
+
+
+def _probe_not_found(asked=("ONEY", "MAEU")):
+    return traqo_probe_module.TraqoCarrierProbeResult(
+        container_number=ACCEPTANCE_NUMBER,
+        outcome=traqo_probe_module.NOT_FOUND,
+        attempts=tuple(
+            traqo_probe_module.TraqoProbeAttempt(carrier_code="", sealine=sealine, outcome=traqo_probe_module.NOT_FOUND)
+            for sealine in asked
+        ),
+    )
+
+
+def _probe_error(kind="CarrierAuthenticationError"):
+    return traqo_probe_module.TraqoCarrierProbeResult(
+        container_number=ACCEPTANCE_NUMBER,
+        outcome=traqo_probe_module.ERROR,
+        error_kind=kind,
+        error_message="401",
+        attempts=(
+            traqo_probe_module.TraqoProbeAttempt(
+                carrier_code="one", sealine="ONEY", outcome=traqo_probe_module.ERROR, error_kind=kind
+            ),
+        ),
+    )
+
+
+def _probe_not_configured():
+    return traqo_probe_module.TraqoCarrierProbeResult(
+        container_number=ACCEPTANCE_NUMBER,
+        outcome=traqo_probe_module.NOT_CONFIGURED,
+        error_kind="not_configured",
+    )
 
 
 def _traqo_found(carrier_code="one", scac="ONEY"):
@@ -229,9 +315,15 @@ class ResolutionOrderTest(TestCase):
         self.team = Team.objects.create(name="chain", slug="chain")
         self.container = _acceptance_container(self.team)
 
-    def resolve(self, *, traqo, vizion, direct_behaviour=None, direct_events=None, **kwargs):
-        """Run the chain with both aggregators spied on and the direct carriers faked."""
+    def resolve(self, *, traqo, vizion, probe=None, direct_behaviour=None, direct_events=None, **kwargs):
+        """Run the chain with every provider call spied on and the direct carriers faked.
+
+        ``probe`` defaults to "Traqo has nothing under any candidate", which is what the
+        chain below the probe is being tested against. :class:`TraqoProbeStepTest` drives
+        the probe itself.
+        """
         traqo_spy = Spy(traqo)
+        probe_spy = ProbeSpy(probe if probe is not None else _probe_not_found())
         vizion_spy = Spy(vizion)
         behaviour = direct_behaviour or {}
         clients = {code: _fake_client(code, value) for code, value in behaviour.items()}
@@ -241,9 +333,11 @@ class ResolutionOrderTest(TestCase):
                 container=self.container,
                 clients=clients,
                 traqo_lookup=traqo_spy,
+                traqo_probe=probe_spy,
                 vizion_identify=vizion_spy,
                 **kwargs,
             )
+        self.probe_spy = probe_spy
         return resolution, traqo_spy, vizion_spy, clients
 
     # -- 1. trusted knowledge -------------------------------------------------
@@ -260,6 +354,7 @@ class ResolutionOrderTest(TestCase):
         self.assertEqual(resolution.carrier_code, "maersk")
         self.assertEqual(resolution.source, CarrierSource.SHIPMENT)
         self.assertEqual(traqo.calls, [])
+        self.assertEqual(self.probe_spy.calls, [])
         self.assertEqual(vizion.calls, [])
         self.assertEqual(clients["maersk"].calls, [])
 
@@ -285,8 +380,10 @@ class ResolutionOrderTest(TestCase):
         self.assertEqual(resolution.carrier_code, "one")
         self.assertEqual(resolution.source, CarrierSource.TRAQO_LOOKUP)
         self.assertEqual(traqo.calls, [ACCEPTANCE_NUMBER])
+        self.assertEqual(self.probe_spy.calls, [], "the free lookup had answered; probing spends shipment calls")
         self.assertEqual(vizion.calls, [])
         self.assertEqual(clients["maersk"].calls, [], "direct discovery ran after Traqo had already answered")
+        self.assertIsNone(resolution.step_for(STEP_TRAQO_PROBE))
         self.assertIsNone(resolution.step_for(STEP_DIRECT_API))
 
     def test_a_traqo_lookup_is_not_treated_as_proof(self):
@@ -309,7 +406,144 @@ class ResolutionOrderTest(TestCase):
         self.assertEqual(resolution.step_for(STEP_TRAQO_LOOKUP).outcome, carrier_resolution.NOT_FOUND)
         self.assertEqual(vizion.calls, [ACCEPTANCE_NUMBER])
 
-    # -- 3. the direct carrier APIs ------------------------------------------
+    # -- 3. Traqo's container endpoint, asked about likely carriers ----------
+
+    def test_a_lookup_that_names_nobody_lets_the_probe_run(self):
+        resolution, traqo, _vizion, _clients = self.resolve(
+            traqo=_traqo_not_found(),
+            vizion=_vizion_found(),
+            probe=_probe_found(),
+        )
+
+        self.assertEqual(traqo.calls, [ACCEPTANCE_NUMBER])
+        self.assertEqual(self.probe_spy.container_numbers, [ACCEPTANCE_NUMBER])
+        self.assertEqual(resolution.carrier_code, "one")
+        self.assertEqual(resolution.source, CarrierSource.TRAQO_PROBE)
+
+    def test_a_probe_hit_is_proof_in_a_way_a_lookup_is_not(self):
+        """Traqo returned this box's own events. That is evidence, not a name."""
+        resolution, *_ = self.resolve(traqo=_traqo_not_found(), vizion=_vizion_found(), probe=_probe_found())
+
+        self.assertTrue(resolution.verified)
+
+    def test_a_probe_hit_carries_its_payload_out_for_the_caller_to_store(self):
+        """So activation stores what Traqo already sent instead of asking Traqo again."""
+        resolution, *_ = self.resolve(traqo=_traqo_not_found(), vizion=_vizion_found(), probe=_probe_found(events=3))
+
+        self.assertTrue(resolution.has_tracking_payload)
+        self.assertEqual(len(resolution.events), 3)
+        self.assertEqual(resolution.raw_payload["data"]["reference_number"], ACCEPTANCE_NUMBER)
+
+    def test_a_probe_hit_says_who_returned_the_payload_and_under_what_handle(self):
+        """Provider-neutral reuse: activation must not have to guess which step answered."""
+        resolution, *_ = self.resolve(traqo=_traqo_not_found(), vizion=_vizion_found(), probe=_probe_found())
+
+        self.assertEqual(resolution.tracking_provider_code, "traqo")
+        self.assertEqual(resolution.provider_reference, "ONEY")
+        self.assertIsNone(resolution.discovery, "a probe hit is not a direct sweep's payload")
+
+    def test_a_probe_that_found_nothing_is_told_apart_from_one_that_failed(self):
+        _carrier_integration(self.team, "cosco")
+        not_found, *_ = self.resolve(
+            traqo=_traqo_not_found(),
+            vizion=_vizion_not_found(),
+            probe=_probe_not_found(),
+            direct_behaviour={"cosco": {"events": []}},
+        )
+        errored, *_ = self.resolve(
+            traqo=_traqo_not_found(),
+            vizion=_vizion_not_found(),
+            probe=_probe_error(),
+            direct_behaviour={"cosco": {"events": []}},
+        )
+
+        self.assertEqual(not_found.step_for(STEP_TRAQO_PROBE).outcome, carrier_resolution.NOT_FOUND)
+        self.assertEqual(errored.step_for(STEP_TRAQO_PROBE).outcome, carrier_resolution.ERROR)
+
+    def test_a_probe_failure_does_not_stop_the_chain(self):
+        """A rejected Traqo key says nothing about the box, and must not end the search."""
+        _carrier_integration(self.team, "cosco")
+        resolution, _traqo, vizion, clients = self.resolve(
+            traqo=_traqo_not_found(),
+            vizion=_vizion_found(),
+            probe=_probe_error(),
+            direct_behaviour={"cosco": {"events": []}},
+        )
+
+        self.assertEqual(clients["cosco"].calls, [ACCEPTANCE_NUMBER], "the chain stopped at a Traqo probe failure")
+        self.assertEqual(vizion.calls, [ACCEPTANCE_NUMBER])
+        self.assertEqual(resolution.carrier_code, "one")
+
+    def test_traqo_not_being_configured_for_probing_is_its_own_outcome(self):
+        resolution, *_ = self.resolve(
+            traqo=_traqo_not_configured(), vizion=_vizion_not_found(), probe=_probe_not_configured()
+        )
+
+        self.assertEqual(resolution.step_for(STEP_TRAQO_PROBE).outcome, carrier_resolution.NOT_CONFIGURED)
+
+    def test_the_probe_is_told_which_carriers_to_try_first(self):
+        """The cap makes the order matter: a preference has to reach the probe to be used."""
+        shipment = Shipment.objects.create(team=self.team, shipment_number="SHP-P", carrier="Maersk")
+        ShipmentContainer.objects.create(shipment=shipment, container=self.container)
+
+        self.resolve(
+            traqo=_traqo_not_found(),
+            vizion=_vizion_found(),
+            probe=_probe_found(),
+            preferred_carrier_codes=["zim"],
+            exclude_carrier_codes=frozenset({"cosco"}),
+            use_trusted_knowledge=False,
+        )
+
+        call = self.probe_spy.calls[0]
+        self.assertEqual(call["preferred_carrier_codes"], ("zim",))
+        self.assertEqual(call["exclude_carrier_codes"], frozenset({"cosco"}))
+
+    def test_probing_can_be_turned_off_leaving_the_old_chain(self):
+        """The chain as it behaved before this step existed, for a caller on a tighter budget."""
+        _carrier_integration(self.team, "cosco")
+        resolution, traqo, vizion, clients = self.resolve(
+            traqo=_traqo_not_found(),
+            vizion=_vizion_found(),
+            probe=_probe_found(),
+            direct_behaviour={"cosco": {"events": []}},
+            use_traqo_probe=False,
+        )
+
+        self.assertEqual(self.probe_spy.calls, [])
+        self.assertEqual(resolution.step_for(STEP_TRAQO_PROBE).outcome, carrier_resolution.SKIPPED)
+        self.assertEqual(traqo.calls, [ACCEPTANCE_NUMBER])
+        self.assertEqual(clients["cosco"].calls, [ACCEPTANCE_NUMBER])
+        self.assertEqual(vizion.calls, [ACCEPTANCE_NUMBER])
+        self.assertEqual(resolution.source, CarrierSource.VIZION_ACI)
+
+    def test_a_probe_hit_spends_nothing_below_it(self):
+        """The cost assertion this step exists for: no direct sweep, and no paid reference."""
+        _carrier_integration(self.team, "cosco")
+        resolution, _traqo, vizion, clients = self.resolve(
+            traqo=_traqo_not_found(),
+            vizion=_vizion_found(),
+            probe=_probe_found(),
+            direct_behaviour={"cosco": {"events": [{"id": 1}]}},
+            direct_events={"cosco": [_normalised_event(ACCEPTANCE_NUMBER)]},
+        )
+
+        self.assertEqual(clients["cosco"].calls, [], "direct discovery ran after the probe had answered")
+        self.assertEqual(vizion.calls, [], "Vizion was paid after the probe had answered")
+        self.assertIsNone(resolution.step_for(STEP_DIRECT_API))
+        self.assertIsNone(resolution.step_for(STEP_VIZION_ACI))
+        self.assertEqual(resolution.vizion_reference_id, "")
+
+    def test_a_probe_that_answered_nothing_is_still_reported(self):
+        """What was asked is worth keeping even when none of it answered."""
+        resolution, *_ = self.resolve(
+            traqo=_traqo_not_found(), vizion=_vizion_not_found(), probe=_probe_not_found(asked=("ONEY", "MAEU"))
+        )
+
+        self.assertIsNotNone(resolution.traqo_probe)
+        self.assertEqual([attempt.sealine for attempt in resolution.traqo_probe.attempts], ["ONEY", "MAEU"])
+
+    # -- 4. the direct carrier APIs ------------------------------------------
 
     def test_traqo_not_found_lets_direct_discovery_run(self):
         _carrier_integration(self.team, "cosco")
@@ -351,7 +585,7 @@ class ResolutionOrderTest(TestCase):
         self.assertEqual(len(resolution.events), 1)
         self.assertIsNotNone(resolution.discovery)
 
-    # -- 4. Vizion ACI, last because it costs -------------------------------
+    # -- 5. Vizion ACI, last because it costs -------------------------------
 
     def test_vizion_runs_only_once_both_free_steps_have_failed(self):
         _carrier_integration(self.team, "cosco")
@@ -469,7 +703,8 @@ class ResolutionOrderTest(TestCase):
 
         summary = resolution.summary
         self.assertLess(summary.index(STEP_TRUSTED), summary.index(STEP_TRAQO_LOOKUP))
-        self.assertLess(summary.index(STEP_TRAQO_LOOKUP), summary.index(STEP_DIRECT_API))
+        self.assertLess(summary.index(STEP_TRAQO_LOOKUP), summary.index(STEP_TRAQO_PROBE))
+        self.assertLess(summary.index(STEP_TRAQO_PROBE), summary.index(STEP_DIRECT_API))
         self.assertLess(summary.index(STEP_DIRECT_API), summary.index(STEP_VIZION_ACI))
 
     def test_resolution_writes_nothing(self):

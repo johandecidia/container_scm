@@ -15,7 +15,16 @@ So the expected behaviour is a carrier and a provider that are different names::
     carrier source = VIZION_ACI
     provider       = traqo
 
-Every provider is faked. The two aggregator discovery calls are injected, and Traqo's
+**What this file now pins down is the Vizion *fallback*.** The chain has since gained
+Traqo candidate probing between the free lookup and the direct sweep, and for this very
+container the probe answers — which is why it exists, and which is covered in
+``test_traqo_probe_acceptance.py``. Here the probe is injected as finding nothing, so the
+scenario is "not even Traqo's shipment endpoint has this box under any likely carrier".
+Vizion must still be reached, still identify ONE, and still route to Traqo: the last
+fallback has to keep working, and the step added in front of it must not have become the
+only way there.
+
+Every provider is faked. The three aggregator discovery calls are injected, and Traqo's
 tracking fetch goes through the real client with an injected session — so the request
 Traqo would actually receive, sealine included, is asserted on rather than assumed.
 """
@@ -113,6 +122,20 @@ def _traqo_lookup_not_found(container_number):
     )
 
 
+def _traqo_probe_finds_nothing(**kwargs):
+    """No likely carrier has this box at Traqo either — so the chain must reach Vizion."""
+    from apps.scm.integrations.traqo import carrier_probe
+
+    return carrier_probe.TraqoCarrierProbeResult(
+        container_number=kwargs.get("container_number", CONTAINER_NUMBER),
+        outcome=carrier_probe.NOT_FOUND,
+        attempts=tuple(
+            carrier_probe.TraqoProbeAttempt(carrier_code=code, sealine=sealine, outcome=carrier_probe.NOT_FOUND)
+            for code, sealine in (("one", "ONEY"), ("maersk", "MAEU"))
+        ),
+    )
+
+
 def _vizion_identifies_one(container_number):
     """What Vizion's ACI actually returned: ONE, with a reference that cost money."""
     return vizion_discovery.VizionCarrierIdentification(
@@ -165,6 +188,7 @@ class AcceptanceBase(TestCase):
                 container=self.container,
                 clients=clients,
                 traqo_lookup=_traqo_lookup_not_found,
+                traqo_probe=_traqo_probe_finds_nothing,
                 vizion_identify=self.spy_vizion,
                 use_trusted_knowledge=False,
             )
@@ -186,6 +210,10 @@ class Bbcu3273070ResolutionTest(AcceptanceBase):
 
         self.assertEqual(
             resolution.step_for(carrier_resolution.STEP_TRAQO_LOOKUP).outcome,
+            carrier_resolution.NOT_FOUND,
+        )
+        self.assertEqual(
+            resolution.step_for(carrier_resolution.STEP_TRAQO_PROBE).outcome,
             carrier_resolution.NOT_FOUND,
         )
         self.assertEqual(
@@ -339,6 +367,7 @@ class Bbcu3273070FromTheRefreshButtonTest(AcceptanceBase):
         client = TraqoClient(base_url="https://traqocontainer.com/api/v1", api_key="k", session=session)
         with (
             mock.patch.object(carrier_resolution, "_default_traqo_lookup", _traqo_lookup_not_found),
+            mock.patch.object(carrier_resolution, "_default_traqo_probe", _traqo_probe_finds_nothing),
             mock.patch.object(carrier_resolution, "_default_vizion_identify", self.spy_vizion),
             mock.patch.object(
                 activation_module,

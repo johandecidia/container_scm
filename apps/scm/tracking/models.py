@@ -18,8 +18,15 @@ class CarrierSource(models.TextChoices):
     and a system that stored only the name could never tell them apart again.
 
     Ordered strongest-evidence first, which is also the order carrier resolution tries:
-    a fact already held beats a free lookup, which beats a direct probe, which beats a
-    paid identification.
+    a fact already held beats a free lookup, which beats a probe that returned this
+    container's own events, which beats a paid identification.
+
+    ``TRAQO_LOOKUP`` and ``TRAQO_PROBE`` are both Traqo and are deliberately not one
+    value. The lookup is Traqo's free "which carrier is likely to know this number" —
+    a named carrier, and nothing seen of this box. The probe asked Traqo's container
+    endpoint about a candidate carrier and got this container's tracking data back,
+    which proves the carrier the way a direct call does. Storing them as one value
+    would make an aggregator's guess indistinguishable from its evidence.
     """
 
     MANUAL = "manual", _("Chosen by a person")
@@ -27,6 +34,7 @@ class CarrierSource(models.TextChoices):
     PLANNED_CONTAINER = "planned_container", _("From the planned container")
     EXISTING_VERIFIED_SOURCE = "existing_verified_source", _("Already verified for this container")
     TRAQO_LOOKUP = "traqo_lookup", _("Traqo carrier lookup")
+    TRAQO_PROBE = "traqo_probe", _("Traqo container tracking data")
     DIRECT_API = "direct_api", _("Direct carrier tracking events")
     VIZION_ACI = "vizion_aci", _("Vizion Auto Carrier Identification")
 

@@ -14,6 +14,7 @@ The order, cheapest and strongest first::
 
     trusted carrier already known?          free, and better evidence than any provider
         → Traqo free carrier lookup         free
+        → Traqo candidate probing           a few shipment-endpoint calls, capped
         → direct carrier API discovery      the team's own rate limits
         → Vizion ACI                        a paid reference, every time
 
@@ -21,6 +22,15 @@ Each step short-circuits the ones below it. That ordering *is* the cost policy: 
 creates a billable reference on every call, so it must never run for a container an
 earlier step has already explained, and a container whose shipment names its carrier
 must reach no provider at all.
+
+The two Traqo steps are one provider and two different budgets, which is why they are two
+steps. The lookup creates nothing at Traqo and answers "which carrier is likely to know
+this number". Probing asks Traqo's container endpoint about a handful of likely carriers
+and may spend a shipment slot, so it is capped and ordered — and it earns its place
+between the free lookup and the paid identification because BBCU3273070 proved the gap it
+fills: Traqo's lookup could not recognise the number, Vizion was paid to name ONE, and
+Traqo then tracked the box perfectly once told ``sealine=ONEY``. Traqo had the shipment
+all along. See :mod:`apps.scm.integrations.traqo.carrier_probe`.
 
 Three properties this module is careful about.
 
@@ -38,9 +48,12 @@ technical failure exactly as it continues past a NOT_FOUND, and a step that fail
 technically is visible in :attr:`CarrierResolution.steps` so a caller can tell "nobody
 has this box" from "we could not ask properly".
 
-**A direct probe's payload is not thrown away.** When direct discovery is the step that
-answers, its events and raw payload travel out on the result, so the caller stores what
-was already fetched instead of asking the same carrier the same question twice.
+**A payload that answered is not thrown away.** When a step proves a carrier by
+*fetching* its events — direct discovery, or a Traqo probe — those events and that raw
+payload travel out on the result, along with which provider they came from and the handle
+it answered under. The caller stores what was already fetched instead of asking the same
+provider the same question twice. This is provider-neutral on purpose: the reuse rule is
+"somebody already returned this container's data", not "the carrier's own API did".
 """
 
 from __future__ import annotations
@@ -49,6 +62,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+# Constants only — the Traqo package's ``__init__`` imports nothing, so naming its
+# provider code here costs no import of its client or its transport.
+from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
 from apps.scm.tracking.models import CarrierSource
 
 from .carrier_discovery import discover_carrier_for_container
@@ -56,6 +72,7 @@ from .registry import UnknownCarrierError, get_carrier_definition, resolve_carri
 
 if TYPE_CHECKING:
     from apps.scm.containers.models import Container
+    from apps.scm.integrations.traqo.carrier_probe import TraqoCarrierProbeResult
     from apps.teams.models import Team
 
     from .base import BaseCarrierClient
@@ -67,6 +84,7 @@ logger = logging.getLogger(__name__)
 # The steps of the chain, as values a caller and a log line can both name.
 STEP_TRUSTED = "trusted_knowledge"
 STEP_TRAQO_LOOKUP = "traqo_lookup"
+STEP_TRAQO_PROBE = "traqo_candidate_probe"
 STEP_DIRECT_API = "direct_api"
 STEP_VIZION_ACI = "vizion_aci"
 
@@ -124,13 +142,24 @@ class CarrierResolution:
     verified: bool = False
     steps: tuple[ResolutionStep, ...] = field(default_factory=tuple)
 
-    # Direct discovery's payload, when direct discovery is what answered. Present so the
-    # caller can store what has already been fetched rather than re-fetching it.
+    # The tracking data the answering step already fetched, present so the caller can
+    # store it rather than fetch it again. Set by every step that proves a carrier by
+    # asking somebody — direct discovery and the Traqo probe — and empty for the steps
+    # that only name one.
     events: tuple[NormalisedTrackingEvent, ...] = field(default_factory=tuple)
     raw_payload: dict = field(default_factory=dict)
+    # Who returned that payload, and the handle they answered under. The provider code is
+    # a carrier's own for a direct hit and ``traqo`` for a probe; the reference is Traqo's
+    # sealine, and empty for a direct carrier, which needs nothing beyond the container
+    # number. Together they are what lets activation store the payload without knowing
+    # which step produced it.
+    tracking_provider_code: str = ""
+    provider_reference: str = ""
     # The sweep itself, when one ran. Carries the per-carrier attempts the manual refresh
     # reports as "we checked these".
     discovery: CarrierDiscoveryOutcome | None = None
+    # The Traqo probe's per-candidate attempts, when one ran.
+    traqo_probe: TraqoCarrierProbeResult | None = None
     # A Vizion reference that now exists, and was paid for, whether or not ACI answered.
     vizion_reference_id: str = ""
 
@@ -139,9 +168,19 @@ class CarrierResolution:
         return bool(self.carrier_code)
 
     @property
-    def has_direct_payload(self) -> bool:
-        """True when the caller can store events without another carrier call."""
+    def has_tracking_payload(self) -> bool:
+        """True when the caller can store events without another provider call."""
         return bool(self.events)
+
+    @property
+    def has_direct_payload(self) -> bool:
+        """The former name for :attr:`has_tracking_payload`, kept for callers that used it.
+
+        It was never about *direct* carriers so much as about a payload already in hand,
+        which is now also what a Traqo probe produces. Distinguishing the two is done by
+        reading ``tracking_provider_code`` or ``discovery``, not by this.
+        """
+        return self.has_tracking_payload
 
     def step_for(self, step: str) -> ResolutionStep | None:
         for entry in self.steps:
@@ -232,9 +271,11 @@ def resolve_carrier_for_container(
     exclude_carrier_codes: frozenset[str] = frozenset(),
     use_trusted_knowledge: bool = True,
     use_traqo_lookup: bool = True,
+    use_traqo_probe: bool = True,
     use_direct_discovery: bool = True,
     use_vizion_aci: bool = True,
     traqo_lookup=None,
+    traqo_probe=None,
     vizion_identify=None,
 ) -> CarrierResolution:
     """Establish which carrier is moving ``container``, cheapest evidence first.
@@ -242,12 +283,12 @@ def resolve_carrier_for_container(
     Never raises: every step classifies its own failures, and the result always describes
     what happened. Writes nothing.
 
-    The four ``use_*`` flags turn steps off. They exist for callers with a different cost
+    The five ``use_*`` flags turn steps off. They exist for callers with a different cost
     budget — a background sweep over thousands of containers has no business creating a
     Vizion reference for each — not as a way to reorder the chain, which is fixed.
 
-    ``traqo_lookup`` and ``vizion_identify`` inject the two aggregator calls for testing;
-    ``clients`` injects direct carrier adapters, exactly as
+    ``traqo_lookup``, ``traqo_probe`` and ``vizion_identify`` inject the aggregator calls
+    for testing; ``clients`` injects direct carrier adapters, exactly as
     :func:`.carrier_discovery.discover_carrier_for_container` takes them.
 
     ``preferred_carrier_codes`` and ``exclude_carrier_codes`` are passed through to the
@@ -305,7 +346,48 @@ def resolve_carrier_for_container(
     else:
         steps.append(ResolutionStep(step=STEP_TRAQO_LOOKUP, outcome=SKIPPED))
 
-    # --- 3. The direct carrier APIs ---------------------------------------------
+    # --- 3. Traqo's container endpoint, asked about a few likely carriers --------
+    if use_traqo_probe:
+        probe = (traqo_probe or _default_traqo_probe)(
+            container_number=reference,
+            preferred_carrier_codes=tuple(preferred_carrier_codes),
+            exclude_carrier_codes=exclude_carrier_codes,
+        )
+        steps.append(
+            ResolutionStep(
+                step=STEP_TRAQO_PROBE,
+                outcome=_probe_outcome(probe),
+                carrier_code=probe.carrier_code,
+                detail=probe.summary,
+            )
+        )
+        if probe.found:
+            resolution = CarrierResolution(
+                container_number=reference,
+                carrier_code=probe.carrier_code,
+                carrier_name=probe.carrier_name or _registered_name(probe.carrier_code),
+                source=CarrierSource.TRAQO_PROBE,
+                # Traqo returned this container's own tracking data under this carrier's
+                # sealine. That is evidence about the box, not a name from a lookup, so
+                # it is verified — and it is why the payload rides along below.
+                verified=True,
+                steps=tuple(steps),
+                events=probe.events,
+                raw_payload=probe.raw_payload,
+                tracking_provider_code=TRAQO_PROVIDER_CODE,
+                # Traqo's own sealine, so activation and every later fetch ask the same
+                # question that worked rather than working it out again.
+                provider_reference=probe.sealine,
+                traqo_probe=probe,
+            )
+            _log(resolution)
+            return resolution
+        probe_result = probe
+    else:
+        steps.append(ResolutionStep(step=STEP_TRAQO_PROBE, outcome=SKIPPED))
+        probe_result = None
+
+    # --- 4. The direct carrier APIs ---------------------------------------------
     if use_direct_discovery:
         outcome = discover_carrier_for_container(
             team=team,
@@ -334,7 +416,11 @@ def resolve_carrier_for_container(
                 steps=tuple(steps),
                 events=tuple(outcome.events),
                 raw_payload=outcome.raw_payload,
+                # The carrier is its own provider here, and needs no handle beyond the
+                # container number — which is the difference from a Traqo probe's payload.
+                tracking_provider_code=outcome.carrier_code,
                 discovery=outcome,
+                traqo_probe=probe_result,
             )
             _log(resolution)
             return resolution
@@ -344,7 +430,7 @@ def resolve_carrier_for_container(
         steps.append(ResolutionStep(step=STEP_DIRECT_API, outcome=SKIPPED))
         direct_outcome = None
 
-    # --- 4. Vizion ACI, which costs a reference ---------------------------------
+    # --- 5. Vizion ACI, which costs a reference ---------------------------------
     if use_vizion_aci:
         identification = (vizion_identify or _default_vizion_identify)(reference)
         steps.append(
@@ -367,6 +453,7 @@ def resolve_carrier_for_container(
                 verified=False,
                 steps=tuple(steps),
                 discovery=direct_outcome,
+                traqo_probe=probe_result,
                 vizion_reference_id=identification.reference_id,
             )
             _log(resolution)
@@ -380,6 +467,7 @@ def resolve_carrier_for_container(
         container_number=reference,
         steps=tuple(steps),
         discovery=direct_outcome,
+        traqo_probe=probe_result,
         vizion_reference_id=unresolved_reference,
     )
     _log(resolution)
@@ -395,6 +483,30 @@ def _default_traqo_lookup(container_number: str):
     from apps.scm.integrations.traqo.discovery import lookup_carrier_for_container
 
     return lookup_carrier_for_container(container_number)
+
+
+def _default_traqo_probe(
+    *,
+    container_number: str,
+    preferred_carrier_codes: tuple[str, ...] = (),
+    exclude_carrier_codes: frozenset[str] = frozenset(),
+):
+    """Build the candidate list and ask Traqo about it, capped at the probe's own limit.
+
+    Two calls rather than one because they are two decisions: which carriers are worth
+    asking about, in what order, and how many of them the account can afford to ask.
+    """
+    from apps.scm.integrations.traqo.carrier_probe import (
+        build_traqo_probe_candidates,
+        probe_candidate_carriers,
+    )
+
+    candidates = build_traqo_probe_candidates(
+        container_number=container_number,
+        preferred_carrier_codes=preferred_carrier_codes,
+        exclude_carrier_codes=exclude_carrier_codes,
+    )
+    return probe_candidate_carriers(container_number=container_number, candidates=candidates)
 
 
 def _default_vizion_identify(container_number: str):
@@ -414,6 +526,29 @@ def _traqo_outcome(lookup) -> str:
         return ERROR
     # Includes a SCAC no registered carrier claims: Traqo answered, and the answer is
     # not one this system can act on.
+    return NOT_FOUND
+
+
+def _probe_outcome(probe) -> str:
+    """Read a probe result into the chain's vocabulary.
+
+    The probe already speaks it — its outcomes are :mod:`apps.scm.integrations.traqo.discovery`'s,
+    which are these — so this only guards the one case the probe can report and the chain
+    cannot act on: FOUND without a carrier or without events, which ``found`` already
+    rules out and which must never become a resolution.
+    """
+    from apps.scm.integrations.traqo import carrier_probe
+
+    if probe.found:
+        return FOUND
+    if probe.outcome == carrier_probe.NOT_CONFIGURED:
+        return NOT_CONFIGURED
+    if probe.outcome == carrier_probe.ERROR:
+        return ERROR
+    if probe.outcome == carrier_probe.SKIPPED:
+        # Nothing was asked: no candidate Traqo publishes a sealine for. Not a failure,
+        # and not an answer about the container either.
+        return SKIPPED
     return NOT_FOUND
 
 

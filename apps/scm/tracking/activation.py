@@ -24,10 +24,13 @@ Two ordering rules matter.
 container exactly as it was — no subscription, no state change, and above all no effect on
 events another source already produced.
 
-**Re-use a payload already in hand.** Direct discovery proves a carrier by *fetching* its
-events; activating that carrier must not immediately ask it the same question again. When
+**Re-use a payload already in hand.** A step that proves a carrier does it by *fetching*
+its events; activating that carrier must not immediately ask the same question again. When
 the resolution carries a payload, :func:`activate_tracking_route` stores that instead of
-refetching, which is the difference between one carrier call per refresh and two.
+refetching, which is the difference between one provider call per refresh and two. This
+holds for both steps that can prove a carrier — a direct sweep and a Traqo candidate
+probe — and the resolution says which provider produced the payload rather than each
+branch guessing.
 """
 
 from __future__ import annotations
@@ -170,7 +173,9 @@ def _activate_direct(*, team, container, resolution: CarrierResolution, route: T
     have a working direct adapter — the ordinary sync cycle does the fetch, which is the
     same code the scheduled poller runs.
     """
-    if resolution.has_direct_payload and resolution.discovery is not None:
+    # ``discovery is not None`` is what makes this the sweep's own payload rather than
+    # any payload: a Traqo probe also carries events, and they are not this carrier's.
+    if resolution.has_tracking_payload and resolution.discovery is not None:
         subscription, sync_run = store_discovered_carrier_source(
             team=team,
             container=container,
@@ -227,13 +232,26 @@ def _activate_traqo(
     guessing — the carrier stays Container SCM's own answer even though the data is
     Traqo's.
 
-    Idempotent by construction: ``ingest_traqo_container`` goes through the same
-    ``get_or_create`` natural key as every other source, so a double click produces one
-    Traqo watch and one further sync run rather than two watches.
+    When the resolution already holds a Traqo payload — a candidate probe established the
+    carrier *by* fetching it — that payload is stored and no request is made. Anything
+    else would spend a second shipment call to be told what is already in hand.
+
+    Idempotent by construction: both paths go through the same ``get_or_create`` natural
+    key as every other source, so a double click produces one Traqo watch and one further
+    sync run rather than two watches.
     """
     from apps.scm.integrations.traqo.service import ingest_traqo_container
 
     from .models import CarrierSource
+
+    if _carries_traqo_payload(resolution):
+        return _activate_traqo_from_payload(
+            team=team,
+            container=container,
+            resolution=resolution,
+            route=route,
+            sandbox=sandbox,
+        )
 
     sealine = route.provider_reference
     if not sealine:  # pragma: no cover — routing only returns Traqo with a sealine
@@ -269,6 +287,75 @@ def _activate_traqo(
 
     result = _from_sync_run(route=route, subscription=ingest.subscription, sync_run=ingest.sync_run)
     result.metadata = {"sealine": sealine, "events_mapped": ingest.events_mapped}
+    return result
+
+
+def _carries_traqo_payload(resolution: CarrierResolution) -> bool:
+    """Whether this resolution already holds a Traqo container payload to store.
+
+    All three conditions matter. There must be events; they must have come from Traqo
+    rather than from a direct sweep; and Traqo must have said which sealine answered, so
+    the watch records the handle a later fetch needs. Anything less and the ordinary
+    fetch-then-store path is the right one.
+    """
+    from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
+
+    return bool(
+        resolution.has_tracking_payload
+        and resolution.tracking_provider_code == TRAQO_PROVIDER_CODE
+        and resolution.provider_reference
+    )
+
+
+def _activate_traqo_from_payload(
+    *,
+    team,
+    container,
+    resolution: CarrierResolution,
+    route: TrackingRoute,
+    sandbox: bool,
+) -> ActivationResult:
+    """Record a Traqo answer that has already been fetched, without fetching it again.
+
+    The same writes the ordinary Traqo path makes, because it is literally the same
+    function: ``store_traqo_container_result`` is the second half of
+    ``ingest_traqo_container``, reached here with the response the probe already got.
+    Subscription, sync run, raw payload, events and the ETA observation all land exactly
+    as they would have — the only difference is that no request is sent.
+
+    The sealine stored is the one the probe *answered* under, not the one routing would
+    choose. They agree today; if they ever disagree, the one that returned this
+    container's data is the one a scheduled refresh must ask with.
+    """
+    from apps.scm.integrations.traqo.service import TraqoContainerResponse, store_traqo_container_result
+
+    from .models import CarrierSource
+
+    sealine = resolution.provider_reference
+    response = TraqoContainerResponse(
+        container_number=container.container_id,
+        sealine=sealine,
+        payload=resolution.raw_payload,
+        events=tuple(resolution.events),
+        sandbox=sandbox,
+    )
+    ingest = store_traqo_container_result(
+        team=team,
+        container=container,
+        response=response,
+        carrier_code=route.carrier_code,
+        carrier_name=route.carrier_name,
+        carrier_source=resolution.source or CarrierSource.TRAQO_PROBE,
+    )
+
+    logger.info(
+        "Traqo activation for %s (carrier %s, sealine %s) re-used the payload the probe fetched.",
+        container.container_id,
+        route.carrier_code,
+        sealine,
+    )
+    result = _from_sync_run(route=route, subscription=ingest.subscription, sync_run=ingest.sync_run)
+    result.metadata = {"sealine": sealine, "events_mapped": ingest.events_mapped, "payload_reused": True}
     return result
 
 

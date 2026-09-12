@@ -17,6 +17,17 @@ knowing where they came from.
 Fetch happens before any of it. A Traqo outage, a rejected key or an account problem
 therefore leaves the container exactly as it was — no subscription, no state change,
 and above all no effect on tracking events any other source already produced.
+
+Fetch and write are separate functions for the same reason they happen in that order::
+
+    fetch_and_map_traqo_container   one request, mapped, nothing written
+    store_traqo_container_result    the five writes above, no request
+    ingest_traqo_container          both, in that order — the ordinary path
+
+Carrier probing (:mod:`.carrier_probe`) uses the first on its own, because it asks
+several candidate carriers and only one of the answers is worth keeping; it then hands
+that answer to the second. So there is one Traqo mapper, one write path and one rule
+about what a usable payload is, however the payload was obtained.
 """
 
 from __future__ import annotations
@@ -77,6 +88,59 @@ def get_traqo_provider():
     return provider
 
 
+@dataclass(frozen=True)
+class TraqoContainerResponse:
+    """One Traqo container answer, fetched and mapped, with nothing written yet.
+
+    The unit of work both Traqo callers share. :func:`ingest_traqo_container` hands it
+    straight to :func:`store_traqo_container_result`; the carrier probe
+    (:mod:`.carrier_probe`) inspects it first, because for the probe the answer to
+    "is this the carrier" *is* whether this object turned out to hold real data.
+
+    ``sealine`` is what was asked with. ``reported_sealine`` is what Traqo says the
+    shipment actually moves under, which is the one worth believing — the two are the
+    same on every payload seen so far, and if they ever differ the request is a
+    question and the response is the answer.
+    """
+
+    container_number: str
+    sealine: str
+    payload: dict = field(default_factory=dict)
+    events: tuple = ()
+    sandbox: bool = False
+
+    @property
+    def data(self) -> dict:
+        """The shipment object. Always a dict — the client rejects an envelope without one."""
+        data = self.payload.get("data") if isinstance(self.payload, dict) else None
+        return data if isinstance(data, dict) else {}
+
+    @property
+    def reported_sealine(self) -> str:
+        """The SCAC Traqo says this shipment moves under, or "" when it does not say."""
+        return str(self.data.get("sealine") or "").strip().upper()
+
+    @property
+    def reported_reference(self) -> str:
+        """The reference Traqo echoes back, or "" — checked, never trusted blindly."""
+        return str(self.data.get("reference_number") or "").strip().upper()
+
+    @property
+    def is_for_requested_container(self) -> bool:
+        """Whether the shipment returned is the one that was asked about.
+
+        An absent ``reference_number`` is not a mismatch: Traqo has answered about the
+        container in the URL and simply not echoed it. A *different* one is, and it
+        must never be mapped onto the container we asked about.
+        """
+        reported = self.reported_reference
+        return not reported or reported == self.container_number
+
+    @property
+    def has_events(self) -> bool:
+        return bool(self.events)
+
+
 def fetch_traqo_container(*, container_number: str, sealine: str, sandbox: bool = True, client=None) -> dict:
     """Fetch one container's Traqo response envelope.
 
@@ -85,6 +149,40 @@ def fetch_traqo_container(*, container_number: str, sealine: str, sandbox: bool 
     """
     client = client or TraqoClient.from_settings(sandbox=sandbox)
     return client.get_container(container_number, sealine)
+
+
+def fetch_and_map_traqo_container(
+    *,
+    container_number: str,
+    sealine: str,
+    sandbox: bool = True,
+    client=None,
+) -> TraqoContainerResponse:
+    """Fetch one container from Traqo and map its events. Writes nothing.
+
+    The half of :func:`ingest_traqo_container` that spends a request, without the half
+    that records the result — which is exactly what carrier probing needs: it asks
+    several candidate carriers and must persist only the one that answers.
+
+    Kept as the single fetch-and-map for Traqo on purpose. A probe with its own reader
+    would be a second opinion on what a valid Traqo payload is, and the two would drift.
+
+    Raises the client's typed carrier errors.
+    """
+    payload = fetch_traqo_container(
+        container_number=container_number,
+        sealine=sealine,
+        sandbox=sandbox,
+        client=client,
+    )
+    events = map_traqo_container_payload(payload, container_number=container_number)
+    return TraqoContainerResponse(
+        container_number=(container_number or "").strip().upper(),
+        sealine=sealine,
+        payload=payload,
+        events=tuple(events),
+        sandbox=sandbox,
+    )
 
 
 def lookup_traqo_carrier(*, reference: str, sandbox: bool = True, client=None):
@@ -133,19 +231,47 @@ def ingest_traqo_container(
 
     Raises the client's typed carrier errors — nothing is written when the fetch fails.
     """
+    response = fetch_and_map_traqo_container(
+        container_number=container.container_id,
+        sealine=sealine,
+        sandbox=sandbox,
+        client=client,
+    )
+    return store_traqo_container_result(
+        team=team,
+        container=container,
+        response=response,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+        carrier_source=carrier_source,
+    )
+
+
+def store_traqo_container_result(
+    *,
+    team,
+    container,
+    response: TraqoContainerResponse,
+    carrier_code: str = "",
+    carrier_name: str = "",
+    carrier_source: str = "",
+) -> TraqoIngestResult:
+    """Persist a Traqo container answer that has already been fetched and mapped.
+
+    The whole write path, and the only one: ``ingest_traqo_container`` reaches it after
+    fetching, and carrier probing reaches it with the payload that proved the carrier
+    rather than fetching the same thing again. One caller spends a request and one does
+    not; both produce the same rows, in the same order, through the same services.
+    """
     from apps.scm.tracking.eta_observations import record_provider_eta_observation
     from apps.scm.tracking.manual_refresh import get_or_create_container_subscription
     from apps.scm.tracking.services import create_sync_run
     from apps.scm.tracking.sync import apply_sync_outcome, store_verified_carrier_result
 
     container_number = container.container_id
-    payload = fetch_traqo_container(
-        container_number=container_number,
-        sealine=sealine,
-        sandbox=sandbox,
-        client=client,
-    )
-    events = map_traqo_container_payload(payload, container_number=container_number)
+    payload = response.payload
+    events = list(response.events)
+    sealine = response.sealine
 
     # Ensures the provider row carries Traqo's base URL before the subscription helper
     # get_or_creates the same row by code.
@@ -188,7 +314,7 @@ def ingest_traqo_container(
         "Traqo ingest for %s (%s, %s): %d mapped, %d created, %d updated, ETA observation %s.",
         container_number,
         sealine,
-        "sandbox" if sandbox else "live",
+        "sandbox" if response.sandbox else "live",
         len(events),
         outcome.events_created,
         outcome.events_updated,
@@ -198,7 +324,7 @@ def ingest_traqo_container(
     return TraqoIngestResult(
         container_number=container_number,
         sealine=sealine,
-        sandbox=sandbox,
+        sandbox=response.sandbox,
         events_mapped=len(events),
         events_created=outcome.events_created,
         events_updated=outcome.events_updated,

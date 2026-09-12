@@ -27,20 +27,61 @@ spend a call or create a subscription, so a return value is the whole of what ha
 
 ## Discovery order, and why it is a cost policy
 
-`resolve_carrier_for_container()` tries four steps and **short-circuits at the first
+`resolve_carrier_for_container()` tries five steps and **short-circuits at the first
 answer**:
 
 ```
 1. trusted knowledge already held      free
 2. Traqo free carrier lookup           free
-3. direct carrier API discovery        the team's own rate limits
-4. Vizion ACI                          a paid reference, every call
+3. Traqo candidate probing             a few shipment calls, capped at 5
+4. direct carrier API discovery        the team's own rate limits
+5. Vizion ACI                          a paid reference, every call
 ```
 
 The order is not a preference. Vizion creates a billable reference on *every* call, so it
 must never run for a container an earlier step has already explained; a container whose
 shipment names its carrier must reach no provider at all. `test_carrier_resolution.py`
 asserts on **what was not called** for exactly this reason.
+
+### Traqo lookup and Traqo probe are one provider and two steps
+
+Steps 2 and 3 are both Traqo. They are separate because they spend different budgets and
+produce different *kinds* of answer.
+
+| | endpoint | cost | answer |
+|---|---|---|---|
+| `traqo_lookup` | `carriers/lookup` | free, own quota, creates nothing | a carrier **named** |
+| `traqo_candidate_probe` | `container/<no>?sealine=X` | may consume a shipment slot | a carrier **proved** |
+
+The lookup asks "which carrier is likely to know this number". The probe asks Traqo's real
+container endpoint about a short list of likely carriers and sees whether one returns this
+container's tracking data. So the lookup stays first — it is free and writes nothing at
+Traqo either — and probing sits behind it.
+
+BBCU3273070 is why step 3 exists. Traqo's lookup did not recognise the number; Vizion was
+paid to identify ONE; Traqo then tracked the box perfectly once told `sealine=ONEY`. Traqo
+had the shipment the whole time and could not answer "who moves this" without being told
+who to ask about. Probing asks.
+
+**Why there is a cap.** `MAX_TRAQO_PROBE_ATTEMPTS = 5`, against a
+`DEFAULT_TRAQO_DISCOVERY_ORDER` of nine carriers. The order is a guess — evidence-first
+where there is any, global volume where there is none — so five is where the marginal
+chance of a hit stops justifying another shipment call. A container none of the five can
+explain is better handed to step 4 than swept across every carrier Traqo covers. Both
+constants live in `integrations/traqo/carrier_probe.py` and are a *discovery priority*,
+not a second carrier registry: identity, display name and SCAC still come from the
+registry and `traqo/sealines.py`.
+
+**What makes a probe an answer.** Sending `sealine=ONEY` is the question, so HTTP 200 is
+not evidence. A probe is FOUND only when Traqo returns a shipment for the container that
+was asked about, the mapper produces events from it, and the SCAC — read from the
+*response* where Traqo states one, not from the request — belongs to a carrier that can be
+routed to. That is the same standard a direct probe meets, which is why `TRAQO_PROBE` is
+recorded as `verified` and `TRAQO_LOOKUP` is not.
+
+**Only for containers with no source.** Probing is part of carrier discovery, which the
+manual refresh reaches only when a container has no verified subscription. A container that
+is already tracked is refreshed through the sources it has; it is never re-probed.
 
 ### What counts as trusted knowledge
 
@@ -107,12 +148,14 @@ container           BBCU3273070
 provider.code       traqo
 carrier_code        one
 carrier_name        ONE (Ocean Network Express)
-carrier_source      vizion_aci
+carrier_source      traqo_probe    (vizion_aci where probing could not find it either)
 tracking_reference  BBCU3273070
 provider_reference  ONEY
 ```
 
-Three things about this shape:
+Only `carrier_source` differs between the two routes to that state, and it is the field
+whose whole job is to say so: probing returned this box's events, Vizion named a carrier.
+Four things about this shape:
 
 **Blank `carrier_code` is honest.** An aggregator watch whose carrier was never
 established genuinely does not know one, and nothing infers a carrier from the provider to
@@ -133,8 +176,11 @@ enriches the existing watch rather than creating a second one beside it. And
 carrier that already proved itself is a thing for a person to settle, not for the system
 to overwrite quietly.
 
-`provider_reference` also closes the gap both provider READMEs recorded as blocking
-scheduled refresh: there is now somewhere to persist the SCAC and the reference id.
+**The `provider_reference` stored is the one that answered.** For a probed container that
+is Traqo's own sealine from the response, not the one routing would have chosen. They
+agree today; if they ever disagree, the question that returned this box's data is the one a
+scheduled refresh must ask again. It also closes the gap both provider READMEs recorded as
+blocking scheduled refresh: there is now somewhere to persist the SCAC and the reference id.
 
 ## Failure semantics
 
@@ -156,22 +202,31 @@ provider could not verify this container, and never withdraws an existing verifi
 The chain continues past an `ERROR` exactly as it continues past a `NOT_FOUND`, and both
 are visible in `CarrierResolution.steps`.
 
+The same five values apply *within* the probe, per candidate, and the distinction earns its
+keep there twice over. A candidate that answers `NOT_FOUND` is simply wrong about this box
+and the next is asked. A candidate that fails technically is too — unless the failure was
+never about the candidate: a rejected key, an account problem or a container number Traqo
+will not accept ends the probe, because four more calls would be told the same thing.
+Every attempt is on `CarrierResolution.traqo_probe.attempts` either way.
+
 ## The BBCU3273070 flow, end to end
 
-Taken from a real run, and covered by `tracking/tests/test_carrier_routing_acceptance.py`.
+Taken from a real run, and covered by `tracking/tests/test_traqo_probe_acceptance.py`.
 
 ```
 BBCU3273070, nothing tracking it
 
   trusted knowledge      → nothing recorded
-  Traqo carrier lookup   → NOT_FOUND        (free; Traqo does not have the container)
-  direct API discovery   → no verified carrier
-  Vizion ACI             → ONEY             (a reference is created and billed)
+  Traqo carrier lookup   → NOT_FOUND        (free; Traqo's lookup cannot see the number)
+  Traqo candidate probe  → ONEY             (one shipment call: ONE leads the order)
 
   carrier resolution:
-      carrier        = one
-      carrier source = VIZION_ACI
-      verified       = False
+      carrier              = one
+      carrier source       = TRAQO_PROBE
+      verified             = True           (Traqo returned this box's own events)
+      tracking provider    = traqo
+      provider reference   = ONEY
+      events + raw payload = already in hand
 
   provider routing:
       ONE direct        unavailable / not connected
@@ -179,16 +234,47 @@ BBCU3273070, nothing tracking it
       → provider = traqo, provider_reference = ONEY
 
   activation:
-      GET /container/BBCU3273070?sealine=ONEY
-      → existing Traqo mapper
+      no second request — the probe's payload is stored
+      → existing store_traqo_container_result
       → existing store_verified_carrier_result / persist_normalised_events
-      → TrackingEvent rows against provider traqo
+      → TrackingEvent rows against provider traqo, plus the ETA observation
 
   → Journey / ETA / Timeline / Visibility, unchanged
 ```
 
+One Traqo container call for the whole refresh: the probe's. Direct discovery and Vizion
+are never reached, which is the saving the probe step was added for — the same container
+previously cost a Vizion reference to resolve.
+
+**The fallback still works.** Where not even the probe can find the box,
+`tracking/tests/test_carrier_routing_acceptance.py` covers the original path: the chain
+continues to the direct sweep and then to Vizion ACI, which identifies ONE and routes to
+Traqo as before, recording `carrier_source = VIZION_ACI`.
+
 Pressing Refresh a second time resolves at step 1 — the subscription now records
-`carrier_code = one` — so it buys no further Vizion reference and creates no second watch.
+`carrier_code = one` — so it re-probes nothing, buys no Vizion reference, and creates no
+second watch.
+
+### Re-using the payload that proved the carrier
+
+Two steps can prove a carrier, and both do it by *fetching* its events. Activating that
+carrier must not immediately ask the same question again, so `CarrierResolution` carries
+the answer out provider-neutrally:
+
+| field | direct hit | Traqo probe hit |
+|---|---|---|
+| `events` / `raw_payload` | the carrier's | Traqo's |
+| `tracking_provider_code` | the carrier's own code | `traqo` |
+| `provider_reference` | `""` (nothing more is needed) | the sealine that answered |
+| `discovery` | the sweep's `CarrierDiscoveryOutcome` | `None` |
+| `traqo_probe` | the probe result if one ran | the probe result |
+
+`has_tracking_payload` is the test for "storable without another call"
+(`has_direct_payload` remains as its former name). `activation.py` branches on which
+provider produced it, and each branch stores through that provider's ordinary write path —
+`store_discovered_carrier_source` for a sweep, `store_traqo_container_result` for Traqo.
+Neither is a second ingestion path: they are the same functions the fetching paths use,
+reached with the payload already in hand.
 
 ## Multi-source and continuation
 
@@ -233,6 +319,15 @@ VIZION_API_KEY=""
 
 Routing reads these through `is_traqo_configured()` / `is_vizion_configured()` rather than
 by attempting a call, so an unconfigured provider is ruled out without spending a request.
+Candidate probing checks the same way, once, before any candidate: "Traqo is not set up
+here" is not a statement about the container, and discovering it five times over would
+report five failures where there is one configuration gap.
+
+Both aggregators are switched **off under `manage.py test`** (see `settings.py`). They sit
+inside the resolution chain, and one of them spends shipment calls, so on a machine with
+working credentials a test that exercised the chain without injecting its provider calls
+would have reached them for real. Tests that need one configured say so with
+`@override_settings` and inject the call or a fake session.
 
 Direct carriers stay per-team through `Integration` + `IntegrationCredential`. Secrets are
 never logged, never placed in a raw payload, and never rendered.

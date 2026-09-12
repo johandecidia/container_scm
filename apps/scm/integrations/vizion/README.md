@@ -421,13 +421,20 @@ The architectural claim this package was built on is now enforced by code outsid
 vocabulary the rest of discovery speaks, and `carrier_resolution.py` places it **last**:
 
 ```
-trusted knowledge → Traqo free lookup → direct carrier APIs → Vizion ACI
+trusted knowledge → Traqo free lookup → Traqo candidate probing → direct carrier APIs → Vizion ACI
 ```
 
 Last because it is the only step that costs money on every call. A container an earlier
 step has already explained never reaches it, and
 `integrations/tests/test_carrier_resolution.py` asserts that by spying on the call rather
 than on the result.
+
+**One step has since been added in front of it** (TRACK-DISCOVERY): limited Traqo
+candidate probing, which asks Traqo's container endpoint about a handful of likely
+carriers. ACI's position is unchanged — still last, still the only paid step — but it now
+runs for fewer containers, including the acceptance case below, which probing resolves for
+one Traqo shipment call instead of a reference. See
+`apps/scm/integrations/traqo/carrier_probe.py`.
 
 **Vizion is not routed to for tracking.** `provider_routing.py` selects direct carriers
 first and Traqo second, and stops. ACI has already created the reference that would make
