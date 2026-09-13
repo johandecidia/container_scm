@@ -627,6 +627,13 @@ SCM_PDF_FASTAPI_TIMEOUT_SECONDS = env.int("SCM_PDF_FASTAPI_TIMEOUT_SECONDS", def
 # without extra configuration. Set an explicit, stable key in production so stored
 # credentials survive a SECRET_KEY rotation. Never commit a real key.
 SCM_INTEGRATION_ENCRYPTION_KEY = env.str("SCM_INTEGRATION_ENCRYPTION_KEY", default="")
+# Refuse the SECRET_KEY-derived fallback above. Off by default so development and the
+# test suite need no key, and meant to be on in production: credentials stored under
+# the fallback become undecryptable the moment SECRET_KEY is rotated, and that failure
+# arrives long after the deploy that caused it. With this set, a missing dedicated key
+# is an ImproperlyConfigured at the first credential read instead.
+# See apps/scm/integrations/credentials.py.
+SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY = env.bool("SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY", default=False)
 
 # SCM carrier tracking
 # Cap on how many subscriptions one dispatcher tick queues, so a backlog cannot

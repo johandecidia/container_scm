@@ -16,8 +16,9 @@ already logged to `IntegrationRequestLog` like every other.
 import logging
 
 from django.contrib import messages
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
@@ -58,6 +59,22 @@ def _panel_context(request, *, notice: str = "", notice_level: str = "info") -> 
         "notice": notice,
         "notice_level": notice_level,
     }
+
+
+def _leave_credential_modal(request):
+    """Send the browser back to the tracking page after a credential form succeeded.
+
+    204 with ``HX-Redirect`` rather than a panel swap, the same idiom the location
+    forms use: the form lives in a modal, so a swap would have to replace an element
+    the modal is not inside, leaving the modal itself open over the result. The
+    reload rebuilds the panel and the modal goes with the old document.
+    """
+    url = reverse("team_settings:tracking")
+    if request.htmx:
+        response = HttpResponse(status=204)
+        response["HX-Redirect"] = url
+        return response
+    return redirect(url)
 
 
 def _respond(request, *, notice: str = "", notice_level: str = "info", message=None, level=messages.success):
@@ -103,14 +120,13 @@ def carrier_credentials(request, provider_code: str):
                 logger.warning("Carrier %s could not be connected for team %s: %s", provider_code, team.pk, exc)
                 form.add_error(None, str(exc))
             else:
-                return _respond(
+                messages.success(
                     request,
-                    notice=_("{carrier} credentials saved. Test the connection to confirm they work.").format(
+                    _("{carrier} credentials saved. Test the connection to confirm they work.").format(
                         carrier=row.name
                     ),
-                    notice_level="success",
-                    message=_("{carrier} credentials saved.").format(carrier=row.name),
                 )
+                return _leave_credential_modal(request)
     else:
         form = CarrierCredentialForm(row)
 

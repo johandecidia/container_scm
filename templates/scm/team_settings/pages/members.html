@@ -20,7 +20,6 @@
 
   {% include "scm/team_settings/components/settings_tabs.html" with active="members" %}
 
-  <div id="settings-members">
-    {% include "scm/team_settings/partials/member_panel.html" %}
-  </div>
+  {# The partial owns the `#settings-members` element every write swaps. #}
+  {% include "scm/team_settings/partials/member_panel.html" %}
 {% endblock %}

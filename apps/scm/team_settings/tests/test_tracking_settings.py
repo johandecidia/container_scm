@@ -155,6 +155,28 @@ class TrackingSettingsViewTest(TestCase):
         self.assertEqual(get_integration_credentials(integration), {"api_key": MAERSK_KEY})
         self.assertEqual(integration.config["test_connection_reference"], "MRKU1234567")
 
+    def test_a_saved_credential_form_sends_the_browser_back_to_the_page(self):
+        # The form is in a modal: closing it is the redirect, not a panel swap.
+        response = self.client.post(
+            reverse("team_settings:carrier_credentials", args=["maersk"]),
+            {"api_key": MAERSK_KEY},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["HX-Redirect"], reverse("team_settings:tracking"))
+
+    def test_a_rejected_credential_form_comes_back_as_the_form(self):
+        response = self.client.post(
+            reverse("team_settings:carrier_credentials", args=["maersk"]),
+            {},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("HX-Redirect", response)
+        # The modal, not the panel it sits over.
+        self.assertContains(response, "modal-box")
+        self.assertNotContains(response, 'id="settings-tracking"')
+
     def test_the_stored_key_is_never_rendered_back(self):
         self.client.post(reverse("team_settings:carrier_credentials", args=["maersk"]), {"api_key": MAERSK_KEY})
         for url in (

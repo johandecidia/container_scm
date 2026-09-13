@@ -21,7 +21,7 @@ from apps.scm.tracking.preferences import InvalidTrackingProvider, set_container
 from apps.scm.tracking.source_switch import apply_container_tracking_source
 
 from .models import Container
-from .views import _MESSAGE_LEVELS, TRACKING_PANEL_TEMPLATE, tracking_panel_context
+from .views import MESSAGE_LEVELS, TRACKING_PANEL_TEMPLATE, tracking_panel_context
 
 
 @scm_team_admin_required
@@ -60,5 +60,5 @@ def container_set_tracking_source(request, container_id):
             TRACKING_PANEL_TEMPLATE,
             tracking_panel_context(request, team=team, container=container, refresh=result),
         )
-    _MESSAGE_LEVELS[result.level](request, result.message)
+    MESSAGE_LEVELS[result.level](request, result.message)
     return redirect("containers:detail", container_id=container.pk)

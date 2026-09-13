@@ -46,8 +46,9 @@ CONTAINERS_PER_PAGE = 25
 TRACKING_PANEL_TEMPLATE = "scm/containers/partials/container_tracking_panel.html"
 
 # Maps a RefreshResult level onto the messages framework, so the tracking service
-# stays independent of it.
-_MESSAGE_LEVELS = {
+# stays independent of it. Public because tracking_source_views.py reports the same
+# kind of result from the same panel.
+MESSAGE_LEVELS = {
     "success": messages.success,
     "info": messages.info,
     "warning": messages.warning,
@@ -230,7 +231,7 @@ def container_refresh_tracking(request, container_id):
             tracking_panel_context(request, team=team, container=container, refresh=result),
         )
 
-    _MESSAGE_LEVELS[result.level](request, result.message)
+    MESSAGE_LEVELS[result.level](request, result.message)
     return redirect("containers:detail", container_id=container.pk)
 
 
