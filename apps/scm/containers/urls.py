@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import condition_views, intake_views, location_views, views
+from . import condition_views, intake_views, location_views, tracking_source_views, views
 
 app_name = "containers"
 
@@ -15,6 +15,14 @@ urlpatterns = [
     path("<int:container_id>/", views.container_detail, name="detail"),
     path("<int:container_id>/edit/", views.container_update, name="update"),
     path("<int:container_id>/refresh-tracking/", views.container_refresh_tracking, name="refresh_tracking"),
+    # Which provider this container is tracked through. Administrator-only — see
+    # tracking_source_views.py — and separate from the refresh above, which asks the
+    # sources the container already has.
+    path(
+        "<int:container_id>/tracking-source/",
+        tracking_source_views.container_set_tracking_source,
+        name="set_tracking_source",
+    ),
     # Physical movement. `?type=gate_in` opens the modal on a movement; the form
     # accepts any of the four operational types, so the query string chooses the
     # starting point rather than restricting what may be recorded.

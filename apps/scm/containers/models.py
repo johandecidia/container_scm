@@ -515,6 +515,26 @@ class Container(BaseTeamModel):
         blank=True,
     )
     location_text = models.CharField(_("location (text)"), max_length=200, blank=True)
+
+    # Which provider this container's tracking is fetched through, when somebody has
+    # chosen one. Blank — the normal state — means the team's standard routing
+    # decides, which is what `resolve_tracking_route` has always done.
+    #
+    # A provider code, not a carrier. The two are separate facts and a container
+    # moving with Maersk may be watched by Traqo; conflating them here would make
+    # "tracked via Traqo" read as "carried by Traqo". Carrier identity lives on
+    # `TrackingSubscription.carrier_code`.
+    #
+    # One column rather than a preference table: the override belongs to the thing
+    # it overrides, there is at most one per container, and clearing it is setting it
+    # to "". Validated on write by
+    # :func:`apps.scm.tracking.preferences.set_container_provider_override`.
+    tracking_provider_override = models.CharField(
+        _("tracking via"),
+        max_length=50,
+        blank=True,
+        help_text=_("Provider code to track this container through. Blank uses the team's standard routing."),
+    )
     notes = models.TextField(_("notes"), blank=True)
 
     created_by = models.ForeignKey(

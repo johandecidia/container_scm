@@ -55,6 +55,36 @@ _MESSAGE_LEVELS = {
 }
 
 
+def tracking_panel_context(request, *, team, container, workspace=None, refresh=None, error: str = "") -> dict:
+    """Everything the tracking panel renders, for whichever action re-rendered it.
+
+    Three views swap this element — the detail page, the Refresh button and the
+    tracking-source selector — and a context built separately in each would let them
+    show three slightly different versions of one container's tracking. The provider
+    options are built here rather than on the workspace because they cost queries:
+    the workspace is also assembled in bulk for the whole fleet, where a per-container
+    option list would be a query per row.
+    """
+    from apps.scm.tracking.preferences import get_provider_options
+    from apps.teams.roles import is_admin
+
+    workspace = workspace or get_container_workspace(team=team, container=container)
+    can_manage = is_admin(request.user, team)
+    return {
+        "container": container,
+        "workspace": workspace,
+        # The panel shows position, ETA and freshness through the shared visibility
+        # components, so anything that re-renders it has to rebuild them too.
+        **get_container_map_context(team=team, container=container, workspace=workspace),
+        "refresh": refresh,
+        "tracking_source_error": error,
+        # Administrators only, and only for them are the options even computed.
+        "can_manage_tracking_source": can_manage,
+        "tracking_provider_options": get_provider_options(team, container) if can_manage else [],
+        "team_slug": team.slug,
+    }
+
+
 @scm_login_required
 def container_list(request):
     team = request.default_team
@@ -109,15 +139,12 @@ def container_detail(request, container_id):
         request,
         "scm/containers/pages/container_detail.html",
         {
-            "container": container,
-            "workspace": workspace,
             # Derived from what the workspace already loaded, plus one query for the
             # ETA history. Team-scoped throughout.
             "activity": get_container_activity(team=team, container=container, workspace=workspace),
-            # The map and the journey summary read the same workspace, so the page
-            # loads this container's tracking once.
-            **get_container_map_context(team=team, container=container, workspace=workspace),
-            "team_slug": team.slug,
+            # The map, the journey summary and the tracking panel read the same
+            # workspace, so the page loads this container's tracking once.
+            **tracking_panel_context(request, team=team, container=container, workspace=workspace),
         },
     )
 
@@ -197,19 +224,10 @@ def container_refresh_tracking(request, container_id):
     result = refresh_container_tracking(team=team, container=container)
 
     if request.htmx:
-        workspace = get_container_workspace(team=team, container=container)
         return render(
             request,
             TRACKING_PANEL_TEMPLATE,
-            {
-                "container": container,
-                "workspace": workspace,
-                # The panel shows position, ETA and freshness through the shared
-                # visibility components, so a refresh has to rebuild them too.
-                **get_container_map_context(team=team, container=container, workspace=workspace),
-                "refresh": result,
-                "team_slug": team.slug,
-            },
+            tracking_panel_context(request, team=team, container=container, refresh=result),
         )
 
     _MESSAGE_LEVELS[result.level](request, result.message)

@@ -8,11 +8,23 @@ second one is answered in exactly one place.
 
 The order::
 
+    0. an explicit choice         when an administrator set one for this container,
+                                  it is the whole decision — see below
     1. the carrier's own API      when registered, able to answer by container
                                   number, and connected for this team
-    2. Traqo                      when enabled, and publishing a sealine for
+    2. the team default           Traqo, when enabled and publishing a sealine for
                                   this carrier
     3. nothing                    a clean NOT_CONFIGURED, not a guess
+
+**An explicit choice does not fall back.** Steps 1–3 are a search for somebody who
+can answer; a container whose tracking source an administrator has *chosen* is not
+a search. If the chosen provider cannot be asked — deactivated integration, Traqo
+with no sealine for the carrier, a direct provider that is not the carrier moving
+the box — routing returns an unavailable route saying so, rather than quietly
+substituting the one it would have picked anyway. Silently tracking a container
+through a provider somebody deselected is worse than not tracking it, because
+nothing on the page would say it had happened. The preference itself lives in
+:mod:`apps.scm.tracking.preferences`.
 
 Vizion is absent on purpose. It can track, and its ACI already creates the reference
 that would make tracking nearly free — but a reference is Vizion's billable unit and
@@ -64,6 +76,12 @@ DIRECT_PROVIDER_UNAVAILABLE = "DIRECT_PROVIDER_UNAVAILABLE"
 DIRECT_PROVIDER_NOT_CONNECTED = "DIRECT_PROVIDER_NOT_CONNECTED"
 NO_PROVIDER_AVAILABLE = "NO_PROVIDER_AVAILABLE"
 CARRIER_UNKNOWN = "CARRIER_UNKNOWN"
+# An administrator chose this container's provider. The second value is the one that
+# matters: it is a route with no provider, so nothing is fetched, and it is a
+# *different* answer from NO_PROVIDER_AVAILABLE — somebody's setting is wrong rather
+# than nobody being able to help.
+OVERRIDE_PROVIDER_AVAILABLE = "OVERRIDE_PROVIDER_AVAILABLE"
+OVERRIDE_PROVIDER_UNAVAILABLE = "OVERRIDE_PROVIDER_UNAVAILABLE"
 
 
 @dataclass(frozen=True)
@@ -86,7 +104,17 @@ class TrackingRoute:
     provider_reference: str = ""
     # Every provider that could have served this carrier, best first. The chosen one is
     # the first; the rest are what a fallback would try, and are worth reporting.
+    #
+    # Empty for an explicitly chosen provider, and that is the point: there is nothing
+    # a fallback may try, so there is nothing to report.
     alternatives: tuple[str, ...] = ()
+    # True when an administrator chose this container's provider rather than routing
+    # searching for one. Read by callers that must explain *why* nothing was fetched.
+    is_override: bool = False
+    # The provider that was *asked for*, when one was chosen. Kept separately because
+    # an unavailable override has no ``provider_code`` — nothing may be fetched — and
+    # the message still has to name the choice that failed.
+    requested_provider_code: str = ""
 
     @property
     def available(self) -> bool:
@@ -112,10 +140,10 @@ def resolve_tracking_route(
 ) -> TrackingRoute:
     """Choose the provider to fetch ``carrier_code``'s tracking through.
 
-    ``container`` is accepted for symmetry with the rest of the tracking layer and for
-    logging; routing does not currently vary by container, and a future rule that made it
-    vary — a carrier that only answers about boxes on a booking, say — would belong here
-    rather than at a call site.
+    ``container`` carries the one thing that makes routing vary per box: the provider an
+    administrator chose for it. Without a container there is no override to read, so the
+    answer is the team's ordinary routing — which is what every caller that does not
+    start from a container wants.
 
     Never raises. An unregistered or empty carrier gets a route with no provider and
     ``CARRIER_UNKNOWN``, because there is nothing to route.
@@ -127,8 +155,19 @@ def resolve_tracking_route(
     definition = _definition(code)
     carrier_name = definition.name if definition is not None else code
 
+    chosen = _container_override(container)
+    if chosen:
+        return _override_route(
+            team=team,
+            container=container,
+            code=code,
+            carrier_name=carrier_name,
+            definition=definition,
+            chosen=chosen,
+        )
+
     direct = _direct_route(team=team, code=code, carrier_name=carrier_name, definition=definition)
-    aggregator = _traqo_route(code=code, carrier_name=carrier_name)
+    aggregator = _team_default_route(team=team, code=code, carrier_name=carrier_name)
     alternatives = tuple(
         provider for provider in (direct[0] if direct else "", aggregator[0] if aggregator else "") if provider
     )
@@ -207,6 +246,84 @@ def get_route_for_subscription(subscription) -> TrackingRoute:
 # ---------------------------------------------------------------------------
 
 
+def _container_override(container) -> str:
+    """The provider an administrator chose for this container, or "".
+
+    Imported lazily because :mod:`.preferences` reads the containers app, and routing
+    has to stay callable from it.
+    """
+    if container is None:
+        return ""
+    from .preferences import get_container_provider_override
+
+    return get_container_provider_override(container)
+
+
+def _override_route(*, team, container, code: str, carrier_name: str, definition, chosen: str) -> TrackingRoute:
+    """Route to the provider somebody chose, or report that it cannot be asked.
+
+    No search and no fallback: the two branches are "the chosen provider can answer"
+    and "it cannot, and here is a route with no provider saying so". The second is
+    what stops a deselected provider quietly supplying a container's tracking again.
+
+    ``alternatives`` stays empty even where another provider would have worked —
+    reporting one would suggest routing is about to try it.
+    """
+    from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
+
+    if chosen == TRAQO_PROVIDER_CODE:
+        traqo = _traqo_route(code=code, carrier_name=carrier_name)
+        resolved = (traqo[0], traqo[1], AGGREGATOR, traqo[2]) if traqo is not None else None
+    else:
+        # A direct provider is only legal for the carrier that is actually moving the
+        # box: asking Maersk about a CMA CGM container is not a fallback, it is a
+        # question with no answer. Carrier identity and tracking provider are separate
+        # facts, and this is the one place the two have to agree.
+        direct = (
+            _direct_route(team=team, code=code, carrier_name=carrier_name, definition=definition)
+            if chosen == code
+            else None
+        )
+        resolved = (direct[0], direct[1], DIRECT, "") if direct is not None else None
+
+    if resolved is None:
+        logger.warning(
+            "Container %s is set to track via %s, which cannot be asked about carrier %s.",
+            container.container_id if container is not None else "-",
+            chosen,
+            code,
+        )
+        return TrackingRoute(
+            carrier_code=code,
+            carrier_name=carrier_name,
+            route_type=NONE,
+            reason=OVERRIDE_PROVIDER_UNAVAILABLE,
+            is_override=True,
+            requested_provider_code=chosen,
+        )
+
+    provider_code, provider_name, route_type, provider_reference = resolved
+    route = TrackingRoute(
+        carrier_code=code,
+        carrier_name=carrier_name,
+        provider_code=provider_code,
+        provider_name=provider_name,
+        route_type=route_type,
+        reason=OVERRIDE_PROVIDER_AVAILABLE,
+        provider_reference=provider_reference,
+        is_override=True,
+        requested_provider_code=chosen,
+    )
+    logger.info(
+        "Tracking route %s: carrier=%s chosen provider=%s (%s).",
+        container.container_id if container is not None else "-",
+        code,
+        provider_code,
+        route.reason,
+    )
+    return route
+
+
 def _definition(code: str):
     try:
         return get_carrier_definition(code)
@@ -239,6 +356,32 @@ def _direct_route(*, team, code: str, carrier_name: str, definition) -> tuple[st
         return None
 
     return code, carrier_name
+
+
+def _team_default_route(*, team, code: str, carrier_name: str) -> tuple[str, str, str] | None:
+    """Return the team's default provider for this carrier, or None.
+
+    The aggregator tier, named by ``TeamTrackingSettings.default_provider_code`` rather
+    than hardcoded — which is what makes that field a setting instead of a label. It is
+    Traqo for every team today, so the default value is Traqo and this dispatches to
+    one branch; a second aggregator that could be polled on a schedule would add one
+    here, and nothing else would change.
+    """
+    from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
+
+    from .preferences import get_team_default_provider
+
+    default = get_team_default_provider(team)
+    if default == TRAQO_PROVIDER_CODE:
+        return _traqo_route(code=code, carrier_name=carrier_name)
+
+    logger.error(
+        "Team %s has default tracking provider %r, which routing cannot reach; no aggregator route for %s.",
+        getattr(team, "pk", team),
+        default,
+        code,
+    )
+    return None
 
 
 def _traqo_route(*, code: str, carrier_name: str) -> tuple[str, str, str] | None:

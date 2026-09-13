@@ -574,11 +574,15 @@ def _run_discovery(*, team, container) -> RefreshResult:
 
         activation = activate_tracking_route(team=team, container=container, resolution=resolution)
 
-    return _describe_activation(resolution, activation, reference=reference)
+    return describe_activation(resolution, activation, reference=reference)
 
 
-def _describe_activation(resolution, activation, *, reference: str) -> RefreshResult:
-    """Report an activation attempt for a carrier that was successfully resolved."""
+def describe_activation(resolution, activation, *, reference: str) -> RefreshResult:
+    """Report an activation attempt for a carrier that was successfully resolved.
+
+    Public because two paths activate a route and both must report it the same way:
+    the refresh button's discovery, and a changed tracking-source preference in
+    :mod:`apps.scm.tracking.source_switch`."""
     checked = _carriers_checked(resolution)
     common: dict[str, Any] = {
         "carrier_code": resolution.carrier_code,
@@ -629,6 +633,15 @@ def _unactivated_message(resolution, activation) -> tuple[str, StrOrPromise]:
 
     route = activation.route
     carrier = resolution.carrier_name or resolution.carrier_code
+
+    # A chosen provider that cannot be asked is a setting somebody can fix, and it is
+    # named rather than folded into "no provider is configured" — routing deliberately
+    # did not fall back to another one, so the message has to say which choice failed.
+    if route is not None and route.reason == provider_routing.OVERRIDE_PROVIDER_UNAVAILABLE:
+        return ERROR, _(
+            "This container is set to track via %(provider)s, which cannot be asked about %(carrier)s. "
+            "Change the tracking source or activate that integration."
+        ) % {"provider": route.requested_provider_code, "carrier": carrier}
 
     if route is not None and route.reason == provider_routing.DIRECT_PROVIDER_NOT_CONNECTED:
         return WARNING, _("%(carrier)s is carrying this container, but it is not connected for this team yet.") % {

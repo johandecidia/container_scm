@@ -132,6 +132,43 @@
     </button>
   </div>
 
+  {% comment %}
+    Which provider this container is tracked through, for administrators only. The
+    server enforces that — see `tracking_source_views` — and also decides what may
+    be chosen: the team's standard routing, Traqo explicitly, and a direct carrier
+    only when it is the carrier actually moving this box and the integration is
+    active with credentials.
+
+    Separate from the carrier lines above on purpose. This says who supplies the
+    data; the carrier is who is moving the box, and the two are different facts.
+  {% endcomment %}
+  {% if can_manage_tracking_source and tracking_provider_options %}
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <span class="text-xs text-base-content/60">{% translate "Tracking via" %}</span>
+      <form
+        hx-post="{% url 'containers:set_tracking_source' container.pk %}"
+        hx-target="#container-tracking-panel"
+        hx-swap="outerHTML"
+        hx-disabled-elt="find select"
+      >
+        {% csrf_token %}
+        <select name="provider" class="select select-bordered select-sm" onchange="this.form.requestSubmit()">
+          {% for option in tracking_provider_options %}
+            <option value="{{ option.value }}" {% if option.is_selected %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+    </div>
+  {% endif %}
+
+  {% if tracking_source_error %}
+    <div role="alert" class="alert alert-error alert-soft mb-4">
+      <i class="fa fa-circle-exclamation"></i>
+      <span class="text-sm">{{ tracking_source_error }}</span>
+    </div>
+  {% endif %}
+
   {% if refresh %}
     {% include "scm/containers/partials/container_tracking_result.html" with refresh=refresh %}
   {% elif workspace.sync_problem %}

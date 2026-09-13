@@ -29,6 +29,7 @@ from apps.scm.integrations.services import (
     deactivate_integration,
     test_integration_connection,
 )
+from apps.scm.tracking.preferences import get_team_default_provider_name
 
 from .forms import CarrierCredentialForm
 from .tracking_selectors import get_carrier_settings_row, get_carrier_settings_rows
@@ -53,6 +54,7 @@ def _panel_context(request, *, notice: str = "", notice_level: str = "info") -> 
         "team": team,
         "team_slug": team.slug,
         "carrier_rows": get_carrier_settings_rows(team),
+        "default_provider_name": get_team_default_provider_name(team),
         "notice": notice,
         "notice_level": notice_level,
     }

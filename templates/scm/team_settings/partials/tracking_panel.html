@@ -20,6 +20,23 @@
     </div>
   {% endif %}
 
+  {% comment %}
+    The team's default provider: who is asked when no direct carrier integration can
+    answer for a container. Shown rather than editable because Traqo is the only
+    provider the scheduled sync can drive on its own today — a selector with one
+    option would be a choice that is not a choice. The value is stored, so changing
+    it when there is a second aggregator is a value change rather than a migration.
+  {% endcomment %}
+  <section class="app-card mb-6">
+    <h2 class="text-lg font-semibold">{% translate "Default tracking provider" %}</h2>
+    <p class="text-sm mt-1">
+      <span class="font-medium">{{ default_provider_name }}</span>
+    </p>
+    <p class="text-xs text-base-content/60 mt-1">
+      {% translate "Used when no direct carrier integration can answer for a container. A container can be set to a specific provider on its workspace." %}
+    </p>
+  </section>
+
   <section class="app-card mb-6">
     <h2 class="text-lg font-semibold">{% translate "Direct carrier integrations" %}</h2>
     <p class="text-sm text-base-content/60 mt-1">

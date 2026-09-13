@@ -5,6 +5,10 @@ from django.utils.translation import gettext_lazy as _
 # Choices only, from a module that imports no models — the canonical location
 # vocabulary is owned by the containers app and must not be restated here.
 from apps.scm.containers.choices import LocationResolutionMethod, LocationResolutionStatus
+
+# A constant, from a package whose __init__ holds nothing but constants — the default
+# tracking provider's code must not be a second spelling of Traqo's.
+from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
 from apps.teams.models import BaseTeamModel
 from apps.utils.models import BaseModel
 
@@ -37,6 +41,40 @@ class CarrierSource(models.TextChoices):
     TRAQO_PROBE = "traqo_probe", _("Traqo container tracking data")
     DIRECT_API = "direct_api", _("Direct carrier tracking events")
     VIZION_ACI = "vizion_aci", _("Vizion Auto Carrier Identification")
+
+
+class TeamTrackingSettings(BaseTeamModel):
+    """A team's default tracking provider. One row per team, one field on it.
+
+    The provider a container falls back to when no carrier can be called directly —
+    Traqo today, which is why that is the default and the only value Settings offers.
+    It is a row rather than a constant because "who do we ask when we cannot ask the
+    line" is a per-customer commercial fact, and with it in code every change of
+    aggregator would be a deployment.
+
+    Deliberately *not* a routing policy. There is no cost model, no preference order
+    and no per-carrier rules here: direct-before-aggregator is
+    :mod:`apps.scm.tracking.provider_routing`'s decision, and this only names the
+    aggregator tier it falls through to. See
+    :mod:`apps.scm.tracking.preferences` for the read and write.
+    """
+
+    default_provider_code = models.CharField(
+        _("default tracking provider"),
+        max_length=50,
+        default=TRAQO_PROVIDER_CODE,
+        help_text=_("The provider used when no direct carrier integration can answer for a container."),
+    )
+
+    class Meta:
+        verbose_name = _("Team Tracking Settings")
+        verbose_name_plural = _("Team Tracking Settings")
+        constraints = [
+            models.UniqueConstraint(fields=["team"], name="unique_team_tracking_settings"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.team}: default {self.default_provider_code}"
 
 
 class TrackingProvider(BaseModel):
