@@ -120,6 +120,108 @@ def create_integration(
     )
 
 
+def connect_carrier_integration(
+    team: Team,
+    provider_code: str,
+    credentials: dict,
+    *,
+    test_connection_reference: str = "",
+) -> Integration:
+    """Create or update a team's direct carrier integration and store its credentials.
+
+    The write behind Settings → Tracking. Four things, in one place because doing three
+    of them leaves a carrier that looks connected and cannot be tracked through:
+
+      1. the ``Integration`` row, seeded from the carrier's shipped ``default_config``
+         when it is new — an existing config is left alone, because a team may have
+         pointed it at a contracted product;
+      2. the CARRIER family and the active flags, which is what
+         ``carriers.factory.get_carrier_integration`` looks for;
+      3. the credentials, through the credential service, which encrypts them. The raw
+         values are never logged and never written to ``config``;
+      4. the ``TrackingProvider`` row a subscription has to point at.
+
+    ``credentials`` may only contain the keys the carrier's auth style reads; anything
+    else would be stored and never used. It is *merged* over what is already stored
+    rather than replacing it, so one half of a client id/secret pair can be rotated
+    without re-entering the other — which matters because the stored value is never
+    rendered back to the person doing the rotating.
+
+    ``test_connection_reference`` is a container number the account can see, written
+    to ``config`` — not a secret, and the one thing a connection test cannot be run
+    without. Two of the three carriers ship without one because a reference known to
+    an account belongs to that account, not to this repository; supplying it here is
+    what makes "Test connection" answer something other than "not configured".
+
+    Raises :class:`UnknownCarrierError` for an unregistered code and ValueError for a
+    carrier with no live configuration or for credential keys it does not read.
+    """
+    from .carriers.auto_link import get_or_create_tracking_provider
+    from .carriers.dcsa.client import credential_fields_for_auth_style
+    from .carriers.registry import get_carrier_definition
+    from .credentials import get_integration_credentials, set_integration_credentials
+    from .models import IntegrationCredential
+
+    definition = get_carrier_definition(provider_code)
+    if not definition.is_connectable:
+        raise ValueError(f"'{provider_code}' has no live configuration and cannot be connected.")
+
+    integration, created = Integration.objects.get_or_create(
+        team=team,
+        provider_code=provider_code,
+        defaults={
+            "name": definition.name,
+            "provider_family": Integration.ProviderFamily.CARRIER,
+            "api_style": Integration.ApiStyle.DCSA
+            if definition.capabilities.supports_dcsa
+            else Integration.ApiStyle.PROPRIETARY,
+            "status": Integration.Status.PENDING,
+            "config": dict(definition.default_config),
+            "is_active": True,
+        },
+    )
+    if created and test_connection_reference:
+        integration.config["test_connection_reference"] = test_connection_reference
+        integration.save(update_fields=["config", "updated_at"])
+    elif not created:
+        integration.provider_family = Integration.ProviderFamily.CARRIER
+        integration.is_active = True
+        if not integration.config:
+            integration.config = dict(definition.default_config)
+        if test_connection_reference:
+            integration.config["test_connection_reference"] = test_connection_reference
+        integration.save(update_fields=["provider_family", "is_active", "config", "updated_at"])
+
+    auth_style = str((integration.config or {}).get("auth_style") or "")
+    expected = credential_fields_for_auth_style(auth_style)
+    unexpected = set(credentials) - set(expected)
+    if unexpected:
+        raise ValueError(f"Credential fields {sorted(unexpected)} are not read by auth_style '{auth_style}'.")
+
+    auth_type = (
+        IntegrationCredential.AuthType.API_KEY
+        if expected == ("api_key",)
+        else IntegrationCredential.AuthType.OAUTH2
+        if auth_style == "oauth2_client_credentials"
+        else IntegrationCredential.AuthType.CUSTOM
+    )
+    stored = get_integration_credentials(integration) if not created else {}
+    set_integration_credentials(integration, auth_type, {**stored, **credentials})
+
+    # Tracking subscriptions point at a provider row, so a carrier that can be routed
+    # to must have one before the first activation rather than at it.
+    get_or_create_tracking_provider(carrier_code=provider_code, carrier_name=definition.name)
+
+    logger.info(
+        "Carrier integration %s (%s) %s for team %s.",
+        integration.pk,
+        provider_code,
+        "created" if created else "updated",
+        team.pk,
+    )
+    return integration
+
+
 def activate_integration(integration: Integration) -> Integration:
     integration.status = Integration.Status.ACTIVE
     integration.is_active = True

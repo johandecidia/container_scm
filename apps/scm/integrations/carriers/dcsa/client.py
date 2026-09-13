@@ -50,6 +50,28 @@ SUPPORTED_AUTH_STYLES = (AUTH_API_KEY, AUTH_OAUTH2, AUTH_CLIENT_ID_SECRET_HEADER
 DEFAULT_CLIENT_ID_HEADER = "X-IBM-Client-Id"
 DEFAULT_CLIENT_SECRET_HEADER = "X-IBM-Client-Secret"
 
+# Which credential keys each auth style actually reads — see `_build_auth` below,
+# which is the only consumer and the reason this lives here. The Settings form that
+# collects a carrier's credentials asks this rather than keeping its own table: a
+# second list would eventually offer a field the client never reads, and the person
+# filling it in would have no way to tell.
+_CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
+    AUTH_API_KEY: ("api_key",),
+    AUTH_CLIENT_ID_SECRET_HEADERS: ("client_id", "client_secret"),
+    AUTH_OAUTH2: ("client_id", "client_secret"),
+}
+
+
+def credential_fields_for_auth_style(auth_style: str) -> tuple[str, ...]:
+    """The credential keys a DCSA client built for ``auth_style`` will read.
+
+    Returns ``()`` for an unrecognised style rather than guessing — a caller with no
+    fields to collect must say the carrier cannot be configured here, not invent an
+    API key field for an auth flow that has none.
+    """
+    return _CREDENTIAL_FIELDS.get((auth_style or "").strip(), ())
+
+
 SUPPORTED_REFERENCE_KINDS = frozenset(
     {
         ReferenceKind.CONTAINER_NUMBER,

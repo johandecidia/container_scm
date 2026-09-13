@@ -13,4 +13,8 @@
      class="tab {% if active == 'members' %}tab-active{% endif %}">
     <i class="fa fa-users mr-2"></i>{% translate "Members" %}
   </a>
+  <a role="tab" href="{% url 'team_settings:tracking' %}"
+     class="tab {% if active == 'tracking' %}tab-active{% endif %}">
+    <i class="fa fa-satellite-dish mr-2"></i>{% translate "Tracking" %}
+  </a>
 </div>
