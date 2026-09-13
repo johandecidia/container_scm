@@ -19,7 +19,7 @@ from apps.scm.containers.models import Container, ContainerCondition, EquipmentT
 from apps.scm.containers.selectors import filter_containers, get_condition_options, get_default_condition
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
-from apps.teams.roles import ROLE_ADMIN
+from apps.teams.roles import ROLE_ADMIN, ROLE_MEMBER
 from apps.users.models import CustomUser
 
 OWNER = "CSQ"
@@ -344,6 +344,32 @@ class ConditionSettingsPageTest(TestCase):
         anonymous = Client()
         response = anonymous.get(reverse("containers:condition_list"))
         self.assertEqual(response.status_code, 302)
+
+    def test_a_member_without_admin_rights_cannot_reach_or_change_conditions(self):
+        """Conditions are Settings → Container settings, and Settings is admin-only.
+
+        The grading vocabulary is master data the whole team reads, so retiring or
+        renaming a value is not an operator's change to make.
+        """
+        member = CustomUser.objects.create_user(username="ops@example.com", password="pass")
+        self.team.members.add(member, through_defaults={"role": ROLE_MEMBER})
+        condition = ContainerCondition.objects.get(team=self.team, code="CW")
+        client = Client()
+        client.force_login(member)
+
+        routes = [
+            ("get", reverse("containers:condition_list")),
+            ("post", reverse("containers:condition_create")),
+            ("post", reverse("containers:condition_update", kwargs={"condition_id": condition.pk})),
+            ("post", reverse("containers:condition_deactivate", kwargs={"condition_id": condition.pk})),
+        ]
+        for method, url in routes:
+            with self.subTest(url=url):
+                self.assertEqual(getattr(client, method)(url).status_code, 404)
+
+        condition.refresh_from_db()
+        self.assertTrue(condition.is_active)
+        self.assertEqual(condition.name, "Cargo Worthy")
 
 
 class ContainerConditionMigrationTest(TransactionTestCase):

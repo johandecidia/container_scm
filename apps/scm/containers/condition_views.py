@@ -4,6 +4,11 @@
 # queries come from selectors.py, and the four views here are add, rename, retire and
 # the list they all swap back into.
 #
+# Administrator-only, like the rest of Settings: the grading vocabulary is master
+# data the whole team reads, so renaming or retiring a value is not an operator's
+# change to make. The page is Settings → Container settings, and the decorator is
+# what closes it — see apps/scm/team_settings/__init__.py.
+#
 # There is no delete. A condition containers are graded with is protected by the FK,
 # and `is_active = False` is the honest way to stop offering one — the boxes already
 # carrying it keep saying what they were graded as. See
@@ -13,7 +18,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
-from apps.scm.decorators import scm_login_required
+from apps.scm.decorators import scm_team_admin_required
 
 from .forms import ContainerConditionForm
 from .models import ContainerCondition
@@ -32,7 +37,7 @@ def _table(request, team):
     )
 
 
-@scm_login_required
+@scm_team_admin_required
 def container_condition_list(request):
     """The team's container conditions: what they are called, and what uses them."""
     team = request.default_team
@@ -43,7 +48,7 @@ def container_condition_list(request):
     )
 
 
-@scm_login_required
+@scm_team_admin_required
 def container_condition_create(request):
     """Add a condition to this team's list."""
     team = request.default_team
@@ -66,7 +71,7 @@ def container_condition_create(request):
     )
 
 
-@scm_login_required
+@scm_team_admin_required
 def container_condition_update(request, condition_id):
     """Rename, reorder or reactivate one condition.
 
@@ -101,7 +106,7 @@ def container_condition_update(request, condition_id):
     )
 
 
-@scm_login_required
+@scm_team_admin_required
 @require_POST
 def container_condition_deactivate(request, condition_id):
     """Retire a condition, or bring a retired one back.

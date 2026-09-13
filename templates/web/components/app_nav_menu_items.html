@@ -110,16 +110,6 @@
 <li class="menu-title">
   <span>{% translate "Settings" %}</span>
 </li>
-{% comment %}
-  Container Conditions sits under Settings rather than beside Containers: it is the
-  vocabulary a team grades boxes in, not a view of the fleet.
-{% endcomment %}
-<li>
-  <a href="{% url 'containers:condition_list' %}" {% if '/scm/containers/conditions/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-clipboard-check h-4 w-4"></i>
-    {% translate "Container Conditions" %}
-  </a>
-</li>
 <li>
   <a href="{% url 'imports:list' %}" {% if '/scm/imports/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-file-import h-4 w-4"></i>
@@ -133,13 +123,15 @@
   </a>
 </li>
 {% comment %}
-  Team Settings is administrator-only. The check here keeps the link out of a
-  member's sidebar; what actually closes the area is `@scm_team_admin_required` on
-  every view behind it — see apps/scm/team_settings/__init__.py.
+  Team Settings is administrator-only, and so is everything inside it — Members,
+  Tracking integrations and Container settings (the team's grading vocabulary, which
+  used to have its own entry here and is now a tab in there). The check keeps the
+  link out of a member's sidebar; what actually closes the area is
+  `@scm_team_admin_required` on every view behind it.
 {% endcomment %}
 {% if request.user|is_admin_of:request.default_team %}
 <li>
-  <a href="{% url 'team_settings:members' %}" {% if '/scm/settings/' in request.path %}class="menu-active"{% endif %}>
+  <a href="{% url 'team_settings:members' %}" {% if '/scm/settings/' in request.path or '/scm/containers/conditions/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-gear h-4 w-4"></i>
     {% translate "Team Settings" %}
   </a>
