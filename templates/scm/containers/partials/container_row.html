@@ -10,7 +10,14 @@
       {{ container.container_id }}
     </a>
   </td>
-  <td class="text-sm">{{ container.equipment_type.description|default:"—" }}</td>
+  <td class="text-sm">
+    <span
+      class="block max-w-[180px] truncate"
+      title="{{ container.equipment_type.description|default:'—' }}"
+    >
+      {{ container.equipment_type.description|default:"—" }}
+    </span>
+  </td>
   <td>{% include "scm/components/status_badge.html" with status=container.status %}</td>
   <td class="text-sm text-base-content/60">{{ container.tracking_carrier_name|default:"—" }}</td>
   <td class="text-sm whitespace-nowrap">
