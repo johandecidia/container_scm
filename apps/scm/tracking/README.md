@@ -182,6 +182,38 @@ agree today; if they ever disagree, the question that returned this box's data i
 scheduled refresh must ask again. It also closes the gap both provider READMEs recorded as
 blocking scheduled refresh: there is now somewhere to persist the SCAC and the reference id.
 
+## Scheduled refresh of an aggregator watch (TRACK-SCHED)
+
+Recording the sealine is what made Traqo pollable, and it now is. `sources.py` carries a
+per-source `scheduled_sync` capability, so the dispatcher's exclusion is about
+*fetchability* rather than about being a carrier:
+
+```
+provider outside the carrier registry
+  ├─ with a scheduled_sync   → queued and polled like any other source   (Traqo)
+  └─ without one             → excluded; a direct call skips safely      (Vizion)
+```
+
+Traqo's adapter (`integrations/traqo/scheduled.py`) supplies the one thing the carrier
+registry cannot — a fetch that takes a sealine — and returns a `SyncOutcome`. Everything
+after the fetch is the engine's: run history, typed errors, backoff, state machine,
+cadence. So there is no Traqo retry policy, no Traqo status, no Traqo interval and no
+second scheduler, and a manual refresh of an established Traqo watch converges on the
+identical provider execution.
+
+Vizion stays out on purpose: a reference is its billable unit, so a cadence would be a
+purchase. The capability is per source precisely so neither blanket rule applies.
+
+**`SyncOutcome.after_apply`** exists for one ordering rule. Traqo's ETA observation must be
+recorded *after* the outcome is applied, because whether a forecast is worth keeping
+depends on whether the same batch of events has already brought the box home. Stating it on
+the outcome means the rule is written once and holds for activation, manual refresh and the
+scheduler alike, rather than being remembered separately at three call sites.
+
+A scheduled poll re-runs **no** part of carrier discovery. The watch already records who is
+carrying the box; see `integrations/traqo/README.md` for why re-deriving it per cycle would
+be both expensive and wrong.
+
 ## Failure semantics
 
 Every step reports one of five things, and the distinctions are load-bearing:
@@ -292,7 +324,8 @@ we cannot skip one.
 1. Build the client and mapper in `integrations/<provider>/`, following Traqo's shape.
    Map to `NormalisedTrackingEvent`; do not add an event model.
 2. Register it in `tracking/sources.py` so the carrier poller steps aside rather than
-   recording a fault.
+   recording a fault. Give it a `scheduled_sync` only if refreshing an existing watch is
+   cheap enough to do on a cadence — Traqo's is a request, Vizion's is a purchase.
 3. If it can identify carriers, add a `discovery.py` returning the five-valued outcome,
    and a step in `carrier_resolution.py` at the right point in the cost order.
 4. If it can track, add a branch to `_traqo_route`'s neighbours in `provider_routing.py`

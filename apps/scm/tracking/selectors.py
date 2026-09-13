@@ -13,7 +13,7 @@ from apps.scm.integrations.carriers.registry import (
 from apps.teams.models import Team
 
 from .models import TrackingEvent, TrackingProvider, TrackingSubscription, TrackingSyncRun
-from .sources import non_carrier_provider_codes
+from .sources import unfetchable_provider_codes
 
 
 def get_team_tracking_providers(team: Team):  # noqa: ARG001 — providers are global, team arg kept for API consistency
@@ -393,15 +393,18 @@ def get_due_tracking_subscriptions(team: Team | None = None):
     """Return subscriptions that are due for syncing.
 
     A subscription is due when:
-    - its provider is one the carrier sync actually drives, and
+    - its provider is one the scheduled sync can actually fetch, and
     - status is ACTIVE or FAILED, or it has been stuck in SYNCING long enough that
       the worker holding it is presumed dead (otherwise a crashed sync would
       starve the subscription forever), and
     - next_sync_at is in the past or null.
 
-    A non-carrier provider is excluded here rather than skipped later, because a skip
-    per cycle forever is noise: the run would be correct and useless. Calling
-    ``sync_tracking_subscription`` for one directly still skips safely.
+    The provider exclusion is about *fetchability*, not about being a carrier: Traqo is
+    outside the carrier registry and is polled here like any other source, because a watch
+    that recorded its sealine can be asked the same question again. Vizion is excluded —
+    see :mod:`apps.scm.tracking.sources` — and excluded here rather than skipped later,
+    because a skip per cycle forever is noise: the run would be correct and useless.
+    Calling ``sync_tracking_subscription`` for one directly still skips safely.
 
     Concurrency is prevented by the sync lock, not by the SYNCING status.
     """
@@ -413,7 +416,7 @@ def get_due_tracking_subscriptions(team: Team | None = None):
 
     qs = (
         TrackingSubscription.objects.filter(runnable)
-        .exclude(provider__code__in=non_carrier_provider_codes())
+        .exclude(provider__code__in=unfetchable_provider_codes())
         .filter(models.Q(next_sync_at__isnull=True) | models.Q(next_sync_at__lte=now))
     )
     if team is not None:

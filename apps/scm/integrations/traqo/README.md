@@ -241,28 +241,64 @@ location-truth model is out of Phase 1 scope.
 not among them, so `resolve_sealine("evergreen")` raises rather than inventing `EGLV`.
 OOLU is the reverse case: Traqo supports it and Container SCM has no adapter.
 
-## The architectural conflict, and how far Phase 2.1 takes it
+## The architectural conflict, and how it was resolved
 
 `tracking/sync.py` resolves its client and parser through the **carrier** registry, and
-`fetch_tracking()` has no `sealine` argument. A Traqo subscription therefore cannot be
+`fetch_tracking()` has no `sealine` argument. A Traqo subscription therefore could not be
 *fetched* by the scheduled poller, and Phase 1 left it recording a SKIPPED run with
 `NOT_CONFIGURED` — which also set `tracking_status = NOT_CONFIGURED`, telling the product
 a container whose events were already stored and correct could not be tracked.
 
-Phase 2.1 separates the two facts. `tracking/sources.py` knows which providers the
-carrier sync drives, so:
+Phase 2.1 separated the two facts so the poller stepped aside instead of recording a
+fault. It stopped short of the fetch, because there was nowhere to keep the sealine; then
+TRACK-ROUTING gave `TrackingSubscription.provider_reference` exactly that job.
 
-- the scheduled poller never queues a Traqo subscription in the first place — a skip per
-  cycle forever is correct and useless;
-- a direct `sync_tracking_subscription()` call still skips safely, with the new
-  `NOT_CARRIER_POLLED` error type, and leaves `tracking_status` exactly as it was;
-- a genuinely misconfigured *carrier* still reports `NOT_CONFIGURED` and still degrades,
-  which is the behaviour that surfaces real faults.
+**TRACK-SCHED closes it.** `tracking/sources.py` now records a per-source capability
+rather than a blanket "is this an aggregator", and Traqo has it:
 
-Fetching Traqo on a schedule remains out of scope, but the reason it was *blocked* is
-gone: `TrackingSubscription.provider_reference` now holds the sealine, so a later fetch
-has what it needs to ask the same question again. Re-run `traqo_test` to refresh a Traqo
-subscription by hand in the meantime.
+| | Traqo | Vizion |
+|---|---|---|
+| in the carrier registry | no | no |
+| `scheduled_sync` | `traqo/scheduled.py` | none |
+| queued by the dispatcher | yes | no |
+| refreshed by a direct `sync_tracking_subscription()` | yes | skips, `NOT_CARRIER_POLLED` |
+
+Vizion's absence is the decision, not an omission: a reference is its billable unit, so a
+polling cadence would be a purchase. That is why the capability is per source — "all
+aggregators are schedulable" would start buying Vizion references, and "no aggregator is"
+was the bug.
+
+What Traqo supplies is one thing the registry cannot: a fetch that takes a sealine. It
+hands the result back as an ordinary `SyncOutcome`, so the run history, the typed error
+classification, the failure backoff, the subscription state machine and the polling
+cadence are all the engine's. Traqo has no retry policy, no status and no interval of its
+own, and there is no second scheduler.
+
+Three paths, one provider execution:
+
+```
+activation after discovery   ─┐
+manual refresh               ─┼─→  fetch_and_map_traqo_container
+scheduled poll               ─┘         ↓
+                                  write_traqo_response
+                                         ↓
+                              raw payload → events → ETA observation
+```
+
+They differ only in who initiates the run and whether a payload is already in hand. A
+manual refresh of an established Traqo watch used to report `not_carrier_polled` and call
+nothing; it now runs the same code the scheduler does, under the same lock.
+
+A poll is **one request** and re-runs no part of carrier discovery — no free lookup, no
+candidate probe, no direct sweep, no Vizion ACI. The watch already records who is carrying
+the box; re-deriving it per cycle would spend money to be told what it says, and would let
+a transient answer overwrite a carrier that has already proved itself.
+
+**A missing sealine is not guessed.** `resolve_watch_sealine()` reads
+`provider_reference`, or recovers it once from the canonical carrier→SCAC mapping when the
+watch records a verified `carrier_code`, and otherwise reports a configuration gap.
+Inferring a carrier from the container's owner prefix would let a poll silently re-assign
+the box — that is discovery's question, and this is not discovery.
 
 ### Traqo as a routed tracking provider (TRACK-ROUTING)
 

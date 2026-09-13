@@ -36,7 +36,7 @@ from apps.scm.tracking.selectors import (
     get_container_tracking_eta_event,
     get_tracking_events_for_container,
 )
-from apps.scm.tracking.sources import get_non_carrier_source, is_polled_by_carrier_sync
+from apps.scm.tracking.sources import get_non_carrier_source, is_polled_by_carrier_sync, unfetchable_provider_codes
 from apps.teams.models import Team
 
 FIXTURES = pathlib.Path(__file__).parents[2] / "integrations" / "tests" / "fixtures" / "vizion"
@@ -387,10 +387,13 @@ class VizionIngestionPipelineTest(TestCase):
     # Isolation from the rest of the architecture
     # ------------------------------------------------------------------
 
-    def test_the_scheduled_carrier_poller_does_not_drive_vizion(self):
+    def test_the_scheduled_poller_does_not_fetch_vizion(self):
+        """A reference is Vizion's billable unit, so a polling cadence would be a purchase."""
         self.assertFalse(is_polled_by_carrier_sync(PROVIDER_CODE))
+        self.assertIn(PROVIDER_CODE, unfetchable_provider_codes())
         source = get_non_carrier_source(PROVIDER_CODE)
         self.assertIsNotNone(source)
+        self.assertFalse(source.supports_scheduled_tracking)
         self.assertIn("vizion_test", source.refresh_hint)
 
     def test_a_stored_payload_can_be_re_read_without_refetching(self):
