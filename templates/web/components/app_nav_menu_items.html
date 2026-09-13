@@ -1,4 +1,5 @@
 {% load i18n %}
+{% load team_tags %}
 
 {% comment %}
   Primary navigation for Container SCM.
@@ -131,6 +132,19 @@
     {% translate "Integrations" %}
   </a>
 </li>
+{% comment %}
+  Team Settings is administrator-only. The check here keeps the link out of a
+  member's sidebar; what actually closes the area is `@scm_team_admin_required` on
+  every view behind it — see apps/scm/team_settings/__init__.py.
+{% endcomment %}
+{% if request.user|is_admin_of:request.default_team %}
+<li>
+  <a href="{% url 'team_settings:members' %}" {% if '/scm/settings/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-gear h-4 w-4"></i>
+    {% translate "Team Settings" %}
+  </a>
+</li>
+{% endif %}
 {% include "web/components/team_nav.html" %}
 
 {% if not user.is_anonymous %}

@@ -1,0 +1,26 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Settings → Members. Who is on the team, who may manage it, and who has been
+  invited but has not joined yet.
+
+  The page is the shell; every write swaps `#settings-members` — see the partial.
+{% endcomment %}
+
+{% block app %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold">{% translate "Settings" %}</h1>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% blocktranslate trimmed with team=team.name %}
+        Team settings for {{ team }}. Only administrators can open this area.
+      {% endblocktranslate %}
+    </p>
+  </div>
+
+  {% include "scm/team_settings/components/settings_tabs.html" with active="members" %}
+
+  <div id="settings-members">
+    {% include "scm/team_settings/partials/member_panel.html" %}
+  </div>
+{% endblock %}

@@ -11,4 +11,6 @@ urlpatterns = [
     path("procurement/", include("apps.scm.procurement.urls")),
     path("supplier-deliveries/", include("apps.scm.supplier_deliveries.urls")),
     path("visibility/", include("apps.scm.visibility.urls")),
+    # Team Settings. Admin-only throughout — see apps/scm/team_settings/__init__.py.
+    path("settings/", include("apps.scm.team_settings.urls")),
 ]

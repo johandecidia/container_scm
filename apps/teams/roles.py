@@ -31,3 +31,21 @@ def is_admin(user: CustomUser | AnonymousUser, team) -> bool:
     from .models import Membership
 
     return Membership.objects.filter(team=team, user=user, role=ROLE_ADMIN).exists()
+
+
+def admin_count(team) -> int:
+    """How many administrators a team currently has."""
+    from .models import Membership
+
+    return Membership.objects.filter(team=team, role=ROLE_ADMIN).count()
+
+
+def is_final_admin(membership) -> bool:
+    """True when removing or demoting this membership would leave the team with no admin.
+
+    A team with nobody who can manage it cannot invite, re-promote or be repaired from
+    the product at all, so this is the one membership change that is always refused.
+    Asked as a question about a membership rather than counted at each call site, so
+    "remove" and "change role" cannot disagree about what the last admin is.
+    """
+    return membership.role == ROLE_ADMIN and admin_count(membership.team) <= 1
