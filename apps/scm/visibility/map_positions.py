@@ -781,11 +781,12 @@ def _current_position(
     expects the box to be, and drawing it is the same mistake as falling back to the
     destination — which is why there is deliberately no fifth step either.
     """
-    if container.current_location_id is not None:
+    current_location = container.current_location
+    if current_location is not None:
         return MapPosition(
             container=container,
             position_class=PositionClass.PHYSICAL,
-            place=MapPlace.from_location(container.current_location),
+            place=MapPlace.from_location(current_location),
             # The movement's own time when a movement is behind the position, and the
             # container's stamp when the position predates the movement history —
             # both are records of when this became true, and neither is invented.

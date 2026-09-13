@@ -23,6 +23,11 @@ def _user(email: str) -> CustomUser:
 class SettingsAccessTest(TestCase):
     """Only administrators of the active team reach Settings."""
 
+    team: Team
+    admin: CustomUser
+    member: CustomUser
+    member_membership: Membership
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="MCR", slug="mcr-access")

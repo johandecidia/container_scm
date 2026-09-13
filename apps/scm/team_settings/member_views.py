@@ -15,6 +15,10 @@ Every write re-renders the whole members panel, so the member table, the pending
 invitations and any notice are one response and cannot drift apart.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from django.contrib import messages
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
@@ -29,13 +33,16 @@ from apps.teams.roles import ROLE_CHOICES, is_final_admin
 from .forms import SettingsInvitationForm
 from .selectors import get_admin_count, get_member_rows, get_pending_invitations
 
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
+
 MEMBERS_PAGE_TEMPLATE = "scm/team_settings/pages/members.html"
 MEMBERS_PANEL_TEMPLATE = "scm/team_settings/partials/member_panel.html"
 
 FINAL_ADMIN_MESSAGE = _("This is the team's only administrator. Make another member an administrator first.")
 
 
-def _panel_context(request, *, invitation_form=None, notice: str = "") -> dict:
+def _panel_context(request, *, invitation_form=None, notice: StrOrPromise = "") -> dict:
     """Everything the members panel renders, for a page load or an HTMX swap."""
     team = request.default_team
     return {
@@ -54,7 +61,7 @@ def _panel(request, **kwargs):
     return render(request, MEMBERS_PANEL_TEMPLATE, _panel_context(request, **kwargs))
 
 
-def _respond(request, *, notice: str = "", level=messages.success, message=None, **kwargs):
+def _respond(request, *, notice: StrOrPromise = "", level=messages.success, message=None, **kwargs):
     """Swap the panel back for HTMX; fall back to a message and a redirect otherwise."""
     if request.htmx:
         return _panel(request, notice=notice, **kwargs)

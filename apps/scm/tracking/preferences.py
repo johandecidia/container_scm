@@ -43,6 +43,8 @@ from apps.scm.integrations.traqo import PROVIDER_NAME as TRAQO_PROVIDER_NAME
 from .models import TeamTrackingSettings
 
 if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
+
     from apps.scm.containers.models import Container
     from apps.teams.models import Team
 
@@ -63,9 +65,12 @@ class ProviderOption:
     """One choice on the container's "Tracking via" selector."""
 
     value: str
-    label: str
+    # Display text, so a lazy translation is a legal value: the option is built here
+    # and rendered in a request, and forcing it to ``str`` now would resolve it in
+    # whatever language the builder happened to run in.
+    label: StrOrPromise
     # Why this one is currently selected, or "" — used only for the help line.
-    detail: str = ""
+    detail: StrOrPromise = ""
     is_selected: bool = False
 
     @property

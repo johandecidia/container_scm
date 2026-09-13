@@ -9,12 +9,19 @@ than from a list of its own, so the form can only ever ask for credentials the
 client will actually read.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
 from apps.teams.forms import InvitationForm
 
 from .tracking_selectors import MASKED_PLACEHOLDER, CarrierSettingsRow
+
+if TYPE_CHECKING:
+    from django_stubs_ext import StrOrPromise
 
 
 class SettingsInvitationForm(InvitationForm):
@@ -33,7 +40,7 @@ class SettingsInvitationForm(InvitationForm):
 
 # What each credential key is called in the UI, and the hint that stops somebody
 # pasting the wrong half of a portal credential pair into it.
-CREDENTIAL_LABELS: dict[str, str] = {
+CREDENTIAL_LABELS: dict[str, StrOrPromise] = {
     "api_key": _("API key"),
     "client_id": _("Client ID"),
     "client_secret": _("Client secret"),

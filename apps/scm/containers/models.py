@@ -619,7 +619,10 @@ class Container(BaseTeamModel):
         """
         if self.condition_id is None or self.team_id is None:
             return
-        if self.condition.team_id != self.team_id:
+        condition = self.condition
+        if condition is None:
+            return
+        if condition.team_id != self.team_id:
             raise ValidationError({"condition": _("That condition belongs to another team.")})
 
     def save(self, *args, **kwargs):

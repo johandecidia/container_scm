@@ -43,6 +43,7 @@ from apps.scm.visibility.location_quality import (
     get_location_quality_summary,
     has_unmatched_evidence,
 )
+from apps.teams.models import Team
 
 from .factories import (
     TEST_STORAGES,
@@ -792,6 +793,8 @@ class LocationQualityIsolationTest(TestCase):
 
 class LocationQualityQueryTest(TestCase):
     """The page is built from aggregates, so its cost cannot follow the data."""
+
+    team: Team
 
     @classmethod
     def setUpTestData(cls):

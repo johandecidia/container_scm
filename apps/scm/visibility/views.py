@@ -170,7 +170,10 @@ def visibility_map_location_panel(request, position_class: str, location_id: int
         (
             candidate
             for candidate in operational_map.groups
-            if candidate.position_class == position_class and candidate.location.pk == location.pk
+            # ``location_id`` rather than the location itself: a reported place has no
+            # canonical row behind it, and no marker panel to open either, so it can
+            # never be the group an id in the URL is asking for.
+            if candidate.position_class == position_class and candidate.location_id == location.pk
         ),
         None,
     )

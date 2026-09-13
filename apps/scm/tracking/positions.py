@@ -13,6 +13,7 @@ expected to show it. Nothing here upgrades a facility coordinate into a GPS fix.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import cast
 
@@ -40,7 +41,9 @@ class ContainerPosition:
     """The last place a container was reported, with the quality of that report."""
 
     position_type: str
-    observed_at: object | None = None
+    # When the report was made. Both producers carry a stamp off a model field or a
+    # journey point, so this is a datetime or nothing — never a date or a string.
+    observed_at: datetime | None = None
     location_name: str = ""
     location_unlocode: str = ""
     latitude: Decimal | None = None

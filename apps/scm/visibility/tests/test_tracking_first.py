@@ -246,6 +246,8 @@ class ReportedPositionOnBothSurfacesTest(TestCase):
 class TrackingInclusionTest(TestCase):
     """Which containers the Tracking view is about, and which it refuses."""
 
+    team: Team
+
     @classmethod
     def setUpTestData(cls):
         cls.user, cls.team = make_user_and_team("incl@example.com", "incl-team")
@@ -382,6 +384,8 @@ class TrackingCountTest(TestCase):
 class ArrivalOrderingTest(TestCase):
     """Soonest arrival first, then whatever we have heard from most recently."""
 
+    team: Team
+
     @classmethod
     def setUpTestData(cls):
         cls.user, cls.team = make_user_and_team("ord@example.com", "ord-team")
@@ -456,6 +460,8 @@ class MapFollowsTheSelectedViewTest(TestCase):
     ETA has moved. All three are placeable, so a map that ignored the view would
     happily draw all three whichever button was pressed.
     """
+
+    team: Team
 
     @classmethod
     def setUpTestData(cls):
@@ -563,6 +569,8 @@ class TrackingViewQueryCountTest(TestCase):
     workspaces carry every subscription — and this is what stops that regressing into
     a per-container ``exists()``.
     """
+
+    team: Team
 
     @classmethod
     def setUpTestData(cls):

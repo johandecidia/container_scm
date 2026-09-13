@@ -202,12 +202,14 @@ class VisibilityOverview:
         Built here rather than in the template so the order and the counts are the
         read model's answer, and Tracking leads wherever this is rendered.
         """
-        counts = {
+        counts: dict[VisibilityView, int] = {
             VisibilityView.TRACKING: len(self.tracking_objects),
             VisibilityView.EXCEPTIONS: self.exception_total,
             VisibilityView.DELAYED: self.delayed_total,
         }
-        return [(value, str(VisibilityView(value).label), counts[value]) for value in VisibilityView.values]
+        # Iterating the enum rather than ``.values`` keeps the key a member, which is
+        # what ``counts`` is keyed by. Same three views, same declaration order.
+        return [(view.value, str(view.label), counts[view]) for view in VisibilityView]
 
     @property
     def arriving_soon(self) -> list[VisibilityObject]:

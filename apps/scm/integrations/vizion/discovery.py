@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import TypedDict
 
 from apps.scm.integrations.carriers.exceptions import CarrierConfigurationError, CarrierError
 from apps.scm.integrations.carriers.registry import get_carrier_definition, resolve_carrier_code_from_scac
@@ -82,6 +83,23 @@ class VizionCarrierIdentification:
     def reference_created(self) -> bool:
         """True when a billable Vizion reference now exists for this container."""
         return bool(self.reference_id)
+
+
+class _AciFacts(TypedDict):
+    """What every answered ACI attempt carries, whatever it concluded.
+
+    A TypedDict rather than a plain dict so the four ``**`` expansions below stay
+    checked against :class:`VizionCarrierIdentification`'s own field types: these are
+    the fields that are true of the attempt rather than of the verdict, and a typo in
+    one of them would otherwise only surface as a missing piece of billing evidence.
+    """
+
+    container_number: str
+    reference_id: str
+    aci_state: str
+    polls: int
+    waited_seconds: float
+    evidence: dict
 
 
 def identify_carrier(
@@ -145,7 +163,7 @@ def identify_carrier(
         )
 
     reference = result.reference
-    common = {
+    common: _AciFacts = {
         "container_number": number,
         "reference_id": reference.reference_id,
         "aci_state": reference.aci_state,
