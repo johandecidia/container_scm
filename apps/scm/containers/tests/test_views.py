@@ -3,7 +3,7 @@
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
@@ -162,7 +162,7 @@ class ContainerUpdateTest(TestCase):
             "container_id_input": f"UPDU111111{check}",
             "equipment_type": _et().pk,
             "status": "AVAILABLE",
-            "condition": "FAIR",
+            "condition": ContainerCondition.objects.get(team=self.team, code="WW").pk,
             "color_system": "UNKNOWN",
         }
         response = client.post(url, data=data, HTTP_HX_REQUEST="true")
@@ -170,7 +170,7 @@ class ContainerUpdateTest(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response["HX-Refresh"], "true")
         self.container.refresh_from_db()
-        self.assertEqual(self.container.condition, "FAIR")
+        self.assertEqual(self.container.condition.code, "WW")
 
 
 @override_settings(STORAGES=_TEST_STORAGES)

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import intake_views, location_views, views
+from . import condition_views, intake_views, location_views, views
 
 app_name = "containers"
 
@@ -25,6 +25,16 @@ urlpatterns = [
     path("discovery/add/", views.planned_container_add, name="discovery_add"),
     path("discovery/run/", views.planned_container_run_discovery, name="discovery_run"),
     path("discovery/<int:pk>/cancel/", views.planned_container_cancel, name="discovery_cancel"),
+    # Container conditions — the team's own grading vocabulary, under Settings.
+    # There is deliberately no delete route; retiring is `condition_deactivate`.
+    path("conditions/", condition_views.container_condition_list, name="condition_list"),
+    path("conditions/create/", condition_views.container_condition_create, name="condition_create"),
+    path("conditions/<int:condition_id>/edit/", condition_views.container_condition_update, name="condition_update"),
+    path(
+        "conditions/<int:condition_id>/deactivate/",
+        condition_views.container_condition_deactivate,
+        name="condition_deactivate",
+    ),
     # Container locations. `create` is declared before `<int:location_id>` so the
     # literal segment is matched first; the detail route is the Location Workspace.
     path("locations/", location_views.container_location_list, name="location_list"),

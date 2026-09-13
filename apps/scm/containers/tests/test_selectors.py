@@ -3,8 +3,8 @@
 from django.core.exceptions import ObjectDoesNotExist
 from django.test import TestCase
 
-from apps.scm.containers.choices import ContainerCondition, ContainerStatus
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.choices import ContainerStatus
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.selectors import (
     filter_containers,
     get_active_equipment_types,
@@ -14,6 +14,11 @@ from apps.scm.containers.selectors import (
 )
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
+
+
+def _condition(team, code="NEW") -> ContainerCondition:
+    """One of the team's own conditions, seeded when the team was created."""
+    return ContainerCondition.objects.get(team=team, code=code)
 
 
 def _et(iso_code="20GP", length_ft=20, category="GP") -> EquipmentType:
@@ -95,7 +100,7 @@ class FilterContainersTest(TestCase):
             owner="CSQ",
             serial="305418",
             status=ContainerStatus.AVAILABLE,
-            condition=ContainerCondition.NEW,
+            condition=_condition(cls.team, "NEW"),
             location_text="Rotterdam",
             manufacturer="CIMC",
         )
@@ -107,7 +112,7 @@ class FilterContainersTest(TestCase):
             check_digit=calculate_check_digit("MSC", "U", "999999"),
             equipment_type=et_40hc,
             status=ContainerStatus.IN_TRANSIT,
-            condition=ContainerCondition.GOOD,
+            condition=_condition(cls.team, "CW"),
             location_text="Hamburg",
             manufacturer="Singamas",
         )
@@ -121,7 +126,8 @@ class FilterContainersTest(TestCase):
         self.assertIn(self.c1, qs)
 
     def test_filter_by_condition(self):
-        qs = filter_containers(self.team, condition=ContainerCondition.NEW)
+        # Filtered by code, which is what the query string carries.
+        qs = filter_containers(self.team, condition="NEW")
         self.assertEqual(qs.count(), 1)
         self.assertIn(self.c1, qs)
 

@@ -20,7 +20,7 @@ from apps.scm.containers.intake import (
     preview_containers,
     split_container_numbers,
 )
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
@@ -30,6 +30,11 @@ _TEST_STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+
+
+def _condition(team, code="NEW") -> ContainerCondition:
+    """One of the team's own conditions, seeded when the team was created."""
+    return ContainerCondition.objects.get(team=team, code=code)
 
 
 def _number(owner: str, serial: str, category: str = "U") -> str:
@@ -150,7 +155,8 @@ class CreateOrGetContainerTest(TestCase):
         container, _created = create_or_get_container(team=self.team, user=self.user, number=VALID_A)
         self.assertEqual(container.equipment_type, _et())
         self.assertEqual(container.status, "AVAILABLE")
-        self.assertEqual(container.condition, "GOOD")
+        # The team's first active condition, not a value baked into the model.
+        self.assertEqual(container.condition, _condition(self.team, "NEW"))
         self.assertEqual(container.created_by, self.user)
 
     def test_lowercase_input_creates_the_same_container(self):
@@ -189,13 +195,13 @@ class CreateOrGetContainerTest(TestCase):
             number=VALID_A,
             attributes={
                 "equipment_type": _et_alt(),
-                "condition": "FAIR",
+                "condition": _condition(self.team, "CW"),
                 "color_code": "5010",
                 "color_system": "RAL",
             },
         )
         self.assertEqual(container.equipment_type, _et_alt())
-        self.assertEqual(container.condition, "FAIR")
+        self.assertEqual(container.condition, _condition(self.team, "CW"))
         self.assertEqual(container.color_code, "5010")
         self.assertEqual(container.color_system, "RAL")
 
@@ -203,12 +209,12 @@ class CreateOrGetContainerTest(TestCase):
         """An import is not an edit — the existing row may have been corrected by hand."""
         first, _created = create_or_get_container(team=self.team, user=self.user, number=VALID_A)
         second, created = create_or_get_container(
-            team=self.team, user=self.user, number=VALID_A, attributes={"condition": "DAMAGED"}
+            team=self.team, user=self.user, number=VALID_A, attributes={"condition": _condition(self.team, "AI")}
         )
         self.assertFalse(created)
         self.assertEqual(second.pk, first.pk)
         second.refresh_from_db()
-        self.assertEqual(second.condition, "GOOD")
+        self.assertEqual(second.condition, _condition(self.team, "NEW"))
 
     def test_chosen_carrier_is_recorded_as_the_carrier_to_ask(self):
         from apps.scm.containers.models import PlannedContainer
@@ -329,7 +335,7 @@ class BulkCreateContainersTest(TestCase):
             entries=entries_from_text(f"{VALID_A}\n{VALID_B}"),
             attributes={
                 "equipment_type": _et_alt(),
-                "condition": "FAIR",
+                "condition": _condition(self.team, "CW"),
                 "color_code": "5010",
                 "color_system": "RAL",
             },
@@ -337,7 +343,7 @@ class BulkCreateContainersTest(TestCase):
         self.assertEqual(result.created_count, 2)
         containers = Container.objects.filter(team=self.team)
         self.assertEqual({c.equipment_type_id for c in containers}, {_et_alt().pk})
-        self.assertEqual({c.condition for c in containers}, {"FAIR"})
+        self.assertEqual({c.condition for c in containers}, {_condition(self.team, "CW")})
         self.assertEqual({c.color_display for c in containers}, {"RAL5010"})
 
 
@@ -425,7 +431,7 @@ class IntakeViewTest(TestCase):
             data={
                 "container_number": VALID_A,
                 "equipment_type": _et_alt().pk,
-                "condition": "FAIR",
+                "condition": _condition(self.team, "CW").pk,
                 "color_code": "5010",
                 "color_system": "RAL",
             },
@@ -434,14 +440,14 @@ class IntakeViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         container = Container.objects.get(team=self.team, serial_number="925896")
         self.assertEqual(container.equipment_type, _et_alt())
-        self.assertEqual(container.condition, "FAIR")
+        self.assertEqual(container.condition, _condition(self.team, "CW"))
         self.assertEqual(container.color_display, "RAL5010")
 
     def test_single_submit_without_attributes_still_uses_the_defaults(self):
         self.client.post(reverse("containers:create"), data={"container_number": VALID_A}, HTTP_HX_REQUEST="true")
         container = Container.objects.get(team=self.team, serial_number="925896")
         self.assertEqual(container.equipment_type, _et())
-        self.assertEqual(container.condition, "GOOD")
+        self.assertEqual(container.condition, _condition(self.team, "NEW"))
         self.assertEqual(container.color_display, "")
 
     def test_number_check_reports_valid_parts(self):
@@ -501,7 +507,8 @@ class IntakeViewTest(TestCase):
         self.assertEqual(Container.objects.filter(team=self.team).count(), 2)
 
     def test_attributes_survive_the_preview_step(self):
-        attributes = {"condition": "FAIR", "color_code": "5010", "color_system": "RAL"}
+        condition = _condition(self.team, "CW")
+        attributes = {"condition": condition.pk, "color_code": "5010", "color_system": "RAL"}
         preview_response = self.client.post(
             reverse("containers:import_paste"),
             data={"numbers": f"{VALID_A}\n{VALID_B}", **attributes},
@@ -517,7 +524,7 @@ class IntakeViewTest(TestCase):
         )
         self.assertEqual(response.context["result"].created_count, 2)
         containers = Container.objects.filter(team=self.team)
-        self.assertEqual({c.condition for c in containers}, {"FAIR"})
+        self.assertEqual({c.condition for c in containers}, {condition})
         self.assertEqual({c.color_display for c in containers}, {"RAL5010"})
 
     def test_confirm_with_an_invalid_attribute_imports_nothing(self):

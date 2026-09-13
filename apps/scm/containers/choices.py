@@ -31,12 +31,11 @@ class ContainerStatus(TextChoices):
     DECOMMISSIONED = "DECOMMISSIONED", _("Decommissioned")
 
 
-class ContainerCondition(TextChoices):
-    NEW = "NEW", _("New")
-    IICL = "IICL", _("IICL")
-    CW = "CW", _("Cargo Worthy")
-    WW = "WW", _("Wind & Water Tight")
-    AI = "AI", _("As is")
+# There is deliberately no ContainerCondition enum here. Conditions are a team's own
+# master data — a row in `apps.scm.containers.models.ContainerCondition`, editable
+# from Settings — because teams do not share one grading vocabulary and a shipped
+# enum made every disagreement a code change. The set a new team starts with lives in
+# `apps.scm.containers.conditions`.
 
 
 class ColorSystem(TextChoices):

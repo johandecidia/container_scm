@@ -24,7 +24,8 @@
       <span class="text-base-content/40">○ {% translate "Not tracked" %}</span>
     {% endif %}
   </td>
-  <td class="text-sm">{{ container.get_condition_display }}</td>
+  {# The condition's own name, retired or not: a row must keep saying what it was graded as. #}
+  <td class="text-sm">{{ container.condition|default:"—" }}</td>
   <td class="text-sm text-base-content/60 whitespace-nowrap">{{ container.color_display|default:"—" }}</td>
   <td class="text-sm text-base-content/60">{{ container.current_location.name|default:"—" }}</td>
   <td class="text-sm text-base-content/60">{{ container.manufacturer|default:"—" }}</td>

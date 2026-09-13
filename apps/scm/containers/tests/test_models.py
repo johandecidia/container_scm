@@ -5,7 +5,7 @@ from django.db import IntegrityError
 from django.db.models import ProtectedError
 from django.test import TestCase
 
-from apps.scm.containers.choices import ColorSystem, ContainerCondition, ContainerStatus
+from apps.scm.containers.choices import ColorSystem, ContainerStatus
 from apps.scm.containers.models import Container, EquipmentType, PlannedContainer, PlannedContainerStatus
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import BaseTeamModel, Team
@@ -169,9 +169,15 @@ class ContainerModelTest(TestCase):
         c = self._create()
         self.assertEqual(c.status, ContainerStatus.AVAILABLE)
 
-    def test_default_condition_good(self):
+    def test_no_condition_unless_one_is_given(self):
+        """Conditions are team master data, so the model has no default to guess with.
+
+        The fallback lives in the intake — see
+        `apps.scm.containers.selectors.get_default_condition` — because only something
+        that knows the team can pick one.
+        """
         c = self._create()
-        self.assertEqual(c.condition, ContainerCondition.GOOD)
+        self.assertIsNone(c.condition)
 
     def test_ordering_newest_first(self):
         self.assertEqual(Container._meta.ordering, ["-created_at"])

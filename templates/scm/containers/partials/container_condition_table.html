@@ -1,0 +1,74 @@
+{% load i18n %}
+
+{% comment %}
+  The conditions, with how many containers carry each.
+
+  The count is the reason there is no delete button. A condition in use is protected
+  by the foreign key, so the honest action is to retire it: the containers already
+  graded with it keep showing it, and it stops being offered for new ones. A retired
+  row says so and can be brought back.
+
+  Annotated in one query by get_conditions_with_usage, so a team with a long list
+  does not issue a count per row.
+{% endcomment %}
+
+{% if conditions %}
+  <div class="overflow-x-auto" id="condition-table">
+    <table class="table table-zebra w-full">
+      <thead>
+        <tr>
+          <th>{% translate "Name" %}</th>
+          <th>{% translate "Code" %}</th>
+          <th>{% translate "Active" %}</th>
+          <th class="text-right">{% translate "Order" %}</th>
+          <th class="text-right">{% translate "Containers" %}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for condition in conditions %}
+          <tr id="condition-row-{{ condition.pk }}">
+            <td class="font-medium">{{ condition.name }}</td>
+            <td class="text-sm font-mono text-base-content/60">{{ condition.code }}</td>
+            <td>
+              {% if condition.is_active %}
+                <span class="badge badge-success badge-sm">{% translate "Active" %}</span>
+              {% else %}
+                <span class="badge badge-ghost badge-sm">{% translate "Inactive" %}</span>
+              {% endif %}
+            </td>
+            <td class="text-sm text-right tabular-nums text-base-content/60">{{ condition.sort_order }}</td>
+            <td class="text-sm text-right tabular-nums">{{ condition.container_count }}</td>
+            <td class="text-right">
+              <div class="flex justify-end gap-1">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title="{% translate 'Edit condition' %}"
+                  hx-get="{% url 'containers:condition_update' condition.pk %}"
+                  hx-target="#modal-container"
+                  hx-swap="innerHTML"
+                >
+                  <i class="fa fa-edit"></i>
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs {% if not condition.is_active %}text-success{% else %}text-warning{% endif %}"
+                  hx-post="{% url 'containers:condition_deactivate' condition.pk %}"
+                  hx-target="#condition-table"
+                  hx-swap="outerHTML"
+                  title="{% if condition.is_active %}{% translate 'Deactivate' %}{% else %}{% translate 'Activate' %}{% endif %}"
+                >
+                  <i class="fa {% if condition.is_active %}fa-toggle-on{% else %}fa-toggle-off{% endif %}"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  {% url 'containers:condition_create' as condition_create_url %}
+  <div id="condition-table">
+    {% include "scm/components/empty_state.html" with icon="fa-clipboard-check" title=_("No conditions yet") message=_("Add a condition to start grading containers.") action_htmx_get=condition_create_url action_label=_("Add Condition") action_icon="fa-plus" %}
+  </div>
+{% endif %}

@@ -9,7 +9,6 @@ from .choices import (
     OBSERVED_LOCATION_SOURCES,
     ColorSystem,
     ContainerCategory,
-    ContainerCondition,
     ContainerStatus,
     EquipmentCategory,
     LocationSource,
@@ -408,6 +407,52 @@ class EquipmentType(models.Model):
         return self.image.url if self.image else None
 
 
+class ContainerCondition(BaseTeamModel):
+    """The grades a team describes its containers in — its own master data.
+
+    This was a ``TextChoices`` enum. Teams do not share one grading vocabulary: one
+    sells against IICL criteria, another keeps an in-house scale, and with the list
+    shipped in code every disagreement was a deployment. So it is a table, scoped to
+    the team, editable from Settings.
+
+    ``code`` is stable internal identity and is never the thing being read for its
+    own sake; ``name`` is what an operator sees and may rename whenever the wording
+    is wrong, which is the point of moving this into the database at all.
+
+    **Deliberately inert.** Nothing in the domain branches on a condition — not
+    repairability, not sellability, not lifecycle. It is a label a team applies to a
+    box. The moment code reads ``condition.code`` to decide something, renaming a row
+    stops being safe and this stops being master data.
+
+    A condition in use is never deleted; ``is_active = False`` retires it. Old
+    containers keep showing what they were graded as, and the value stops being
+    offered for new ones — see :func:`apps.scm.containers.selectors.get_condition_options`.
+    """
+
+    code = models.CharField(
+        _("code"),
+        max_length=30,
+        help_text=_("Stable internal identity, e.g. CW. Changing it is not the same as renaming."),
+    )
+    name = models.CharField(_("name"), max_length=100, help_text=_("What operators see. Safe to change."))
+    sort_order = models.PositiveIntegerField(_("sort order"), default=0)
+    is_active = models.BooleanField(_("active"), default=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "code"],
+                name="unique_container_condition_code_per_team",
+            )
+        ]
+        verbose_name = _("Container Condition")
+        verbose_name_plural = _("Container Conditions")
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Container(BaseTeamModel):
     """A physical shipping container identified by an ISO 6346 container ID."""
 
@@ -434,11 +479,13 @@ class Container(BaseTeamModel):
         choices=ContainerStatus.choices,
         default=ContainerStatus.AVAILABLE,
     )
-    condition = models.CharField(
-        _("condition"),
-        max_length=10,
-        choices=ContainerCondition.choices,
-        default=ContainerCondition.NEW,
+    condition = models.ForeignKey(
+        ContainerCondition,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="containers",
+        verbose_name=_("condition"),
     )
 
     color_code = models.CharField(_("color code"), max_length=50, blank=True)
@@ -491,7 +538,11 @@ class Container(BaseTeamModel):
         indexes = [
             models.Index(fields=["team", "owner_code", "category_id", "serial_number"]),
             models.Index(fields=["team", "status"]),
-            models.Index(fields=["team", "condition"]),
+            # Named explicitly. The column changed from `condition` to `condition_id`
+            # when conditions became master data, so the auto-generated name this
+            # index used to carry no longer describes it; a name in the model is one
+            # less hash to reconcile when the index has to be rebuilt.
+            models.Index(fields=["team", "condition"], name="container_team_condition_idx"),
             models.Index(fields=["team", "equipment_type"]),
             models.Index(fields=["team", "current_location"]),
             models.Index(fields=["team", "last_location_update"]),
@@ -535,6 +586,21 @@ class Container(BaseTeamModel):
             self.serial_number,
             self.check_digit,
         )
+        self._validate_condition_team()
+
+    def _validate_condition_team(self) -> None:
+        """A container may only be graded with its own team's condition.
+
+        Declared on the model rather than only on the form, because ``save`` calls
+        ``full_clean`` and so this holds for every writer — a form, an importer, the
+        admin, a shell session. Conditions are master data per tenant; a container
+        pointing at another team's row would leak one team's vocabulary into another
+        team's page, and nothing in the FK itself prevents it.
+        """
+        if self.condition_id is None or self.team_id is None:
+            return
+        if self.condition.team_id != self.team_id:
+            raise ValidationError({"condition": _("That condition belongs to another team.")})
 
     def save(self, *args, **kwargs):
         self.owner_code = self.owner_code.upper()

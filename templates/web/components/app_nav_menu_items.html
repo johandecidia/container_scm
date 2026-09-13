@@ -53,7 +53,7 @@
   <span>{% translate "Supply Chain" %}</span>
 </li>
 <li>
-  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path and '/discovery/' not in request.path and '/locations/' not in request.path %}class="menu-active"{% endif %}>
+  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path and '/discovery/' not in request.path and '/locations/' not in request.path and '/conditions/' not in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-box h-4 w-4"></i>
     {% translate "Containers" %}
   </a>
@@ -108,6 +108,16 @@
 {% endcomment %}
 <li class="menu-title">
   <span>{% translate "Settings" %}</span>
+</li>
+{% comment %}
+  Container Conditions sits under Settings rather than beside Containers: it is the
+  vocabulary a team grades boxes in, not a view of the fleet.
+{% endcomment %}
+<li>
+  <a href="{% url 'containers:condition_list' %}" {% if '/scm/containers/conditions/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-clipboard-check h-4 w-4"></i>
+    {% translate "Container Conditions" %}
+  </a>
 </li>
 <li>
   <a href="{% url 'imports:list' %}" {% if '/scm/imports/' in request.path %}class="menu-active"{% endif %}>

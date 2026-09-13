@@ -50,7 +50,7 @@
 
     <div>
       <dt class="text-xs text-base-content/60">{% translate "Condition" %}</dt>
-      <dd class="font-medium text-sm">{{ container.get_condition_display }}</dd>
+      <dd class="font-medium text-sm">{{ container.condition|default:"—" }}</dd>
     </div>
 
     {% comment %}

@@ -34,6 +34,7 @@ from .movements import record_container_movement
 from .selectors import (
     filter_containers,
     get_active_equipment_types,
+    get_condition_options,
     get_container_workspace,
 )
 from .services import delete_container, update_container
@@ -78,6 +79,10 @@ def container_list(request):
         "containers": page_obj,
         "page_obj": page_obj,
         "equipment_types": get_active_equipment_types(),
+        # The filter offers the team's active conditions. A container graded with a
+        # retired one still shows it in its row; what is gone is the option to filter
+        # a whole list down to a value nobody is meant to choose any more.
+        "conditions": get_condition_options(team),
         "locations": get_team_locations(team),
         "location_types": LocationType.choices,
         "saved_filters": saved_filters,

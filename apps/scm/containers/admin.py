@@ -1,6 +1,21 @@
 from django.contrib import admin
 
-from .models import Container, ContainerLocation, ContainerMovement, EquipmentType, LocationAlias
+from .models import (
+    Container,
+    ContainerCondition,
+    ContainerLocation,
+    ContainerMovement,
+    EquipmentType,
+    LocationAlias,
+)
+
+
+@admin.register(ContainerCondition)
+class ContainerConditionAdmin(admin.ModelAdmin):
+    list_display = ["name", "code", "team", "sort_order", "is_active"]
+    list_filter = ["is_active", "team"]
+    search_fields = ["name", "code"]
+    readonly_fields = ["created_at", "updated_at"]
 
 
 @admin.register(EquipmentType)
@@ -55,6 +70,7 @@ class ContainerAdmin(admin.ModelAdmin):
         "location_text",
         "current_location__name",
     ]
+    list_select_related = ["condition", "equipment_type", "current_location", "team"]
     readonly_fields = ["created_at", "updated_at", "created_by", "updated_by"]
 
 

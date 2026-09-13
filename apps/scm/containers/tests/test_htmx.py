@@ -5,7 +5,7 @@ from pathlib import Path
 from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
@@ -103,7 +103,8 @@ class ContainerHtmxTest(TestCase):
                 "container_id_input": VALID_ID,
                 "equipment_type": et.pk,
                 "status": "BOOKED",
-                "condition": "GOOD",
+                # The team's own condition, seeded when the team was created.
+                "condition": ContainerCondition.objects.get(team=self.team, code="CW").pk,
                 "color_system": "UNKNOWN",
             },
             HTTP_HX_REQUEST="true",

@@ -30,7 +30,7 @@ from apps.teams.models import Team
 from apps.users.models import CustomUser
 
 from .models import Container
-from .selectors import get_default_equipment_type
+from .selectors import get_default_condition, get_default_equipment_type
 from .services import create_container
 from .utils import parse_container_id, validate_container_id
 
@@ -261,6 +261,11 @@ def create_or_get_container(
         equipment_type = chosen.pop("equipment_type", None) or get_default_equipment_type()
         if equipment_type is None:
             raise ValidationError(_("No equipment types are configured, so containers cannot be created yet."))
+        # The team's own first condition when the intake did not pick one. Unlike
+        # equipment type this is not required — a team may legitimately have retired
+        # every condition, and a container with none recorded is a valid, honest row.
+        chosen.setdefault("condition", None)
+        chosen["condition"] = chosen["condition"] or get_default_condition(team)
         try:
             # Its own transaction: a number that lost a race must not poison a
             # surrounding bulk import.

@@ -13,7 +13,8 @@ from .location_identity import (
     normalize_location_name,
     normalize_unlocode,
 )
-from .models import Container, ContainerLocation, EquipmentType, LocationAlias
+from .models import Container, ContainerCondition, ContainerLocation, EquipmentType, LocationAlias
+from .selectors import get_condition_options
 from .utils import parse_container_id, validate_container_id
 
 MAX_PASTED_CONTAINERS = 500
@@ -30,6 +31,10 @@ class ContainerAttributesForm(forms.Form):
     Every field is optional on purpose. Left alone, equipment type falls back to the
     configured default and the rest to the model's own, which is what quick
     registration did before these fields existed.
+
+    The condition list is this team's own master data, so the form needs the team to
+    know what to offer. Scoped on the queryset rather than only in ``clean``, so
+    another team's condition is neither listed nor accepted when posted.
     """
 
     ATTRIBUTE_FIELDS = ("equipment_type", "condition", "color_code", "color_system")
@@ -41,13 +46,11 @@ class ContainerAttributesForm(forms.Form):
         empty_label=_("— Default type —"),
         widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
     )
-    condition = forms.ChoiceField(
+    condition = forms.ModelChoiceField(
         label=_("Condition"),
-        choices=[
-            ("", _("— Default condition —")),
-            *cast(list[tuple[str, str]], Container._meta.get_field("condition").choices),
-        ],
+        queryset=ContainerCondition.objects.none(),
         required=False,
+        empty_label=_("— Default condition —"),
         widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
     )
     color_code = forms.CharField(
@@ -65,6 +68,12 @@ class ContainerAttributesForm(forms.Form):
         required=False,
         widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
     )
+
+    def __init__(self, *args, team=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        cast(forms.ModelChoiceField, self.fields["condition"]).queryset = (
+            ContainerCondition.objects.none() if team is None else get_condition_options(team)
+        )
 
     @property
     def attribute_fields(self) -> list[forms.BoundField]:
@@ -84,10 +93,11 @@ class ContainerAttributesForm(forms.Form):
         """The same choices as plain form values, for re-submitting them after a preview.
 
         A preview is its own request, so what was chosen on the way in has to travel
-        with the previewed list to survive the trip back to the confirm.
+        with the previewed list to survive the trip back to the confirm. Model choices
+        travel as their primary key — the same thing the select posted.
         """
         return {
-            name: value.pk if name == "equipment_type" else value for name, value in self.container_attributes().items()
+            name: value.pk if hasattr(value, "pk") else value for name, value in self.container_attributes().items()
         }
 
 
@@ -203,9 +213,11 @@ class ContainerForm(forms.Form):
         choices=cast(list[tuple[str, str]], Container._meta.get_field("status").choices),
         widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
-    condition = forms.ChoiceField(
+    condition = forms.ModelChoiceField(
         label=_("Condition"),
-        choices=cast(list[tuple[str, str]], Container._meta.get_field("condition").choices),
+        queryset=ContainerCondition.objects.none(),
+        required=False,
+        empty_label=_("— No condition —"),
         widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
     color_code = forms.CharField(
@@ -260,11 +272,23 @@ class ContainerForm(forms.Form):
             location_field.queryset = ContainerLocation.objects.filter(
                 team_id=instance.team_id, is_active=True
             ).order_by("name")
+
+        # Conditions are team master data, so the list is this team's — active ones,
+        # plus whatever this container is already graded as. A retired condition has
+        # to stay selectable on the container carrying it, or opening the edit form
+        # would silently propose clearing a value nobody meant to change.
+        condition_team = team or (instance.team if instance is not None and instance.team_id else None)
+        cast(forms.ModelChoiceField, self.fields["condition"]).queryset = (
+            ContainerCondition.objects.none()
+            if condition_team is None
+            else get_condition_options(condition_team, instance.condition_id if instance is not None else None)
+        )
+
         if instance is not None:
             self.fields["container_id_input"].initial = instance.container_id
             self.fields["equipment_type"].initial = instance.equipment_type_id
             self.fields["status"].initial = instance.status
-            self.fields["condition"].initial = instance.condition
+            self.fields["condition"].initial = instance.condition_id
             self.fields["color_code"].initial = instance.color_code
             self.fields["color_system"].initial = instance.color_system
             self.fields["manufacture_date"].initial = instance.manufacture_date
@@ -297,7 +321,7 @@ class ContainerForm(forms.Form):
             "check_digit": parts["check_digit"],
             "equipment_type": self.cleaned_data["equipment_type"],
             "status": self.cleaned_data["status"],
-            "condition": self.cleaned_data["condition"],
+            "condition": self.cleaned_data.get("condition"),
             "color_code": self.cleaned_data.get("color_code", ""),
             "color_system": self.cleaned_data.get("color_system", ""),
             "manufacture_date": self.cleaned_data.get("manufacture_date"),
@@ -444,6 +468,53 @@ class PlannedContainerForm(forms.Form):
 
     def clean_container_number(self) -> str:
         return self.cleaned_data["container_number"].upper().strip()
+
+
+class ContainerConditionForm(forms.ModelForm):
+    """Add or rename one of a team's container conditions.
+
+    The name is first and the code second because that is the order they matter in:
+    the name is what everybody reads and is meant to be changed, the code is identity
+    and is not. The hint under the code says so, because "why can I not just fix this
+    to CWO" is the question the field invites.
+
+    Uniqueness is checked here rather than left to the database. ``team`` is not a
+    field on this form — it comes from the request — so ``ModelForm.validate_unique``
+    cannot see the ``(team, code)`` constraint, and a collision would surface as an
+    IntegrityError instead of a message against the box that caused it.
+    """
+
+    class Meta:
+        model = ContainerCondition
+        fields = ["name", "code", "sort_order", "is_active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "input input-bordered w-full", "placeholder": "Cargo Worthy"}),
+            "code": forms.TextInput(
+                attrs={"class": "input input-bordered w-full uppercase font-mono", "placeholder": "CW"}
+            ),
+            "sort_order": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 0}),
+        }
+
+    def __init__(self, *args, team=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.team = team or (self.instance.team if self.instance and self.instance.team_id else None)
+
+    def clean_code(self) -> str:
+        code = (self.cleaned_data.get("code") or "").strip().upper()
+        if not code:
+            raise forms.ValidationError(_("A condition needs a code."))
+        clashes = ContainerCondition.objects.filter(team=self.team, code=code)
+        if self.instance.pk:
+            clashes = clashes.exclude(pk=self.instance.pk)
+        if clashes.exists():
+            raise forms.ValidationError(_("This team already uses that code for another condition."))
+        return code
+
+    def clean_name(self) -> str:
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError(_("A condition needs a name."))
+        return name
 
 
 class ParentLocationChoiceField(forms.ModelChoiceField):
