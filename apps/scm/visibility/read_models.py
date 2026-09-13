@@ -24,6 +24,8 @@ from apps.scm.shipments.models import Shipment
 from apps.scm.tracking.delay_detection import DelayReport
 from apps.scm.tracking.exception_detection import ExceptionIssue, ExceptionReport
 
+from .arrival_lifecycle import ArrivalProgress, ArrivalState
+
 
 class ObjectKind(TextChoices):
     SHIPMENT = "shipment", _("Shipment")
@@ -112,6 +114,12 @@ class VisibilityObject:
     shipment: Shipment | None = None
     delay: DelayReport | None = None
     exceptions: ExceptionReport | None = None
+
+    # The inbound arrival lifecycle for this object's containers, attached by the
+    # selectors that build it — see :func:`~apps.scm.visibility.selectors.attach_arrival_progress`.
+    # None means nobody has interpreted it yet, which is not the same as "not
+    # arrived": the properties below say so rather than guessing.
+    arrival: ArrivalProgress | None = None
 
     # -- identity ----------------------------------------------------------
 
@@ -202,6 +210,42 @@ class VisibilityObject:
     def route_label(self) -> str:
         return self.shipment.route_label if self.shipment else ""
 
+    # The canonical destination, kept strictly separate from the text above. Where a
+    # shipment has both, they are two different statements — what the carrier called
+    # the place and which place MCR decided that is — and neither stands in for the
+    # other. Where it has only text, the canonical accessors are empty rather than
+    # matched by name, which is the false positive the canonical layer prevents.
+
+    @property
+    def destination_location(self):
+        return self.shipment.destination_location if self.shipment else None
+
+    @property
+    def destination_location_id(self) -> int | None:
+        return self.shipment.destination_location_id if self.shipment else None
+
+    @property
+    def origin_location(self):
+        return self.shipment.origin_location if self.shipment else None
+
+    @property
+    def destination_label(self) -> str:
+        """The best available name for where this is going.
+
+        The canonical location wins when there is one: it is the place operations
+        will act on, and it is the name that distinguishes two terminals in one
+        city. The reported text is the fallback, not a supplement — printing both
+        would read as two destinations.
+        """
+        location = self.destination_location
+        if location is not None:
+            return location.name
+        return self.destination
+
+    @property
+    def has_canonical_destination(self) -> bool:
+        return self.destination_location_id is not None
+
     # -- carrier and carriage ---------------------------------------------
 
     @property
@@ -215,6 +259,42 @@ class VisibilityObject:
     @property
     def is_tracked(self) -> bool:
         return any(workspace.is_tracked for workspace in self.workspaces)
+
+    @property
+    def is_actively_tracked(self) -> bool:
+        """True when at least one of this object's containers is still being watched.
+
+        What the Control Tower's Tracking view is built from. Read off
+        :attr:`~apps.scm.containers.workspace.ContainerWorkspace.has_live_tracking`,
+        which reads
+        :data:`~apps.scm.tracking.selectors.LIVE_SUBSCRIPTION_STATUSES` — so there is
+        one definition of being tracked and the board cannot develop a second.
+
+        Deliberately not a status. ``Container.status`` and ``Shipment.status`` are
+        set by hand and by transport rules; neither is evidence that anybody is
+        fetching anything, and a board that read IN_TRANSIT as "tracked" would list
+        boxes no carrier has been asked about for a month.
+
+        *Any* container, not all: a shipment one of whose boxes is still being
+        watched is still something the platform is receiving news about, and dropping
+        it because the other nineteen finished would hide the leg still running.
+        """
+        return any(workspace.has_live_tracking for workspace in self.workspaces)
+
+    @property
+    def tracking_provider_label(self) -> str:
+        """Where this object's tracking data comes from — "Traqo Ocean", "Direct API".
+
+        Provenance, shown *beside* the carrier and never instead of it. Which of the
+        two a name answers for is decided in
+        :class:`~apps.scm.tracking.selectors.TrackingProvenance`; this is the second
+        of its three questions reaching the board.
+        """
+        for workspace in self.workspaces:
+            label = workspace.tracking_provider_label
+            if label:
+                return label
+        return ""
 
     @property
     def vessel_name(self) -> str:
@@ -323,6 +403,57 @@ class VisibilityObject:
         """How much later arrival is expected than first forecast, or None."""
         current, original = self.current_eta, self.original_eta
         return (current - original).days if current and original else None
+
+    # -- arrival lifecycle -------------------------------------------------
+    #
+    # Read straight off the attached :class:`ArrivalProgress`. Nothing is derived
+    # here a second time: the interpreter in
+    # :mod:`apps.scm.visibility.arrival_lifecycle` decides what EXPECTED, ARRIVING,
+    # ARRIVED and RECEIVED mean, and every consumer — the arrivals queue, the
+    # Control Tower, the workspaces, the attention queue — reads that one answer.
+
+    @property
+    def arrival_state(self) -> str:
+        """The lifecycle state, or EXPECTED where nothing has interpreted it.
+
+        EXPECTED rather than an empty string, because it is the honest default: an
+        object in the visibility layer is inbound, and the states that say otherwise
+        require evidence.
+        """
+        return self.arrival.state if self.arrival is not None else ArrivalState.EXPECTED
+
+    @property
+    def arrival_state_label(self) -> str:
+        return str(ArrivalState(self.arrival_state).label)
+
+    @property
+    def has_arrived(self) -> bool:
+        """True when every container has accepted arrival evidence at the destination."""
+        return self.arrival is not None and self.arrival.has_arrived
+
+    @property
+    def is_received(self) -> bool:
+        return self.arrival is not None and self.arrival.is_received
+
+    @property
+    def is_awaiting_receipt(self) -> bool:
+        return self.arrival is not None and self.arrival.is_awaiting_receipt
+
+    @property
+    def is_arrival_overdue(self) -> bool:
+        """The ETA has passed and nothing has physically arrived at the destination.
+
+        Kept apart from :attr:`is_delayed`, which is the delay engine's verdict about
+        a date having moved. A shipment whose vessel arrived on time and whose boxes
+        have not reached the depot is overdue here and not delayed there, and the two
+        facts are both worth having.
+        """
+        return self.arrival is not None and self.arrival.is_overdue
+
+    @property
+    def can_detect_arrival(self) -> bool:
+        """True when there is a canonical destination to have arrived at."""
+        return self.arrival is not None and self.arrival.is_evaluable
 
     # -- freshness ---------------------------------------------------------
 

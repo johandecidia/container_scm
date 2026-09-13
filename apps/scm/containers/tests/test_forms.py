@@ -25,11 +25,13 @@ def _base_data(container_id=None, **kwargs) -> dict:
     if container_id is None:
         container_id = VALID_ID
     et = _et()
+    # No condition: it is a team's own master data, so a form built without a team
+    # offers none and the field is optional. Team-scoped conditions have their own
+    # tests in test_conditions.py.
     data = {
         "container_id_input": container_id,
         "equipment_type": et.pk,
         "status": "AVAILABLE",
-        "condition": "GOOD",
         "color_system": "UNKNOWN",
     }
     data.update(kwargs)

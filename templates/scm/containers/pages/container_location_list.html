@@ -1,12 +1,24 @@
 {% extends "scm/base.html" %}
 {% load i18n %}
 
+{% comment %}
+  The canonical locations, with a pointer to the data-quality work behind them.
+
+  This page used to carry its own table of external place names nothing claimed.
+  LOC-5 replaced that with the Location Data Quality queue, which aggregates the
+  same evidence, counts the containers behind it and can act on it — so what is left
+  here is a link carrying the counts. One aggregation, one place to fix it.
+
+  The pointer is only rendered when there is something in it, so a team with
+  complete location data sees no permanent nag.
+{% endcomment %}
+
 {% block app %}
   <div class="flex items-center justify-between mb-6">
     <div>
       <h1 class="text-2xl font-bold">{% translate "Locations" %}</h1>
       <p class="text-sm text-base-content/60 mt-1">
-        {% translate "Every place containers are recorded. Open one to see what is standing there and what has moved." %}
+        {% translate "Every place containers are recorded. Open one to see what is standing there, what is expected and what has moved." %}
       </p>
     </div>
     <button
@@ -25,6 +37,10 @@
       {% include "scm/containers/partials/container_location_table.html" %}
     </div>
   </section>
+
+  {% if quality.has_gaps %}
+    {% include "scm/containers/partials/location_quality_pointer.html" %}
+  {% endif %}
 
   <div id="modal-container"></div>
 {% endblock %}

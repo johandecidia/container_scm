@@ -26,27 +26,45 @@
 <div id="visibility-board" class="contents" data-scm-map-source="{{ map_data_url }}">
 
   {% comment %}
-    1. Status. Every card is an action, and since UX-3 the operational three drill
-    down into the work queues rather than filtering this board: the Control Tower is
-    the summary, and the queues are where the work is done. The two totals lead out
-    to the lists they count.
+    1. Status. Every card is an action.
 
-    Delayed goes to the same queue as Exceptions with its issue filter applied — a
-    delay is one of the things that queue is about, not a separate destination.
+    Tracking leads, and since TRACK-UX it is the card the board's own default state
+    corresponds to: what the platform is actively watching is the first thing an
+    operator wants to know, and it counts distinct containers under a live watch —
+    see VisibilityOverview.tracking_container_count, which is where "one box, two
+    sources, one tracked container" is decided.
+
+    Tracking, Delayed and Exceptions switch this board's view; the arrival cards
+    still drill into the Arrivals queue, and Active shipments into the shipments
+    list. That is a change from UX-3, where the operational three all left for a
+    queue: the three now have a view here to switch to, and the queues are still one
+    click away from the section headers below.
+
+    Since LOC-3 the two arrival cards are the arrival lifecycle's own numbers rather
+    than an ETA comparison of their own. "Arriving ≤7d" counts what is still
+    outstanding, so a shipment gated in on Monday stops being counted as Wednesday's
+    work; "Awaiting receipt" is the gap between a box landing and somebody taking it
+    into their records.
   {% endcomment %}
-  <div class="order-1 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-1 lg:grid-cols-5">
+  <div class="order-1 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-1 lg:grid-cols-6">
+    {% include "scm/components/metric_card.html" with label=_("Tracking") value=overview.tracking_container_count icon="fa-satellite-dish" color="success" href=overview_url|add:"?view=tracking" %}
     {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" href=shipments_url %}
-    {# Short label on purpose: a longer one pushes the card's icon past its edge at phone width. #}
-    {% include "scm/components/metric_card.html" with label=_("Containers") value=overview.tracked_containers icon="fa-box" href=containers_url %}
     {% include "scm/components/metric_card.html" with label=_("Arriving ≤7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" href=arrivals_url %}
-    {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed|length icon="fa-clock" color="warning" href=exceptions_url|add:"?issue=delay" %}
-    {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exceptions|length icon="fa-triangle-exclamation" color="error" href=exceptions_url %}
+    {% include "scm/components/metric_card.html" with label=_("Awaiting receipt") value=overview.awaiting_receipt|length icon="fa-clipboard-check" color="info" href=arrivals_url|add:"?window=30&state=arrived" %}
+    {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed_total icon="fa-clock" color="warning" href=overview_url|add:"?view=delayed" %}
+    {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exception_total icon="fa-triangle-exclamation" color="error" href=overview_url|add:"?view=exceptions" %}
   </div>
 
   {% comment %}
-    2. Filters. Local to this board: they narrow what is shown, they do not search
-    the platform. `hx-push-url` keeps the filter state in the address bar so a
-    selection can be linked and bookmarked.
+    2. The view, then the filters. Local to this board: they narrow what is shown,
+    they do not search the platform. `hx-push-url` keeps the state in the address bar
+    so a selection can be linked and bookmarked.
+
+    The view is a one-of choice and renders as one: three buttons, exactly one
+    selected, in the same form as the filters — so a filter change keeps the view and
+    a view change keeps the filters. The counts are the read model's, taken before
+    this board narrowed anything, so Exceptions still reads 3 while Tracking is on
+    screen. That is the number that makes the button worth pressing.
   {% endcomment %}
   <div class="order-2 lg:col-span-3 lg:row-start-2">
     <form
@@ -57,6 +75,32 @@
       hx-push-url="true"
       hx-trigger="change, keyup changed delay:400ms from:input[name='search']"
     >
+      {% comment %}
+        Radios rather than buttons, and the reason is the form. A submit button and a
+        hidden input would both be named `view` and both be sent, leaving which one
+        won to parameter order; one checked radio out of three sends exactly one
+        value, and it survives a change to any other control on this row.
+
+        The input is `sr-only` rather than `hidden` so the group stays keyboard- and
+        screen-reader-operable; the label around it is what carries the styling and
+        the count.
+      {% endcomment %}
+      <div class="join" role="group" aria-label="{% translate 'Operational view' %}">
+        {% for value, label, count in overview.view_choices %}
+          <label class="btn join-item btn-sm {% if overview.view == value %}btn-primary{% endif %}">
+            <input
+              type="radio"
+              name="view"
+              value="{{ value }}"
+              class="sr-only"
+              {% if overview.view == value %}checked{% endif %}
+            >
+            {{ label }}
+            <span class="badge badge-xs {% if overview.view != value %}badge-ghost{% endif %}">{{ count }}</span>
+          </label>
+        {% endfor %}
+      </div>
+
       <select name="status" class="select select-sm select-bordered w-auto" aria-label="{% translate 'Status' %}">
         <option value="">{% translate "Any status" %}</option>
         {% for value, label in overview.status_choices %}
@@ -78,16 +122,6 @@
         <option value="30" {% if filters.eta_window == "30" %}selected{% endif %}>{% translate "Next 30 days" %}</option>
         <option value="overdue" {% if filters.eta_window == "overdue" %}selected{% endif %}>{% translate "Overdue" %}</option>
       </select>
-
-      <label class="label cursor-pointer gap-2 py-0">
-        <input type="checkbox" name="delayed" value="1" class="checkbox checkbox-sm checkbox-warning" {% if filters.delayed_only %}checked{% endif %}>
-        <span class="label-text text-xs">{% translate "Delayed" %}</span>
-      </label>
-
-      <label class="label cursor-pointer gap-2 py-0">
-        <input type="checkbox" name="exceptions" value="1" class="checkbox checkbox-sm checkbox-error" {% if filters.exceptions_only %}checked{% endif %}>
-        <span class="label-text text-xs">{% translate "Exceptions" %}</span>
-      </label>
 
       {# Grows to take the rest of the row, and pushes Clear to the far end. #}
       <input
@@ -142,9 +176,16 @@
     {% endif %}
   </section>
 
-  {# 5. Everything else. Useful, and deliberately last. #}
+  {% comment %}
+    5. The selected view itself — the list the map beside it is drawn from.
+
+    Titled after the view rather than "Active supply chain", because the three views
+    are three different lists and a heading that stayed the same would leave the
+    reader to work out which one they were looking at. Soonest arrival first,
+    whatever the view: see selectors.sort_by_arrival.
+  {% endcomment %}
   <section class="order-7 scm-panel lg:col-span-3 lg:row-start-6">
-    {% include "scm/components/section_header.html" with title=_("Active supply chain") count=overview.objects|length %}
+    {% include "scm/components/section_header.html" with title=overview.view_label count=overview.objects|length subtitle=_("Soonest arrival first") %}
     {% if overview.objects %}
       <ul class="divide-y divide-base-200">
         {% for object in overview.objects %}
@@ -152,9 +193,9 @@
         {% endfor %}
       </ul>
     {% elif filters.is_active %}
-      {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("Nothing matches these filters") message=_("Clear a filter to widen the search.") %}
+      {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("Nothing matches these filters") message=_("Clear a filter or choose another view to widen the search.") %}
     {% else %}
-      {% include "scm/components/empty_state.html" with icon="fa-ship" title=_("Nothing is being tracked yet") message=_("Book a shipment or start tracking a container and it will appear here.") action_url=containers_url action_label=_("Go to containers") %}
+      {% include "scm/components/empty_state.html" with icon="fa-satellite-dish" title=_("Nothing is being tracked yet") message=_("Start tracking a container or book a shipment and it will appear here.") action_url=containers_url action_label=_("Go to containers") %}
     {% endif %}
   </section>
 </div>

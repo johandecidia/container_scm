@@ -170,24 +170,41 @@ def discover_journey_continuation(
 
 
 def get_recently_checked_carrier_codes(team: Team, container: Container, *, now=None) -> frozenset[str]:
-    """Return the provider codes just polled for this container and found wanting.
+    """Return the *carrier* codes just polled for this container and found wanting.
 
     These are left out of the sweep. They are this container's own sources, asked
     moments ago by the refresh that led here: they had their chance to explain the
     gap and did not, so asking them again inside the same minute buys nothing and
     costs a call against the team's rate limit.
 
+    Carrier codes, not provider codes, and the distinction is load-bearing now that the
+    two can differ. The sweep excludes *carriers*, so a container watched through Traqo
+    under ONE has to contribute ``one`` — contributing ``traqo`` would exclude nothing,
+    and the sweep would go on to probe ONE directly moments after Traqo answered about
+    it. A direct watch contributes the same code either way, which is why this was
+    invisible until an aggregator could carry a carrier.
+
     A source that has *not* been polled recently stays in the sweep. It may know
     something now that it did not last week, and excluding it permanently would be
     the "found once, never look again" rule this feature exists to avoid.
     """
+    from apps.scm.integrations.carriers.registry import resolve_carrier_code
+
     now = now or timezone.now()
     cutoff = now - timedelta(minutes=RECENTLY_CHECKED_MINUTES)
-    return frozenset(
-        subscription.provider.code
-        for subscription in get_verified_container_subscriptions(team, container)
-        if subscription.provider_id and subscription.last_synced_at and subscription.last_synced_at >= cutoff
-    )
+
+    codes: set[str] = set()
+    for subscription in get_verified_container_subscriptions(team, container):
+        if not (subscription.provider_id and subscription.last_synced_at and subscription.last_synced_at >= cutoff):
+            continue
+        # The watch's own carrier where it has one; otherwise the provider code read as a
+        # carrier, which is correct for a direct watch and yields nothing for an
+        # aggregator whose carrier is genuinely unknown. Excluding nothing is the right
+        # answer there: we do not know which carrier was covered, so we cannot skip one.
+        code = subscription.carrier_code or resolve_carrier_code(subscription.provider.code)
+        if code:
+            codes.add(code)
+    return frozenset(codes)
 
 
 # ---------------------------------------------------------------------------

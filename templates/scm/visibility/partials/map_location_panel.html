@@ -1,0 +1,125 @@
+{% load i18n %}
+
+{% comment %}
+  What one map marker expands into: the containers of one position class standing
+  at — or heading for — one canonical location.
+
+  Rendered by Django rather than assembled in JavaScript, so it uses the same
+  components as the rest of SCM and every carrier-supplied string is escaped by the
+  template engine.
+
+  The heading states the kind of claim before it states the place. "84 containers
+  at Oceanterminalen" and "84 containers bound for Oceanterminalen" are two very
+  different sentences, and a panel that opened with the place name would leave the
+  reader to guess which one they were looking at.
+
+  Every row leads to the Container Workspace. That is where a container is
+  understood and acted on; this panel is a way into it, not a second detail page.
+{% endcomment %}
+
+<section class="app-card">
+  <div class="mb-4 flex items-start justify-between gap-4">
+    <div>
+      <div class="flex flex-wrap items-center gap-2">
+        {% if position_class == "physical" %}
+          <span class="badge badge-sm badge-success badge-soft">● {% translate "Physical location" %}</span>
+        {% elif position_class == "tracking" %}
+          <span class="badge badge-sm badge-info badge-soft">◇ {% translate "Tracking position" %}</span>
+        {% else %}
+          <span class="badge badge-sm badge-warning badge-soft">▣ {% translate "Destination" %}</span>
+        {% endif %}
+        {% if group.overdue_count %}
+          <span class="badge badge-sm badge-warning badge-soft">
+            {% blocktranslate trimmed count count=group.overdue_count %}
+              {{ count }} overdue
+            {% plural %}
+              {{ count }} overdue
+            {% endblocktranslate %}
+          </span>
+        {% endif %}
+      </div>
+      <h2 class="mt-1 text-lg font-semibold">{{ location.full_name }}</h2>
+      <p class="text-xs text-base-content/60">
+        {% if location.unlocode %}{{ location.unlocode }} · {% endif %}{{ location.get_location_type_display }}
+      </p>
+    </div>
+    <div class="flex shrink-0 gap-2">
+      <a href="{% url 'containers:location_detail' location.pk %}" class="btn btn-outline btn-sm">
+        {% translate "Open location" %}
+      </a>
+      <button
+        type="button"
+        class="btn btn-ghost btn-sm"
+        onclick="this.closest('#visibility-object-panel').innerHTML = ''"
+        aria-label="{% translate 'Close' %}"
+      >
+        <i class="fa fa-times"></i>
+      </button>
+    </div>
+  </div>
+
+  {% if group %}
+    {% comment %}
+      The wording is load-bearing. A canonical coordinate is the terminal's, not
+      the container's, so the panel says the boxes are *at* the place rather than
+      quoting a position for each of them.
+    {% endcomment %}
+    <p class="text-sm text-base-content/70">
+      {% if position_class == "destination" %}
+        {% blocktranslate trimmed count count=group.count with place=location.name %}
+          {{ count }} container is bound for {{ place }}. This is where it is going, not where it is now.
+        {% plural %}
+          {{ count }} containers are bound for {{ place }}. This is where they are going, not where they are now.
+        {% endblocktranslate %}
+      {% elif position_class == "tracking" %}
+        {% blocktranslate trimmed count count=group.count with place=location.name %}
+          {{ count }} container was last reported at {{ place }} by its carrier.
+        {% plural %}
+          {{ count }} containers were last reported at {{ place }} by their carriers.
+        {% endblocktranslate %}
+      {% else %}
+        {% blocktranslate trimmed count count=group.count with place=location.name %}
+          {{ count }} container has been accepted at {{ place }}.
+        {% plural %}
+          {{ count }} containers have been accepted at {{ place }}.
+        {% endblocktranslate %}
+      {% endif %}
+    </p>
+
+    <ul class="mt-3 max-h-[22rem] divide-y divide-base-200 overflow-y-auto">
+      {% for position in group.positions %}
+        <li class="flex items-start justify-between gap-3 py-2">
+          <div class="min-w-0">
+            <a href="{% url 'containers:detail' position.container_id %}" class="link font-mono text-sm font-medium">
+              {{ position.container_number }}
+            </a>
+            <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
+              {% include "scm/visibility/components/arrival_state_badge.html" with object=position %}
+            </div>
+            {% if position.detail or position.source_label %}
+              <p class="mt-0.5 truncate text-xs text-base-content/60">
+                {{ position.detail }}{% if position.detail and position.source_label %} · {% endif %}{{ position.source_label }}
+              </p>
+            {% endif %}
+          </div>
+          <div class="shrink-0 text-right text-xs text-base-content/60">
+            {% if position.occurred_at %}
+              {% blocktranslate trimmed with ago=position.occurred_at|timesince %}{{ ago }} ago{% endblocktranslate %}
+              <span class="block text-base-content/40">{{ position.occurred_at|date:"d M H:i" }}</span>
+            {% elif position.eta %}
+              {% translate "ETA" %} {{ position.eta|date:"d M Y" }}
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    {% comment %}
+      The marker was real when the map drew it. A filter change, or a movement in
+      between, can empty it — which is a state, not an error.
+    {% endcomment %}
+    <p class="py-6 text-center text-sm text-base-content/50">
+      {% translate "Nothing here matches the current filters any more." %}
+    </p>
+  {% endif %}
+</section>

@@ -36,9 +36,11 @@ from .factories import (
     ingest_maersk_events,
     maersk_payload,
     make_container,
+    make_location,
     make_provider,
     make_user_and_team,
     payload_in_transit,
+    place_container_at,
 )
 
 
@@ -71,6 +73,17 @@ class EndToEndVisibilityTest(TestCase):
         )
         cls.subscription = ingest_maersk_events(cls.team, cls.container, shipment=cls.shipment)
 
+        # The canonical destination and the accepted physical position. Since LOC-4
+        # the operational map draws canonical places, so an end-to-end test of it
+        # has to establish them — a carrier's raw coordinates deliberately are not
+        # enough on their own.
+        cls.terminal = make_location(
+            cls.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        cls.shipment.destination_location = cls.terminal
+        cls.shipment.save(update_fields=["destination_location"])
+        place_container_at(cls.team, cls.container, cls.terminal)
+
     def setUp(self):
         self.client = Client()
         self.client.force_login(self.user)
@@ -100,11 +113,22 @@ class EndToEndVisibilityTest(TestCase):
         self.assertEqual(obj.current_status, "Gate In")
         self.assertEqual(obj.voyage_number, "623W")
 
-    def test_the_overview_map_endpoint_serves_the_shipment(self):
+    def test_the_operational_map_endpoint_serves_the_accepted_position(self):
         response = self.client.get(reverse("visibility:map_data"))
         features = response.json()["features"]
         self.assertEqual(len(features), 1)
-        self.assertEqual(features[0]["properties"]["label"], "SHP-E2E")
+        self.assertEqual(features[0]["properties"]["location_name"], "Oceanterminalen")
+        self.assertEqual(features[0]["properties"]["position_class"], "physical")
+
+    def test_the_map_endpoint_does_not_serve_destinations_unless_asked(self):
+        """The container is at its destination and the marker is still one marker.
+
+        Two markers would double-count the box: "where is it" and "where is it
+        going" would both be answered by the same dot.
+        """
+        response = self.client.get(reverse("visibility:map_data"))
+        classes = {f["properties"]["position_class"] for f in response.json()["features"]}
+        self.assertEqual(classes, {"physical"})
 
     def test_the_shipment_map_endpoint_serves_its_journey(self):
         response = self.client.get(reverse("visibility:shipment_map_data", args=[self.shipment.pk]))

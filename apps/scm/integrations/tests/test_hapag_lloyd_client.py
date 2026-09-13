@@ -1,8 +1,12 @@
-"""Tests for the Hapag-Lloyd carrier, the second user of the shared DCSA pipeline.
+"""Tests for the Hapag-Lloyd carrier, a user of the shared DCSA pipeline.
 
-These focus on what is genuinely Hapag-Lloyd's own — its identity, capabilities and
-fixture — plus enough transport coverage to prove the shared client is actually
-wired up. The transport itself is tested once, against Maersk.
+These focus on what is genuinely Hapag-Lloyd's own — its identity, capabilities,
+gateway authentication and response shape — plus enough transport coverage to prove
+the shared client is actually wired up. The transport itself is tested once, against
+Maersk.
+
+The end-to-end path (persistence, location resolution, discovery, coexistence with
+Traqo) is in ``test_hapag_lloyd_pipeline.py``. No test here makes a live call.
 """
 
 import json
@@ -19,7 +23,11 @@ from apps.scm.integrations.carriers.exceptions import (
     CarrierRateLimitError,
     CarrierTimeoutError,
 )
-from apps.scm.integrations.carriers.hapag_lloyd.client import HapagLloydClient, resolve_config
+from apps.scm.integrations.carriers.hapag_lloyd.client import (
+    TRACK_AND_TRACE_CONFIG,
+    HapagLloydClient,
+    resolve_config,
+)
 from apps.scm.integrations.carriers.hapag_lloyd.parser import HapagLloydParser
 from apps.scm.integrations.carriers.registry import get_carrier_definition
 from apps.scm.integrations.credentials import set_integration_credentials
@@ -28,6 +36,8 @@ from apps.teams.models import Team
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "carriers"
 API_KEY = "hapag-secret-key"
+CLIENT_ID = "hapag-client-id"
+CLIENT_SECRET = "hapag-client-secret"
 
 # Placeholder endpoint values; the real ones come from the Hapag-Lloyd API portal.
 CONFIG = {
@@ -40,6 +50,16 @@ CONFIG = {
         "bill_of_lading_number": "transportDocumentReference",
     },
     "test_connection_reference": "HLXU1234567",
+    "max_retries": 1,
+    "retry_backoff_seconds": 0,
+}
+
+# The live shape: the gateway's two credential headers, against a placeholder host.
+GATEWAY_CONFIG = {
+    **TRACK_AND_TRACE_CONFIG,
+    "base_url": "https://example.invalid/hapag",
+    "tracking_path": "/events",
+    "test_connection_reference": "HLXU8891233",
     "max_retries": 1,
     "retry_backoff_seconds": 0,
 }
@@ -72,7 +92,7 @@ def _team(slug: str) -> Team:
     return Team.objects.get_or_create(slug=slug, defaults={"name": slug})[0]
 
 
-def _client(team, session=None, config=None) -> HapagLloydClient:
+def _client(team, session=None, config=None, credentials=None) -> HapagLloydClient:
     integration = Integration.objects.create(
         team=team,
         name="Hapag-Lloyd",
@@ -82,8 +102,27 @@ def _client(team, session=None, config=None) -> HapagLloydClient:
         config=config or CONFIG,
         is_active=True,
     )
-    set_integration_credentials(integration, IntegrationCredential.AuthType.API_KEY, {"api_key": API_KEY})
+    set_integration_credentials(
+        integration,
+        IntegrationCredential.AuthType.API_KEY,
+        credentials if credentials is not None else {"api_key": API_KEY},
+    )
     return HapagLloydClient(integration, session=session)
+
+
+def _gateway_client(team, session=None, config=None, credentials=None) -> HapagLloydClient:
+    """A client configured the way the setup command configures a live one."""
+    return _client(
+        team,
+        session=session,
+        config=config or GATEWAY_CONFIG,
+        credentials=credentials
+        if credentials is not None
+        else {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+        },
+    )
 
 
 class HapagLloydUsesSharedPipelineTest(TestCase):
@@ -134,6 +173,93 @@ class HapagLloydConfigurationTest(TestCase):
         client = _client(self.team, FakeSession())
         with self.assertRaises(CarrierConfigurationError):
             client.fetch_tracking(booking_number="BKG-1")
+
+
+class HapagLloydGatewayAuthTest(TestCase):
+    """Hapag-Lloyd's gateway wants two credential headers, not one and not a token."""
+
+    def setUp(self):
+        self.team = _team("hapag-auth-team")
+
+    def test_shipped_config_selects_the_two_header_style(self):
+        self.assertEqual(TRACK_AND_TRACE_CONFIG["auth_style"], "client_id_secret_headers")
+        self.assertEqual(TRACK_AND_TRACE_CONFIG["client_id_header_name"], "X-IBM-Client-Id")
+        self.assertEqual(TRACK_AND_TRACE_CONFIG["client_secret_header_name"], "X-IBM-Client-Secret")
+
+    def test_both_credentials_are_sent_as_headers(self):
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        _gateway_client(self.team, session).fetch_tracking(container_number="HLXU8891233")
+        headers = session.requests[0]["headers"]
+        self.assertEqual(headers["X-IBM-Client-Id"], CLIENT_ID)
+        self.assertEqual(headers["X-IBM-Client-Secret"], CLIENT_SECRET)
+
+    def test_no_token_request_is_made(self):
+        """The gateway style must not spend a round trip acquiring a token."""
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        _gateway_client(self.team, session).fetch_tracking(container_number="HLXU8891233")
+        self.assertEqual(len(session.requests), 1)
+        self.assertTrue(session.requests[0]["url"].endswith("/events"))
+
+    def test_header_names_can_be_overridden(self):
+        session = FakeSession([FakeResponse(200, {"events": []})])
+        config = {
+            **GATEWAY_CONFIG,
+            "client_id_header_name": "X-Gw-Id",
+            "client_secret_header_name": "X-Gw-Secret",
+        }
+        _gateway_client(self.team, session, config=config).fetch_tracking(container_number="HLXU8891233")
+        headers = session.requests[0]["headers"]
+        self.assertEqual(headers["X-Gw-Id"], CLIENT_ID)
+        self.assertEqual(headers["X-Gw-Secret"], CLIENT_SECRET)
+        self.assertNotIn("X-IBM-Client-Id", headers)
+
+    def test_missing_credentials_are_a_configuration_error(self):
+        """Not an authentication error: nothing was ever sent to be rejected."""
+        client = _gateway_client(self.team, FakeSession(), credentials={})
+        with self.assertRaises(CarrierConfigurationError) as ctx:
+            client.fetch_tracking(container_number="HLXU8891233")
+        self.assertIn("client_id", str(ctx.exception))
+
+    def test_secret_without_an_id_is_also_refused(self):
+        client = _gateway_client(self.team, FakeSession(), credentials={"client_secret": CLIENT_SECRET})
+        with self.assertRaises(CarrierConfigurationError):
+            client.fetch_tracking(container_number="HLXU8891233")
+
+    def test_rejected_credentials_are_an_authentication_error(self):
+        session = FakeSession([FakeResponse(401), FakeResponse(401)])
+        with self.assertRaises(CarrierAuthenticationError):
+            _gateway_client(self.team, session).fetch_tracking(container_number="HLXU8891233")
+
+    def test_credentials_never_reach_the_request_log(self):
+        _gateway_client(self.team, FakeSession([FakeResponse(200, {"events": []})])).fetch_tracking(
+            container_number="HLXU8891233"
+        )
+        log = IntegrationRequestLog.objects.get(team=self.team)
+        logged = log.endpoint + log.error_message
+        self.assertNotIn(CLIENT_ID, logged)
+        self.assertNotIn(CLIENT_SECRET, logged)
+
+    def test_a_token_url_switches_to_the_oauth_grant(self):
+        """A product that does use a grant needs configuration, not new code."""
+        from apps.scm.integrations.carriers.oauth import ClientCredentialsAuth
+
+        config = {
+            **GATEWAY_CONFIG,
+            "auth_style": "oauth2_client_credentials",
+            "token_url": "https://example.invalid/oauth/token",
+        }
+        client = _gateway_client(self.team, FakeSession(), config=config)
+        self.assertIsInstance(client._build_auth(), ClientCredentialsAuth)
+
+    def test_oauth_style_without_a_token_url_is_refused(self):
+        with self.assertRaises(CarrierConfigurationError) as ctx:
+            resolve_config({**GATEWAY_CONFIG, "auth_style": "oauth2_client_credentials"})
+        self.assertIn("token_url", str(ctx.exception))
+
+    def test_unknown_auth_style_is_refused(self):
+        with self.assertRaises(CarrierConfigurationError) as ctx:
+            resolve_config({**GATEWAY_CONFIG, "auth_style": "mutual_tls"})
+        self.assertIn("client_id_secret_headers", str(ctx.exception))
 
 
 class HapagLloydTransportTest(TestCase):
@@ -211,3 +337,109 @@ class HapagLloydParsingTest(TestCase):
         self.assertEqual([result.container_number for result in results], ["HLXU1234567"])
         self.assertEqual(results[0].carrier_code, "hapag_lloyd")
         self.assertEqual(results[0].carrier_name, "Hapag-Lloyd")
+
+
+class HapagLloydDcsaShapeTest(TestCase):
+    """Normalisation of the shape Hapag-Lloyd actually sends.
+
+    Hapag-Lloyd puts the place in ``eventLocation`` or inside ``transportCall``, and
+    names the container in ``references`` on events that have no ``equipmentReference``
+    of their own. The flat spelling in the older fixture exercises neither, so this
+    reads a response built to the live shape instead.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.payload = json.loads((FIXTURES / "hapag_lloyd_dcsa_events.json").read_text())
+
+    def setUp(self):
+        self.events = HapagLloydParser().parse_tracking_events(self.payload)
+        self.by_code = {event.event_code: event for event in self.events}
+
+    def test_every_event_is_parsed(self):
+        self.assertEqual(len(self.events), 5)
+        self.assertEqual(
+            [event.event_code for event in self.events],
+            ["RECE", "GTIN", "DEPA", "STUF", "ARRI"],
+        )
+
+    def test_source_provider_is_hapag_lloyd(self):
+        for event in self.events:
+            self.assertEqual(event.source_provider, "hapag_lloyd")
+
+    def test_every_event_is_tied_to_the_container(self):
+        """Including the transport and shipment events, which name it only in references."""
+        for event in self.events:
+            with self.subTest(code=event.event_code):
+                self.assertEqual(event.container_number, "HLXU8891233")
+
+    def test_nested_event_location_is_read(self):
+        gate_in = self.by_code["GTIN"]
+        self.assertEqual(gate_in.location_name, "Container Terminal Altenwerder")
+        self.assertEqual(gate_in.location_unlocode, "DEHAM")
+        self.assertEqual(gate_in.latitude, "53.500000")
+        self.assertEqual(gate_in.longitude, "9.933333")
+
+    def test_location_inside_the_transport_call_is_read(self):
+        departure = self.by_code["DEPA"]
+        self.assertEqual(departure.location_name, "Hamburg")
+        self.assertEqual(departure.location_unlocode, "DEHAM")
+        self.assertEqual(departure.latitude, "53.550000")
+
+    def test_unlocode_survives_a_location_without_coordinates(self):
+        arrival = self.by_code["ARRI"]
+        self.assertEqual(arrival.location_unlocode, "USNYC")
+        self.assertEqual(arrival.location_name, "New York")
+        self.assertEqual(arrival.latitude, "")
+
+    def test_vessel_and_voyage_come_from_the_transport_call(self):
+        departure = self.by_code["DEPA"]
+        self.assertEqual(departure.vessel_name, "HAMBURG EXPRESS")
+        self.assertEqual(departure.vessel_imo, "9450648")
+        self.assertEqual(departure.voyage_number, "0034W")
+        self.assertEqual(departure.transport_mode, "VESSEL")
+
+    def test_import_voyage_is_used_for_the_inbound_leg(self):
+        self.assertEqual(self.by_code["ARRI"].voyage_number, "0034E")
+
+    def test_offset_timestamps_are_parsed_with_their_offset(self):
+        gate_in = self.by_code["GTIN"]
+        self.assertIsNotNone(gate_in.event_datetime)
+        self.assertEqual(gate_in.event_datetime.utcoffset().total_seconds(), 7200)
+        self.assertEqual(gate_in.event_datetime_timezone, "+02:00")
+        self.assertEqual(self.by_code["ARRI"].event_datetime.utcoffset().total_seconds(), -14400)
+
+    def test_actual_and_estimated_are_kept_apart(self):
+        self.assertTrue(self.by_code["DEPA"].is_actual)
+        self.assertFalse(self.by_code["DEPA"].is_estimated)
+        arrival = self.by_code["ARRI"]
+        self.assertTrue(arrival.is_estimated)
+        self.assertFalse(arrival.is_actual)
+
+    def test_document_references_are_extracted(self):
+        gate_in = self.by_code["GTIN"]
+        self.assertEqual(gate_in.booking_number, "HLCU-BKG-8891234")
+        self.assertEqual(gate_in.bill_of_lading_number, "HLCUDE1889123478")
+
+    def test_shipment_milestone_needs_no_transport_call(self):
+        booking = self.by_code["RECE"]
+        self.assertEqual(booking.event_type, "SHIPMENT")
+        self.assertEqual(booking.location_name, "")
+        self.assertEqual(booking.description, "Booking request received")
+
+    def test_carrier_event_ids_are_kept_for_deduplication(self):
+        self.assertEqual(self.by_code["GTIN"].raw_event_id, "5f1e8a10-0000-4000-8000-00000000a002")
+        self.assertEqual(len({event.raw_event_id for event in self.events}), 5)
+
+    def test_an_unmapped_event_code_is_still_a_usable_event(self):
+        """STUF has no internal counterpart; discarding it would lose real evidence."""
+        stuffing = self.by_code["STUF"]
+        self.assertEqual(stuffing.event_type, "EQUIPMENT")
+        self.assertEqual(stuffing.event_code, "STUF")
+        self.assertTrue(stuffing.is_actual)
+        self.assertEqual(stuffing.description, "Container stuffing completed at inland depot")
+        self.assertEqual(stuffing.location_name, "Bremer Binnenterminal Nord")
+        self.assertEqual(stuffing.latitude, "53.108000")
+
+    def test_the_raw_event_is_kept_verbatim(self):
+        self.assertEqual(self.by_code["GTIN"].raw_payload["ISOEquipmentCode"], "45G1")

@@ -220,23 +220,46 @@ class LocationMovementTest(TestCase):
 
 
 class LocationExpectedArrivalsTest(TestCase):
-    """Expected arrivals must stay unavailable until the domain can answer them."""
+    """Expected arrivals are answerable now, and still refuse to match on names.
+
+    LOC-1 gave a shipment a canonical ``destination_location``, so this tab reports
+    a set rather than a reason. What has not changed — and is the reason the tab was
+    withheld until there was a canonical column — is that carrier destination text is
+    never compared against a location's name.
+
+    The fuller behaviour, including the port/terminal hierarchy, is covered in
+    ``test_location_canonical_workspace.py``.
+    """
 
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="Exp", slug="loc-ws-exp")
         cls.depot = _location(cls.team)
 
-    def test_expected_arrivals_are_not_claimed(self):
+    def test_the_question_is_answerable_and_the_answer_here_is_none(self):
+        """ "Nothing is expected" — not "we cannot tell you what is expected"."""
         workspace = get_location_workspace(team=self.team, location=self.depot)
 
-        self.assertFalse(workspace.expected.is_available)
+        self.assertTrue(workspace.expected.is_available)
+        self.assertEqual(workspace.expected.reason, "")
         self.assertEqual(workspace.expected.objects, [])
         self.assertEqual(workspace.expected.count, 0)
 
-    def test_the_reason_is_stated_rather_than_left_blank(self):
+    def test_a_canonical_destination_is_what_puts_a_shipment_here(self):
+        from apps.scm.shipments.models import Shipment, ShipmentContainer
+
+        shipment = Shipment.objects.create(
+            team=self.team,
+            shipment_number="SH-CANON",
+            status=Shipment.Status.IN_TRANSIT,
+            destination_location=self.depot,
+            eta=timezone.localdate() + timedelta(days=3),
+        )
+        ShipmentContainer.objects.create(shipment=shipment, container=_container(self.team, "600001"))
+
         workspace = get_location_workspace(team=self.team, location=self.depot)
-        self.assertTrue(workspace.expected.reason)
+
+        self.assertEqual([obj.label for obj in workspace.expected.objects], ["SH-CANON"])
 
     def test_a_shipment_named_after_the_city_does_not_become_an_expected_arrival(self):
         from apps.scm.shipments.models import Shipment, ShipmentContainer

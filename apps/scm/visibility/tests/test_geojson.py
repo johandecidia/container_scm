@@ -17,15 +17,18 @@ from apps.scm.visibility.geojson import (
     LINE_ACTUAL,
     LINE_FORECAST,
     journey_feature_collection,
-    overview_feature_collection,
+    map_feature_collection,
 )
+from apps.scm.visibility.map_positions import PositionClass, get_operational_map
 from apps.scm.visibility.selectors import get_container_journey_events, list_visibility_objects
 
 from .factories import (
     FIXTURE_CONTAINER_NUMBER,
     ingest_maersk_events,
     make_container,
+    make_location,
     make_user_and_team,
+    place_container_at,
 )
 
 # The fixture's Gothenburg arrival, straight from the carrier response.
@@ -42,8 +45,8 @@ class GeoJsonShapeTest(TestCase):
         cls.container = make_container(cls.team)
         ingest_maersk_events(cls.team, cls.container)
 
-    def test_overview_returns_a_feature_collection(self):
-        collection = overview_feature_collection(list_visibility_objects(self.team))
+    def test_the_operational_map_returns_a_feature_collection(self):
+        collection = map_feature_collection(get_operational_map(self.team, list_visibility_objects(self.team)))
         self.assertEqual(collection["type"], "FeatureCollection")
         self.assertIsInstance(collection["features"], list)
 
@@ -149,33 +152,72 @@ class GeoJsonSemanticsTest(TestCase):
             self.assertEqual(feature["properties"]["container_number"], FIXTURE_CONTAINER_NUMBER)
 
 
-class OverviewGeoJsonTest(TestCase):
-    """What the fleet-level map says about each object."""
+class OperationalMapGeoJsonTest(TestCase):
+    """What a marker on the fleet-level map claims.
+
+    Coordinates come from the canonical location, never from the carrier event, so
+    the fixture's raw Gothenburg numbers are deliberately *not* what is asserted
+    here — the terminal's own are.
+    """
+
+    TERMINAL_LAT = 57.696629
+    TERMINAL_LON = 11.858448
 
     @classmethod
     def setUpTestData(cls):
         _user, cls.team = make_user_and_team("geo-ov@example.com", "geo-ov-team")
         cls.container = make_container(cls.team)
         ingest_maersk_events(cls.team, cls.container)
-        cls.features = overview_feature_collection(list_visibility_objects(cls.team))["features"]
+        cls.terminal = make_location(
+            cls.team,
+            "Oceanterminalen",
+            unlocode="SEGOT",
+            latitude=str(cls.TERMINAL_LAT),
+            longitude=str(cls.TERMINAL_LON),
+        )
+        place_container_at(cls.team, cls.container, cls.terminal)
+        cls.features = map_feature_collection(get_operational_map(cls.team, list_visibility_objects(cls.team)))[
+            "features"
+        ]
 
     def test_a_standalone_tracked_container_appears_on_the_map(self):
         self.assertEqual(len(self.features), 1)
-        self.assertEqual(self.features[0]["properties"]["object_type"], "container")
+        self.assertEqual(self.features[0]["properties"]["object_type"], "map_position")
 
-    def test_the_object_is_identified_by_its_container_number(self):
+    def test_the_marker_is_identified_by_its_container_number(self):
         self.assertEqual(self.features[0]["properties"]["container_number"], FIXTURE_CONTAINER_NUMBER)
 
-    def test_the_position_carries_its_quality(self):
+    def test_the_marker_carries_the_kind_of_claim_it_is_making(self):
         properties = self.features[0]["properties"]
-        self.assertIn(properties["position_type"], PositionType.values)
-        self.assertTrue(properties["position_type_label"])
+        self.assertEqual(properties["position_class"], PositionClass.PHYSICAL)
+        self.assertTrue(properties["position_class_label"])
+        self.assertTrue(properties["is_current"])
+        self.assertFalse(properties["is_destination"])
 
-    def test_the_panel_url_points_at_this_object(self):
+    def test_the_coordinates_are_the_canonical_locations_own(self):
+        longitude, latitude = self.features[0]["geometry"]["coordinates"]
+        self.assertAlmostEqual(longitude, self.TERMINAL_LON, places=5)
+        self.assertAlmostEqual(latitude, self.TERMINAL_LAT, places=5)
+
+    def test_the_wording_says_at_the_place_rather_than_quoting_a_fix(self):
+        """The coordinate belongs to the terminal, not to the box inside it."""
+        self.assertEqual(self.features[0]["properties"]["place_statement"], "At Oceanterminalen")
+
+    def test_the_panel_url_points_at_this_place_and_class(self):
         properties = self.features[0]["properties"]
-        self.assertIn(f"/panel/container/{self.container.pk}/", properties["panel_url"])
+        self.assertIn(f"/map-panel/{PositionClass.PHYSICAL}/{self.terminal.pk}/", properties["panel_url"])
+
+    def test_a_single_container_marker_links_to_its_workspace(self):
+        self.assertIn(f"/containers/{self.container.pk}/", self.features[0]["properties"]["container_url"])
 
     def test_properties_are_ui_ready_so_the_browser_derives_nothing(self):
         properties = self.features[0]["properties"]
-        for key in ("current_status", "journey_state_label", "health_label", "position_type_label"):
+        for key in (
+            "position_class_label",
+            "place_statement",
+            "source_label",
+            "age_display",
+            "arrival_state_label",
+            "location_name",
+        ):
             self.assertIn(key, properties)

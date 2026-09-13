@@ -349,6 +349,162 @@ class CmaCgmSetupCommandTest(TestCase):
             call_command("setup_cma_cgm_integration", "--team", "no-such-team")
 
 
+class HapagLloydSetupCommandTest(TestCase):
+    """Connecting a team to Hapag-Lloyd stores a client id/secret pair, encrypted."""
+
+    CLIENT_ID = "test-hapag-client-id"
+    CLIENT_SECRET = "test-hapag-client-secret"
+    CONTAINER = "HLXU8891233"
+    ENV = {"HAPAG_CLIENT_ID": CLIENT_ID, "HAPAG_CLIENT_SECRET": CLIENT_SECRET}
+
+    def setUp(self):
+        self.team = Team.objects.create(name="hapag-cmd", slug="hapag-cmd")
+
+    def _run(self, *args, env=None, **kwargs):
+        out = StringIO()
+        with mock.patch.dict(os.environ, {**self.ENV, **(env or {})}, clear=True):
+            call_command("setup_hapag_lloyd_integration", "--team", self.team.slug, *args, stdout=out, **kwargs)
+        return out.getvalue()
+
+    def _integration(self) -> Integration:
+        return Integration.objects.get(team=self.team, provider_code="hapag_lloyd")
+
+    def test_it_creates_a_carrier_integration_with_the_gateway_config(self):
+        self._run()
+        integration = self._integration()
+        self.assertEqual(integration.provider_family, Integration.ProviderFamily.CARRIER)
+        self.assertEqual(integration.api_style, Integration.ApiStyle.DCSA)
+        self.assertTrue(integration.is_active)
+        self.assertEqual(integration.config["base_url"], "https://api.hlag.com")
+        self.assertEqual(integration.config["auth_style"], "client_id_secret_headers")
+        self.assertEqual(integration.config["client_id_header_name"], "X-IBM-Client-Id")
+        self.assertEqual(integration.config["client_secret_header_name"], "X-IBM-Client-Secret")
+
+    def test_it_maps_every_supported_reference_kind(self):
+        self._run()
+        reference_params = self._integration().config["reference_params"]
+        self.assertEqual(reference_params["container_number"], "equipmentReference")
+        self.assertEqual(reference_params["booking_number"], "carrierBookingReference")
+        self.assertEqual(reference_params["bill_of_lading_number"], "transportDocumentReference")
+
+    def test_both_credentials_are_stored_encrypted_and_never_in_the_config(self):
+        self._run()
+        integration = self._integration()
+        self.assertEqual(
+            get_integration_credentials(integration),
+            {"client_id": self.CLIENT_ID, "client_secret": self.CLIENT_SECRET},
+        )
+        config_json = json.dumps(integration.config)
+        self.assertNotIn(self.CLIENT_ID, config_json)
+        self.assertNotIn(self.CLIENT_SECRET, config_json)
+        self.assertNotIn(self.CLIENT_SECRET, integration.credential.encrypted_data)
+
+    def test_the_secret_is_never_printed(self):
+        output = self._run()
+        self.assertNotIn(self.CLIENT_SECRET, output)
+        self.assertNotIn(self.CLIENT_ID, output)
+
+    def test_it_prints_the_endpoint_it_will_call(self):
+        """The one value that must be checked against the portal, so it is shown."""
+        output = self._run()
+        self.assertIn("https://api.hlag.com/hlag/external/v2/events", output)
+        self.assertIn("Confirm that endpoint", output)
+
+    def test_it_creates_the_tracking_provider(self):
+        from apps.scm.tracking.models import TrackingProvider
+
+        self._run()
+        self.assertTrue(TrackingProvider.objects.filter(code="hapag_lloyd").exists())
+
+    def test_it_is_idempotent(self):
+        self._run()
+        self._run()
+        self.assertEqual(Integration.objects.filter(team=self.team, provider_code="hapag_lloyd").count(), 1)
+
+    def test_the_endpoint_can_be_overridden_from_the_environment(self):
+        self._run(env={"HAPAG_API_BASE_URL": "https://sandbox.hlag.com", "HAPAG_TRACKING_PATH": "/v3/events"})
+        config = self._integration().config
+        self.assertEqual(config["base_url"], "https://sandbox.hlag.com")
+        self.assertEqual(config["tracking_path"], "/v3/events")
+
+    def test_a_token_url_switches_the_integration_to_the_oauth_grant(self):
+        self._run(env={"HAPAG_TOKEN_URL": "https://api.hlag.com/oauth/token", "HAPAG_SCOPE": "track-trace"})
+        config = self._integration().config
+        self.assertEqual(config["auth_style"], "oauth2_client_credentials")
+        self.assertEqual(config["token_url"], "https://api.hlag.com/oauth/token")
+        self.assertEqual(config["scope"], "track-trace")
+        # Gateway headers would describe an integration this is not.
+        self.assertNotIn("client_id_header_name", config)
+        self.assertEqual(
+            self._integration().credential.auth_type,
+            IntegrationCredential.AuthType.OAUTH2,
+        )
+
+    def test_the_configured_integration_resolves_and_authenticates(self):
+        """Whatever the command wrote must be a config the shared client accepts."""
+        from apps.scm.integrations.carriers.factory import build_carrier_client
+        from apps.scm.integrations.carriers.oauth import ClientIdSecretHeaderAuth
+
+        self._run()
+        client = build_carrier_client("hapag_lloyd", team=self.team, require_integration=True)
+        auth = client._build_auth()
+        self.assertIsInstance(auth, ClientIdSecretHeaderAuth)
+        self.assertEqual(
+            auth.auth_headers(),
+            {"X-IBM-Client-Id": self.CLIENT_ID, "X-IBM-Client-Secret": self.CLIENT_SECRET},
+        )
+
+    def test_no_test_reference_is_configured_by_default(self):
+        """A reference known to the account is not shipped in code."""
+        output = self._run()
+        self.assertNotIn("test_connection_reference", self._integration().config)
+        self.assertIn("No test_connection_reference", output)
+
+    def test_a_test_reference_can_be_supplied(self):
+        self._run("--test-reference", self.CONTAINER)
+        self.assertEqual(self._integration().config["test_connection_reference"], self.CONTAINER)
+
+    def test_a_configured_test_reference_survives_a_credential_rotation(self):
+        self._run("--test-reference", self.CONTAINER)
+        self._run()
+        self.assertEqual(self._integration().config["test_connection_reference"], self.CONTAINER)
+
+    def test_keep_config_leaves_a_customised_config_alone(self):
+        self._run()
+        integration = self._integration()
+        integration.config = {**integration.config, "min_poll_interval_minutes": 120}
+        integration.save(update_fields=["config"])
+        self._run(**{"keep_config": True})
+        integration.refresh_from_db()
+        self.assertEqual(integration.config["min_poll_interval_minutes"], 120)
+
+    def test_a_missing_secret_is_refused_and_names_the_variable(self):
+        from django.core.management.base import CommandError
+
+        with (
+            mock.patch.dict(os.environ, {"HAPAG_CLIENT_ID": self.CLIENT_ID}, clear=True),
+            self.assertRaises(CommandError) as ctx,
+        ):
+            call_command("setup_hapag_lloyd_integration", "--team", self.team.slug)
+        self.assertIn("HAPAG_CLIENT_SECRET", str(ctx.exception))
+        self.assertFalse(Integration.objects.filter(team=self.team, provider_code="hapag_lloyd").exists())
+
+    def test_both_variables_missing_names_both(self):
+        from django.core.management.base import CommandError
+
+        with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(CommandError) as ctx:
+            call_command("setup_hapag_lloyd_integration", "--team", self.team.slug)
+        message = str(ctx.exception)
+        self.assertIn("HAPAG_CLIENT_ID", message)
+        self.assertIn("HAPAG_CLIENT_SECRET", message)
+
+    def test_an_unknown_team_is_refused(self):
+        from django.core.management.base import CommandError
+
+        with mock.patch.dict(os.environ, self.ENV, clear=True), self.assertRaises(CommandError):
+            call_command("setup_hapag_lloyd_integration", "--team", "no-such-team")
+
+
 class CarrierTrackingCommandTest(TestCase):
     """The generic live-verification command works for any implemented carrier."""
 

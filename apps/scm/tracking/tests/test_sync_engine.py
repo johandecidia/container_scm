@@ -35,7 +35,7 @@ from apps.scm.tracking.models import (
     TrackingSyncRun,
 )
 from apps.scm.tracking.selectors import get_due_tracking_subscriptions
-from apps.scm.tracking.sync import sync_due_tracking_subscriptions, sync_tracking_subscription
+from apps.scm.tracking.sync import SyncOutcome, sync_due_tracking_subscriptions, sync_tracking_subscription
 from apps.teams.models import Team
 
 _LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "tracking-sync"}}
@@ -307,56 +307,79 @@ class SkippedSyncTest(TestCase):
         run = _sync(manual)
         self.assertEqual(run.status, TrackingSyncRun.Status.SKIPPED)
 
-    def test_a_provider_this_poller_does_not_drive_is_told_apart_from_a_broken_one(self):
-        """Traqo is a working provider the carrier poller is simply not the caller for."""
-        traqo = _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+    def test_a_provider_this_poller_cannot_fetch_is_told_apart_from_a_broken_one(self):
+        """Vizion is a working provider the scheduled sync deliberately does not fetch.
 
-        run = sync_tracking_subscription(traqo)
+        Traqo used to be here too. It is now polled like any other source — see
+        ``test_traqo_scheduled_sync`` — and Vizion is what the distinction still protects:
+        a reference is its billable unit, so a cadence would be a purchase.
+        """
+        vizion = _subscription(self.team, _provider("vizion"), tracking_reference="CPWU2588297")
+
+        run = sync_tracking_subscription(vizion)
 
         self.assertEqual(run.status, TrackingSyncRun.Status.SKIPPED)
         self.assertEqual(run.error_type, _ErrorType.NOT_CARRIER_POLLED)
 
     def test_skipping_it_leaves_the_subscription_tracking(self):
-        traqo = _subscription(
+        vizion = _subscription(
             self.team,
-            _provider("traqo"),
+            _provider("vizion"),
             tracking_reference="CPWU2588297",
             tracking_status=TrackingSubscription.TrackingStatus.TRACKING,
         )
 
-        sync_tracking_subscription(traqo)
+        sync_tracking_subscription(vizion)
 
-        traqo.refresh_from_db()
+        vizion.refresh_from_db()
         # NOT_CONFIGURED here would tell the UI the container cannot be tracked, when
         # its events are already stored and correct.
-        self.assertEqual(traqo.tracking_status, TrackingSubscription.TrackingStatus.TRACKING)
-        self.assertEqual(traqo.status, TrackingSubscription.Status.ACTIVE)
-        self.assertEqual(traqo.consecutive_failures, 0)
+        self.assertEqual(vizion.tracking_status, TrackingSubscription.TrackingStatus.TRACKING)
+        self.assertEqual(vizion.status, TrackingSubscription.Status.ACTIVE)
+        self.assertEqual(vizion.consecutive_failures, 0)
 
     def test_skipping_it_records_no_error_against_the_subscription(self):
-        traqo = _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+        vizion = _subscription(self.team, _provider("vizion"), tracking_reference="CPWU2588297")
 
-        run = sync_tracking_subscription(traqo)
+        run = sync_tracking_subscription(vizion)
 
-        traqo.refresh_from_db()
-        self.assertEqual(traqo.last_error_message, "")
+        vizion.refresh_from_db()
+        self.assertEqual(vizion.last_error_message, "")
         # The explanation lives on the run, where it is information rather than a fault.
         self.assertIn("refresh_with", run.metadata)
 
     def test_it_never_reaches_the_carrier_factory(self):
-        traqo = _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+        vizion = _subscription(self.team, _provider("vizion"), tracking_reference="CPWU2588297")
 
         with mock.patch("apps.scm.integrations.carriers.factory.build_carrier_client") as build:
-            sync_tracking_subscription(traqo)
+            sync_tracking_subscription(vizion)
 
         build.assert_not_called()
 
     def test_the_scheduled_poller_does_not_queue_it_at_all(self):
-        _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+        _subscription(self.team, _provider("vizion"), tracking_reference="CPWU2588297")
 
         due = list(get_due_tracking_subscriptions(self.team))
 
         self.assertEqual([sub.pk for sub in due], [self.subscription.pk])
+
+    def test_traqo_is_queued_and_dispatched_to_its_own_sync(self):
+        """The provider the poller *does* now drive, without a carrier adapter for it."""
+        traqo = _subscription(self.team, _provider("traqo"), tracking_reference="CPWU2588297")
+
+        due = list(get_due_tracking_subscriptions(self.team))
+        self.assertIn(traqo.pk, [sub.pk for sub in due])
+
+        with (
+            mock.patch("apps.scm.integrations.carriers.factory.build_carrier_client") as build,
+            mock.patch("apps.scm.integrations.traqo.scheduled.sync_traqo_subscription") as traqo_sync,
+        ):
+            traqo_sync.return_value = SyncOutcome(status=TrackingSyncRun.Status.SUCCESS)
+            run = sync_tracking_subscription(traqo)
+
+        build.assert_not_called()
+        traqo_sync.assert_called_once_with(traqo)
+        self.assertEqual(run.status, TrackingSyncRun.Status.SUCCESS)
 
     def test_a_misconfigured_carrier_is_still_reported_as_not_configured(self):
         """The safe skip must not become a way for real carrier faults to go quiet."""

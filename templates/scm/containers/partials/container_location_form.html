@@ -1,25 +1,127 @@
 {% load i18n %}
 
+{% comment %}
+  The location form: identity first, then geography, then bookkeeping.
+
+  Grouped that way because the top block is what the resolver reads. Type, parent
+  and UN/LOCODE decide which carrier evidence reaches this place; the address and the
+  owner name are for people. The hint under the code says it need not be unique,
+  which is the one thing about it that surprises people.
+
+  `form_target` and `return_to` are how the same form serves more than one page. The
+  Locations list swaps its own table back in; the Location Data Quality queue has no
+  table to swap, so it posts into the modal and the view answers a success with
+  HX-Redirect back to a freshly built queue. The flag travels as a hidden field so a
+  validation error does not lose the page the operator started on.
+{% endcomment %}
+
 <div class="modal modal-open">
-  <div class="modal-box max-w-lg">
+  <div class="modal-box max-w-2xl">
     <h3 class="font-bold text-lg mb-4">{{ modal_title }}</h3>
     <form
       method="post"
       action="{{ form_action }}"
       hx-post="{{ form_action }}"
-      hx-target="#location-table"
-      hx-swap="outerHTML"
+      hx-target="{{ form_target|default:'#location-table' }}"
+      hx-swap="{{ form_swap|default:'outerHTML' }}"
     >
       {% csrf_token %}
+      {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+
+      {% if form.non_field_errors %}
+        <div role="alert" class="alert alert-error mb-4 text-sm">
+          <i class="fa fa-circle-exclamation"></i>
+          <span>{{ form.non_field_errors|join:" " }}</span>
+        </div>
+      {% endif %}
+
       <div class="space-y-4">
         <div class="form-control">
           <label class="label"><span class="label-text">{{ form.name.label }}</span></label>
           {{ form.name }}
           {% if form.name.errors %}<p class="text-error text-xs mt-1">{{ form.name.errors|join:" " }}</p>{% endif %}
         </div>
-        <div class="form-control">
-          <label class="label"><span class="label-text">{{ form.location_type.label }}</span></label>
-          {{ form.location_type }}
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.location_type.label }}</span></label>
+            {{ form.location_type }}
+          </div>
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.parent_location.label }}</span></label>
+            {{ form.parent_location }}
+            <p class="text-xs text-base-content/50 mt-1">
+              {% translate "The larger place this sits inside, e.g. the port a terminal belongs to. Only places it could legally be inside are listed." %}
+            </p>
+            {% if form.parent_location.errors %}<p class="text-error text-xs mt-1">{{ form.parent_location.errors|join:" " }}</p>{% endif %}
+          </div>
+        </div>
+        {% if hierarchy_impact.is_relevant %}
+          {% comment %}
+            What relating this place to the ones sharing its code would probably
+            settle. An estimate off the stored evidence — it triggers nothing, and the
+            counts are the ones the data-quality queue groups by, so they describe the
+            same decisions that page lists.
+
+            Deliberately no suggestion of *which* way round the relationship goes. A
+            shared code makes it worth reviewing; it is not proof that either place
+            contains the other, and only somebody who knows the network can say.
+          {% endcomment %}
+          <div role="note" class="alert alert-info text-sm items-start">
+            <i class="fa fa-sitemap mt-0.5"></i>
+            <div>
+              <p>
+                {% blocktranslate trimmed with code=hierarchy_impact.unlocode places=hierarchy_impact.shares_code_with %}
+                  {{ code }} is also carried by {{ places }}, with no containment
+                  relationship recorded either way.
+                {% endblocktranslate %}
+              </p>
+              <p class="mt-1">
+                {% translate "Recording one may resolve:" %}
+                {% blocktranslate trimmed count count=hierarchy_impact.ambiguous_groups %}
+                  {{ count }} ambiguous evidence group
+                {% plural %}
+                  {{ count }} ambiguous evidence groups
+                {% endblocktranslate %}
+                <span class="text-base-content/30 mx-1">·</span>
+                {% blocktranslate trimmed count count=hierarchy_impact.event_count %}
+                  {{ count }} tracking event
+                {% plural %}
+                  {{ count }} tracking events
+                {% endblocktranslate %}
+                {% if hierarchy_impact.container_count %}
+                  <span class="text-base-content/30 mx-1">·</span>
+                  {% blocktranslate trimmed count count=hierarchy_impact.container_count %}
+                    {{ count }} container
+                  {% plural %}
+                    {{ count }} containers
+                  {% endblocktranslate %}
+                {% endif %}
+              </p>
+              <p class="text-xs opacity-70 mt-1">
+                {% blocktranslate trimmed %}
+                  An estimate from stored evidence. Saving changes nothing historic —
+                  those events pick it up the next time they are refreshed or
+                  re-parsed.
+                {% endblocktranslate %}
+              </p>
+            </div>
+          </div>
+        {% endif %}
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.unlocode.label }}</span></label>
+            {{ form.unlocode }}
+            <p class="text-xs text-base-content/50 mt-1">
+              {% translate "e.g. SEGOT. Several locations may share one code — a port and its terminals do." %}
+            </p>
+            {% if form.unlocode.errors %}<p class="text-error text-xs mt-1">{{ form.unlocode.errors|join:" " }}</p>{% endif %}
+          </div>
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.country_code.label }}</span></label>
+            {{ form.country_code }}
+            {% if form.country_code.errors %}<p class="text-error text-xs mt-1">{{ form.country_code.errors|join:" " }}</p>{% endif %}
+          </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="form-control">
@@ -29,6 +131,22 @@
           <div class="form-control">
             <label class="label"><span class="label-text">{{ form.city.label }}</span></label>
             {{ form.city }}
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.latitude.label }}</span></label>
+            {{ form.latitude }}
+            {% if form.latitude.errors %}<p class="text-error text-xs mt-1">{{ form.latitude.errors|join:" " }}</p>{% endif %}
+          </div>
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.longitude.label }}</span></label>
+            {{ form.longitude }}
+            {% if form.longitude.errors %}<p class="text-error text-xs mt-1">{{ form.longitude.errors|join:" " }}</p>{% endif %}
+          </div>
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ form.timezone.label }}</span></label>
+            {{ form.timezone }}
           </div>
         </div>
         <div class="form-control">

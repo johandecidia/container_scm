@@ -30,7 +30,7 @@ from apps.teams.models import Team
 from apps.users.models import CustomUser
 
 from .models import Container
-from .selectors import get_default_equipment_type
+from .selectors import get_default_condition, get_default_equipment_type
 from .services import create_container
 from .utils import parse_container_id, validate_container_id
 
@@ -233,11 +233,18 @@ def create_or_get_container(
     user: CustomUser,
     number: str,
     carrier: str = "",
+    attributes: dict | None = None,
 ) -> tuple[Container, bool]:
     """Return this team's container for ``number``, creating it if it is new.
 
+    ``attributes`` — equipment type, condition and colour, as the intake forms chose
+    them — are written only onto a container this call *creates*. A number that is
+    already registered comes back untouched, because an import is not an edit: the
+    existing row may have been corrected by hand since, and a paste of 200 numbers
+    must not quietly overwrite that.
+
     Raises ValidationError for a number that is not a valid ISO 6346 ID, and when
-    no equipment type is configured to fall back on.
+    no equipment type is chosen or configured to fall back on.
     """
     parts = parse_and_validate_container_number(number)
     lookup = {
@@ -250,9 +257,15 @@ def create_or_get_container(
     container = Container.objects.filter(**lookup).first()
     created = False
     if container is None:
-        equipment_type = get_default_equipment_type()
+        chosen = dict(attributes or {})
+        equipment_type = chosen.pop("equipment_type", None) or get_default_equipment_type()
         if equipment_type is None:
             raise ValidationError(_("No equipment types are configured, so containers cannot be created yet."))
+        # The team's own first condition when the intake did not pick one. Unlike
+        # equipment type this is not required — a team may legitimately have retired
+        # every condition, and a container with none recorded is a valid, honest row.
+        chosen.setdefault("condition", None)
+        chosen["condition"] = chosen["condition"] or get_default_condition(team)
         try:
             # Its own transaction: a number that lost a race must not poison a
             # surrounding bulk import.
@@ -260,9 +273,9 @@ def create_or_get_container(
                 container = create_container(
                     team=team,
                     user=user,
-                    # status and condition are left to the model defaults
-                    # (Available / Good) — quick registration asks for neither.
-                    data={**parts, "equipment_type": equipment_type},
+                    # Anything the intake did not choose is left to the model's own
+                    # default — status always, since no intake form offers it.
+                    data={**parts, "equipment_type": equipment_type, **chosen},
                 )
             created = True
         except IntegrityError:
@@ -273,11 +286,20 @@ def create_or_get_container(
     return container, created
 
 
-def bulk_create_containers(*, team: Team, user: CustomUser, entries: list[tuple[str, str]]) -> IntakeResult:
+def bulk_create_containers(
+    *,
+    team: Team,
+    user: CustomUser,
+    entries: list[tuple[str, str]],
+    attributes: dict | None = None,
+) -> IntakeResult:
     """Create every valid, new container in ``entries`` and report what happened.
 
     Duplicates — inside the input or against the team's containers — are counted,
     not created, and one bad entry never stops the rest.
+
+    ``attributes`` are applied to every container this call creates and to none that
+    already existed; see :func:`create_or_get_container`.
     """
     preview = preview_containers(team=team, entries=entries)
     created: list[str] = []
@@ -290,7 +312,7 @@ def bulk_create_containers(*, team: Team, user: CustomUser, entries: list[tuple[
             continue
         try:
             container, was_created = create_or_get_container(
-                team=team, user=user, number=row.number, carrier=row.carrier
+                team=team, user=user, number=row.number, carrier=row.carrier, attributes=attributes
             )
         except ValidationError as exc:
             invalid.append(

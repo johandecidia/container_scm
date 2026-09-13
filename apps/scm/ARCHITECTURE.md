@@ -38,6 +38,84 @@ Nothing here persists a journey, a leg or a gap: all three are computed on read 
 `TrackingEvent` and the container's own location record, so a new event changes the
 answer immediately and there is nothing to reconcile.
 
+### Locations: three concepts that must not collapse
+
+A "location" means three different things in this domain, and conflating any two of
+them produces confidently wrong answers. They are separate models on purpose:
+
+| Concept | Where | What it is |
+|---|---|---|
+| **Identity** | `ContainerLocation` (`containers`) | What MCR considers a place to be. Owned and edited by MCR. |
+| **Evidence** | `TrackingEvent.location_name` / `_unlocode` / coordinates, and `LocationAlias` | What a carrier or provider *said*. Kept verbatim, never rewritten. |
+| **State** | `Container.current_location`, `ContainerMovement` | Where a box is believed to be. |
+
+```
+apps/scm/containers/
+    location_identity.py   # Pure normalisation of codes, names and coordinates
+    location_resolver.py   # external location → canonical location, with a stated method
+    location_workspace.py  # The location detail read model
+    movements.py           # Physical state: validation, precedence, the projection
+apps/scm/tracking/
+    physical_movements.py  # Which carrier events may become movements. Almost none.
+```
+
+Four rules hold this together:
+
+**UN/LOCODE is not unique.** Göteborg the port, Oceanterminalen inside it and a
+third terminal beside them are three operational places under `SEGOT`. The column is
+indexed, never constrained.
+
+**The resolver is the only place a place-name rule may live.** Carrier adapters
+produce `NormalisedTrackingEvent`; `tracking/ingestion.py` — the single write path
+for every provider — hands its location to `resolve_location` and stores the answer
+beside the carrier's own wording. No adapter contains a rule about what a place name
+means.
+
+**Ambiguity is an answer.** There is no fuzzy matching: every rule is an exact
+comparison over a canonicalised value, and evidence fitting several canonical
+locations equally well resolves to `AMBIGUOUS` rather than to a guess. The resolver
+never creates a location or an alias, so reading a carrier response cannot grow the
+master data.
+
+**Evidence is not state.** A resolved `TrackingEvent.location` is a carrier's claim
+about a place. It becomes MCR's belief about where a box *is* only by passing through
+`movements.record_container_movement`, and `tracking/physical_movements.py` is the only
+thing allowed to propose that a carrier event should. See below.
+
+### Physical state: `current_location` is a projection
+
+`Container.current_location` is not a field anybody sets. It is derived:
+
+```
+Container.current_location
+    = the location implied by the winning state-affecting ContainerMovement
+```
+
+Every writer — views, importers, tracking ingestion — calls
+`containers/movements.py::record_container_movement`, which validates the movement,
+stores it and re-projects. Nothing else writes `current_location`, `location_source` or
+`last_location_update`.
+
+**Time leads, provenance breaks ties.** The winner is the maximum of
+`(occurred_at, evidence_strength, created_at, pk)`. Ordering on `occurred_at` is what
+makes a late-delivered carrier event harmless: a 09:30 discharge ingested at 15:10 goes
+into the history behind a 14:32 gate-in and changes nothing. `EvidenceStrength` —
+observed > recorded > inferred — only ever reads when two claims share an instant.
+Insertion order never decides business state on its own.
+
+**Recording is not accepting.** A movement that loses stays in the history, which is how
+the audit trail explains why the current location is what it is. `affects_current_state`
+keeps a row out of the projection entirely.
+
+**Interpretation is conservative and separate.** `MOVEMENT_BY_EVENT_TYPE` in
+`tracking/physical_movements.py` lists every carrier event type that may become a
+movement. It currently holds one: `GATE_IN`. `DISCHARGED`, `VESSEL_ARRIVED` and the rest
+name places without saying the box is at them, and are evidence only. `MovementType` and
+`TrackingEvent.EventType` are deliberately different vocabularies.
+
+**No reverse inference.** A `current_location` that predates the movement history is left
+alone. Nothing fabricates the movements that would have produced it.
+
 ---
 
 ## Composition layers
@@ -57,6 +135,7 @@ apps/scm/visibility/
     apps.py         # AppConfig only; no models
     selectors.py    # Read composition over the other apps' read models
     read_models.py  # VisibilityObject and its presentation groupings
+    map_positions.py # Which position a marker may claim, and of what kind
     geojson.py      # The GeoJSON contract for Mapbox
     context.py      # Map context for the shipment and container detail pages
     mapbox.py       # Browser-side Mapbox configuration

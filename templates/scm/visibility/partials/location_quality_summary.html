@@ -1,0 +1,69 @@
+{% load i18n %}
+
+{% comment %}
+  The coverage summary: how complete the location data is, in two rows of numbers.
+
+  The container numbers are LOC-4's own — `quality.coverage` is the `MapCoverage`
+  the Control Tower's map is drawn from — so this page and that map cannot disagree
+  about how much of the fleet is plottable. "Plottable" is defined once, in
+  map_positions, and read here.
+
+  The evidence numbers count events that name a place, which is the same set the two
+  queues below aggregate. An event that happened nowhere — a bill of lading issued —
+  is not evidence about a location and is not counted as unresolved.
+{% endcomment %}
+
+<section class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+  {% include "scm/components/metric_card.html" with label=_("Locations mapped") value=quality.summary.locations_with_coordinates icon="fa-map-location-dot" color="success" trend_label=_("Active locations with coordinates") %}
+  {% include "scm/components/metric_card.html" with label=_("Missing coordinates") value=quality.summary.locations_missing_coordinates icon="fa-location-crosshairs" color="warning" trend_label=_("Cannot be drawn yet") %}
+  {% include "scm/components/metric_card.html" with label=_("Containers plottable") value=quality.coverage.plotted_containers icon="fa-box" color="success" trend_label=_("Physical or tracking position") %}
+  {% include "scm/components/metric_card.html" with label=_("Containers unplaced") value=quality.coverage.unplottable_containers icon="fa-circle-question" trend_label=_("No position the map can draw") %}
+</section>
+
+<section class="app-card mt-3">
+  {% include "scm/components/section_header.html" with title=_("Tracking location evidence") subtitle=_("Events that name a place") %}
+
+  <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+    <span>
+      <span class="text-success">●</span>
+      {% blocktranslate trimmed count count=quality.summary.evidence_resolved %}
+        {{ count }} resolved
+      {% plural %}
+        {{ count }} resolved
+      {% endblocktranslate %}
+    </span>
+    <span>
+      <span class="text-warning">◆</span>
+      {% blocktranslate trimmed count count=quality.summary.evidence_ambiguous %}
+        {{ count }} ambiguous
+      {% plural %}
+        {{ count }} ambiguous
+      {% endblocktranslate %}
+    </span>
+    <span class="text-base-content/70">
+      <span class="text-base-content/40">○</span>
+      {% blocktranslate trimmed count count=quality.summary.evidence_unresolved %}
+        {{ count }} unresolved
+      {% plural %}
+        {{ count }} unresolved
+      {% endblocktranslate %}
+    </span>
+    {% if quality.coverage.containers_missing_coordinates %}
+      <span class="text-warning">
+        <i class="fa fa-location-crosshairs"></i>
+        {% blocktranslate trimmed count count=quality.coverage.containers_missing_coordinates %}
+          {{ count }} container is at a place with no coordinates
+        {% plural %}
+          {{ count }} containers are at places with no coordinates
+        {% endblocktranslate %}
+      </span>
+    {% endif %}
+  </div>
+
+  <p class="text-xs text-base-content/40 mt-3 pt-3 border-t border-base-300">
+    {% blocktranslate trimmed %}
+      Unmatched evidence is stored in full and still shown on container timelines.
+      Only the link to a canonical location is missing.
+    {% endblocktranslate %}
+  </p>
+</section>

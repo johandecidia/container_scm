@@ -1,0 +1,61 @@
+{% load i18n %}
+
+{% comment %}
+  What is canonically routed to this location, or somewhere inside it.
+
+  Shared by the Overview panel and the Expected tab so the two cannot come to
+  describe the same set differently. Rows are the Arrivals queue's own —
+  `arrival_row.html` — so a shipment reads the same here as it does on the
+  fleet-wide queue.
+
+  The empty state is careful. "Nothing is expected here" and "we cannot tell you
+  what is expected" are different claims, and this one is the first: the answer is
+  known, and it is none. It goes on to say what would put something in the list,
+  because for a team that has not started setting canonical destinations the list
+  will be empty for a reason they can act on.
+
+  Nothing here is matched on names. A shipment whose destination is the text
+  "Gothenburg" does not appear, and that is the point.
+{% endcomment %}
+
+{% if workspace.expected.objects %}
+  <p class="text-sm text-base-content/60 mb-3">
+    {% blocktranslate trimmed count count=workspace.expected.container_count %}
+      {{ count }} container arriving in the next 30 days
+    {% plural %}
+      {{ count }} containers arriving in the next 30 days
+    {% endblocktranslate %}
+  </p>
+  <ul class="divide-y divide-base-200">
+    {% for object in workspace.expected.objects %}
+      {% include "scm/visibility/partials/arrival_row.html" with object=object %}
+    {% endfor %}
+  </ul>
+  <p class="text-xs text-base-content/40 mt-4 pt-4 border-t border-base-300">
+    {% blocktranslate trimmed %}
+      Shipments whose canonical destination is this location or a location inside it.
+      Carrier destination text is not matched against this location's name.
+    {% endblocktranslate %}
+  </p>
+{% else %}
+  <div class="flex items-start gap-3 py-2">
+    <i class="fa fa-circle-info text-base-content/30 pt-1 w-4 shrink-0"></i>
+    <div class="min-w-0">
+      <p class="text-sm text-base-content/70">
+        {% translate "Nothing is expected here in the next 30 days." %}
+      </p>
+      <p class="text-xs text-base-content/50 mt-1">
+        {% blocktranslate trimmed %}
+          A shipment appears here once its destination is set to this location. A
+          destination recorded only as text is not matched against this location's
+          name — that would claim arrivals bound for a different terminal in the
+          same city.
+        {% endblocktranslate %}
+      </p>
+      <a href="{% url 'visibility:arrivals' %}" class="text-xs link link-hover inline-flex items-center gap-1 mt-2">
+        {% translate "See all upcoming arrivals" %}
+        <i class="fa fa-arrow-right text-[0.6rem]"></i>
+      </a>
+    </div>
+  </div>
+{% endif %}

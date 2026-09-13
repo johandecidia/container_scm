@@ -12,14 +12,22 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from apps.scm.shipments.models import Shipment, ShipmentContainer
-from apps.scm.visibility.geojson import overview_feature_collection
+from apps.scm.visibility.geojson import map_feature_collection
+from apps.scm.visibility.map_positions import PositionClass, get_operational_map
 from apps.scm.visibility.selectors import (
     get_container_journey_events,
     get_shipment_journey_events,
     list_visibility_objects,
 )
 
-from .factories import TEST_STORAGES, ingest_maersk_events, make_container, make_user_and_team
+from .factories import (
+    TEST_STORAGES,
+    ingest_maersk_events,
+    make_container,
+    make_location,
+    make_user_and_team,
+    place_container_at,
+)
 
 
 class VisibilityTeamFixture(TestCase):
@@ -43,6 +51,18 @@ class VisibilityTeamFixture(TestCase):
         ingest_maersk_events(cls.team_a, cls.container_a, shipment=cls.shipment_a)
         ingest_maersk_events(cls.team_b, cls.container_b, shipment=cls.shipment_b)
 
+        # Each team has its own Oceanterminalen, at the same coordinates. A
+        # forgotten team filter would therefore produce a believable extra marker
+        # rather than an obvious error, which is exactly the leak worth testing.
+        cls.terminal_a = make_location(
+            cls.team_a, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        cls.terminal_b = make_location(
+            cls.team_b, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        place_container_at(cls.team_a, cls.container_a, cls.terminal_a)
+        place_container_at(cls.team_b, cls.container_b, cls.terminal_b)
+
     def client_for(self, user) -> Client:
         client = Client()
         client.force_login(user)
@@ -64,11 +84,18 @@ class SelectorIsolationTest(VisibilityTeamFixture):
     def test_container_journey_events_are_scoped_to_the_team(self):
         self.assertEqual(get_container_journey_events(self.team_a, self.container_b), [])
 
-    def test_overview_geojson_carries_only_one_teams_features(self):
-        features = overview_feature_collection(list_visibility_objects(self.team_a))["features"]
+    def test_map_geojson_carries_only_one_teams_markers(self):
+        operational_map = get_operational_map(self.team_a, list_visibility_objects(self.team_a))
+        features = map_feature_collection(operational_map)["features"]
         self.assertTrue(features)
         for feature in features:
-            self.assertEqual(feature["properties"]["object_id"], self.shipment_a.pk)
+            self.assertEqual(feature["properties"]["location_id"], self.terminal_a.pk)
+            self.assertNotEqual(feature["properties"]["location_id"], self.terminal_b.pk)
+
+    def test_the_coverage_counts_describe_only_the_callers_team(self):
+        """One container each. A leak would show as two."""
+        coverage = get_operational_map(self.team_a, list_visibility_objects(self.team_a)).coverage
+        self.assertEqual(coverage.physical_containers, 1)
 
 
 @override_settings(STORAGES=TEST_STORAGES)
@@ -90,8 +117,10 @@ class EndpointIsolationTest(VisibilityTeamFixture):
     def test_overview_map_data_returns_only_the_callers_team(self):
         response = self.client_for(self.user_a).get(reverse("visibility:map_data"))
         self.assertEqual(response.status_code, 200)
-        for feature in response.json()["features"]:
-            self.assertEqual(feature["properties"]["object_id"], self.shipment_a.pk)
+        features = response.json()["features"]
+        self.assertTrue(features)
+        for feature in features:
+            self.assertEqual(feature["properties"]["location_id"], self.terminal_a.pk)
 
     def test_shipment_map_data_of_another_team_is_not_found(self):
         response = self.client_for(self.user_a).get(reverse("visibility:shipment_map_data", args=[self.shipment_b.pk]))
@@ -103,23 +132,38 @@ class EndpointIsolationTest(VisibilityTeamFixture):
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_object_panel_of_another_teams_shipment_is_not_found(self):
+    def test_a_map_panel_for_another_teams_location_is_not_found(self):
+        """The id in the URL is the attack: the lookup filters on team as well."""
         response = self.client_for(self.user_a).get(
-            reverse("visibility:object_panel", args=["shipment", self.shipment_b.pk])
+            reverse("visibility:map_location_panel", args=[PositionClass.PHYSICAL, self.terminal_b.pk])
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_object_panel_of_another_teams_container_is_not_found(self):
+    def test_an_unknown_position_class_is_not_found(self):
         response = self.client_for(self.user_a).get(
-            reverse("visibility:object_panel", args=["container", self.container_b.pk])
+            reverse("visibility:map_location_panel", args=["vessel", self.terminal_a.pk])
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_an_unknown_object_kind_is_not_found(self):
-        response = self.client_for(self.user_a).get(
-            reverse("visibility:object_panel", args=["vessel", self.shipment_a.pk])
+    def test_a_map_panel_requires_login(self):
+        response = Client().get(
+            reverse("visibility:map_location_panel", args=[PositionClass.PHYSICAL, self.terminal_a.pk])
         )
-        self.assertEqual(response.status_code, 404)
+        self.assertIn(response.status_code, (302, 403))
+
+    def test_a_map_panel_for_an_own_location_lists_only_own_containers(self):
+        """Asserted on the workspace links, not the numbers.
+
+        Both teams' fixtures carry the same container number — the carrier's own
+        published test reference — so a number appearing in the response proves
+        nothing about whose box it is. The primary key does.
+        """
+        response = self.client_for(self.user_a).get(
+            reverse("visibility:map_location_panel", args=[PositionClass.PHYSICAL, self.terminal_a.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("containers:detail", args=[self.container_a.pk]))
+        self.assertNotContains(response, reverse("containers:detail", args=[self.container_b.pk]))
 
     def test_own_shipment_map_data_is_served(self):
         response = self.client_for(self.user_a).get(reverse("visibility:shipment_map_data", args=[self.shipment_a.pk]))

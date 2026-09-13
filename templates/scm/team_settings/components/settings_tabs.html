@@ -1,0 +1,29 @@
+{% load i18n %}
+
+{% comment %}
+  The Settings sections. Reached only by team administrators — the tabs are a way
+  around the area, not the thing that closes it; every view behind them carries
+  `@scm_team_admin_required`.
+
+  Usage: {% include "scm/team_settings/components/settings_tabs.html" with active="members" %}
+{% endcomment %}
+
+<div role="tablist" class="tabs tabs-border mb-6">
+  <a role="tab" href="{% url 'team_settings:members' %}"
+     class="tab {% if active == 'members' %}tab-active{% endif %}">
+    <i class="fa fa-users mr-2"></i>{% translate "Members" %}
+  </a>
+  <a role="tab" href="{% url 'team_settings:tracking' %}"
+     class="tab {% if active == 'tracking' %}tab-active{% endif %}">
+    <i class="fa fa-satellite-dish mr-2"></i>{% translate "Tracking" %}
+  </a>
+  {% comment %}
+    Container settings is the conditions page, on the route it has always had. It is
+    a tab here rather than a copy: the team's grading vocabulary is edited in one
+    place, and this is a way in, not a second implementation of it.
+  {% endcomment %}
+  <a role="tab" href="{% url 'containers:condition_list' %}"
+     class="tab {% if active == 'containers' %}tab-active{% endif %}">
+    <i class="fa fa-box mr-2"></i>{% translate "Container settings" %}
+  </a>
+</div>

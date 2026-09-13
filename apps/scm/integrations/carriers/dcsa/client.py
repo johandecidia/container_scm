@@ -27,7 +27,7 @@ from apps.scm.integrations.carriers.exceptions import (
     CarrierNoDataError,
 )
 from apps.scm.integrations.carriers.http import CarrierHttpClient, HttpConfig
-from apps.scm.integrations.carriers.oauth import ApiKeyAuth, ClientCredentialsAuth
+from apps.scm.integrations.carriers.oauth import ApiKeyAuth, ClientCredentialsAuth, ClientIdSecretHeaderAuth
 from apps.scm.integrations.carriers.schemas import ContainerDiscoveryResult
 
 if TYPE_CHECKING:
@@ -38,7 +38,39 @@ logger = logging.getLogger(__name__)
 # Supported authentication styles, selected with config["auth_style"].
 AUTH_API_KEY = "api_key_header"
 AUTH_OAUTH2 = "oauth2_client_credentials"
-SUPPORTED_AUTH_STYLES = (AUTH_API_KEY, AUTH_OAUTH2)
+# Two static credential headers, the IBM API Connect gateway style: a portal-issued
+# client id and secret sent on every request, with no token exchange. Hapag-Lloyd's
+# Track & Trace works this way.
+AUTH_CLIENT_ID_SECRET_HEADERS = "client_id_secret_headers"
+SUPPORTED_AUTH_STYLES = (AUTH_API_KEY, AUTH_OAUTH2, AUTH_CLIENT_ID_SECRET_HEADERS)
+
+# Header names for AUTH_CLIENT_ID_SECRET_HEADERS when a carrier's config names none.
+# The IBM API Connect defaults, which is the only gateway this style exists for; a
+# deployment using a different prefix sets both names in Integration.config.
+DEFAULT_CLIENT_ID_HEADER = "X-IBM-Client-Id"
+DEFAULT_CLIENT_SECRET_HEADER = "X-IBM-Client-Secret"
+
+# Which credential keys each auth style actually reads — see `_build_auth` below,
+# which is the only consumer and the reason this lives here. The Settings form that
+# collects a carrier's credentials asks this rather than keeping its own table: a
+# second list would eventually offer a field the client never reads, and the person
+# filling it in would have no way to tell.
+_CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
+    AUTH_API_KEY: ("api_key",),
+    AUTH_CLIENT_ID_SECRET_HEADERS: ("client_id", "client_secret"),
+    AUTH_OAUTH2: ("client_id", "client_secret"),
+}
+
+
+def credential_fields_for_auth_style(auth_style: str) -> tuple[str, ...]:
+    """The credential keys a DCSA client built for ``auth_style`` will read.
+
+    Returns ``()`` for an unrecognised style rather than guessing — a caller with no
+    fields to collect must say the carrier cannot be configured here, not invent an
+    API key field for an auth flow that has none.
+    """
+    return _CREDENTIAL_FIELDS.get((auth_style or "").strip(), ())
+
 
 SUPPORTED_REFERENCE_KINDS = frozenset(
     {
@@ -93,6 +125,8 @@ class DcsaClientConfig:
     auth_style: str
     reference_params: dict[str, str]
     api_key_header_name: str = ""
+    client_id_header_name: str = ""
+    client_secret_header_name: str = ""
     token_url: str = ""
     scope: str = ""
     extra_headers: dict | None = None
@@ -207,6 +241,10 @@ def resolve_dcsa_config(
         auth_style=auth_style,
         reference_params=dict(reference_params),
         api_key_header_name=str(config.get("api_key_header_name") or "").strip(),
+        # Defaulted rather than required: the gateway this style exists for uses these
+        # names, and a carrier behind a differently-prefixed one overrides both.
+        client_id_header_name=str(config.get("client_id_header_name") or DEFAULT_CLIENT_ID_HEADER).strip(),
+        client_secret_header_name=str(config.get("client_secret_header_name") or DEFAULT_CLIENT_SECRET_HEADER).strip(),
         token_url=str(config.get("token_url") or "").strip(),
         scope=str(config.get("scope") or "").strip(),
         extra_headers=config.get("extra_headers") or {},
@@ -253,6 +291,14 @@ class DcsaCarrierClient(BaseCarrierClient):
             return ApiKeyAuth(
                 header_name=config.api_key_header_name,
                 api_key=credentials.get("api_key", ""),
+                provider_code=self.provider_code,
+            )
+        if config.auth_style == AUTH_CLIENT_ID_SECRET_HEADERS:
+            return ClientIdSecretHeaderAuth(
+                client_id_header_name=config.client_id_header_name,
+                client_secret_header_name=config.client_secret_header_name,
+                client_id=credentials.get("client_id", ""),
+                client_secret=credentials.get("client_secret", ""),
                 provider_code=self.provider_code,
             )
         return ClientCredentialsAuth(

@@ -17,6 +17,20 @@ knowing where they came from.
 Fetch happens before any of it. A Traqo outage, a rejected key or an account problem
 therefore leaves the container exactly as it was — no subscription, no state change,
 and above all no effect on tracking events any other source already produced.
+
+Fetch and write are separate functions for the same reason they happen in that order::
+
+    fetch_and_map_traqo_container   one request, mapped, nothing written
+    write_traqo_response            payload + events onto a watch that exists
+    store_traqo_container_result    resolve the watch, then the writes above, no request
+    ingest_traqo_container          fetch then store, in that order — the ordinary path
+
+Carrier probing (:mod:`.carrier_probe`) uses the first on its own, because it asks
+several candidate carriers and only one of the answers is worth keeping; it then hands
+that answer to the third. Scheduled refresh (:mod:`.scheduled`) uses the first and the
+*second*, because its watch already exists and the engine owns its run. So there is one
+Traqo mapper, one write path and one rule about what a usable payload is, however the
+payload was obtained and whoever asked for it.
 """
 
 from __future__ import annotations
@@ -35,7 +49,9 @@ from .eta import read_traqo_eta_observation
 from .mapper import map_traqo_container_payload
 
 if TYPE_CHECKING:
+    from apps.scm.containers.models import Container
     from apps.scm.tracking.models import TrackingSubscription, TrackingSyncRun
+    from apps.scm.tracking.sync import SyncOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +93,59 @@ def get_traqo_provider():
     return provider
 
 
+@dataclass(frozen=True)
+class TraqoContainerResponse:
+    """One Traqo container answer, fetched and mapped, with nothing written yet.
+
+    The unit of work both Traqo callers share. :func:`ingest_traqo_container` hands it
+    straight to :func:`store_traqo_container_result`; the carrier probe
+    (:mod:`.carrier_probe`) inspects it first, because for the probe the answer to
+    "is this the carrier" *is* whether this object turned out to hold real data.
+
+    ``sealine`` is what was asked with. ``reported_sealine`` is what Traqo says the
+    shipment actually moves under, which is the one worth believing — the two are the
+    same on every payload seen so far, and if they ever differ the request is a
+    question and the response is the answer.
+    """
+
+    container_number: str
+    sealine: str
+    payload: dict = field(default_factory=dict)
+    events: tuple = ()
+    sandbox: bool = False
+
+    @property
+    def data(self) -> dict:
+        """The shipment object. Always a dict — the client rejects an envelope without one."""
+        data = self.payload.get("data") if isinstance(self.payload, dict) else None
+        return data if isinstance(data, dict) else {}
+
+    @property
+    def reported_sealine(self) -> str:
+        """The SCAC Traqo says this shipment moves under, or "" when it does not say."""
+        return str(self.data.get("sealine") or "").strip().upper()
+
+    @property
+    def reported_reference(self) -> str:
+        """The reference Traqo echoes back, or "" — checked, never trusted blindly."""
+        return str(self.data.get("reference_number") or "").strip().upper()
+
+    @property
+    def is_for_requested_container(self) -> bool:
+        """Whether the shipment returned is the one that was asked about.
+
+        An absent ``reference_number`` is not a mismatch: Traqo has answered about the
+        container in the URL and simply not echoed it. A *different* one is, and it
+        must never be mapped onto the container we asked about.
+        """
+        reported = self.reported_reference
+        return not reported or reported == self.container_number
+
+    @property
+    def has_events(self) -> bool:
+        return bool(self.events)
+
+
 def fetch_traqo_container(*, container_number: str, sealine: str, sandbox: bool = True, client=None) -> dict:
     """Fetch one container's Traqo response envelope.
 
@@ -85,6 +154,40 @@ def fetch_traqo_container(*, container_number: str, sealine: str, sandbox: bool 
     """
     client = client or TraqoClient.from_settings(sandbox=sandbox)
     return client.get_container(container_number, sealine)
+
+
+def fetch_and_map_traqo_container(
+    *,
+    container_number: str,
+    sealine: str,
+    sandbox: bool = True,
+    client=None,
+) -> TraqoContainerResponse:
+    """Fetch one container from Traqo and map its events. Writes nothing.
+
+    The half of :func:`ingest_traqo_container` that spends a request, without the half
+    that records the result — which is exactly what carrier probing needs: it asks
+    several candidate carriers and must persist only the one that answers.
+
+    Kept as the single fetch-and-map for Traqo on purpose. A probe with its own reader
+    would be a second opinion on what a valid Traqo payload is, and the two would drift.
+
+    Raises the client's typed carrier errors.
+    """
+    payload = fetch_traqo_container(
+        container_number=container_number,
+        sealine=sealine,
+        sandbox=sandbox,
+        client=client,
+    )
+    events = map_traqo_container_payload(payload, container_number=container_number)
+    return TraqoContainerResponse(
+        container_number=(container_number or "").strip().upper(),
+        sealine=sealine,
+        payload=payload,
+        events=tuple(events),
+        sandbox=sandbox,
+    )
 
 
 def lookup_traqo_carrier(*, reference: str, sandbox: bool = True, client=None):
@@ -113,6 +216,9 @@ def ingest_traqo_container(
     sealine: str,
     sandbox: bool = True,
     client=None,
+    carrier_code: str = "",
+    carrier_name: str = "",
+    carrier_source: str = "",
 ) -> TraqoIngestResult:
     """Fetch a container from Traqo and persist the result through tracking ingestion.
 
@@ -120,21 +226,52 @@ def ingest_traqo_container(
     container is neither replaced nor touched, so a container can be watched through
     Maersk Direct and through Traqo at once and the two can be compared.
 
+    ``carrier_code`` / ``carrier_name`` / ``carrier_source`` record *who is moving the
+    box*, which for a Traqo watch is not Traqo. They are recorded on the subscription
+    beside ``provider = traqo`` so the container reads as "carrier ONE, tracked via
+    Traqo" rather than as though Traqo were the line. Left empty — as the benchmark and
+    the POC command do, where the caller supplied only a sealine — the carrier stays
+    honestly unknown rather than being back-inferred from the sealine, because the
+    sealine says which carrier was *asked about*, not which one is verified.
+
     Raises the client's typed carrier errors — nothing is written when the fetch fails.
     """
-    from apps.scm.tracking.eta_observations import record_provider_eta_observation
-    from apps.scm.tracking.manual_refresh import get_or_create_container_subscription
-    from apps.scm.tracking.services import create_sync_run
-    from apps.scm.tracking.sync import apply_sync_outcome, store_verified_carrier_result
-
-    container_number = container.container_id
-    payload = fetch_traqo_container(
-        container_number=container_number,
+    response = fetch_and_map_traqo_container(
+        container_number=container.container_id,
         sealine=sealine,
         sandbox=sandbox,
         client=client,
     )
-    events = map_traqo_container_payload(payload, container_number=container_number)
+    return store_traqo_container_result(
+        team=team,
+        container=container,
+        response=response,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+        carrier_source=carrier_source,
+    )
+
+
+def store_traqo_container_result(
+    *,
+    team,
+    container,
+    response: TraqoContainerResponse,
+    carrier_code: str = "",
+    carrier_name: str = "",
+    carrier_source: str = "",
+) -> TraqoIngestResult:
+    """Persist a Traqo container answer that has already been fetched and mapped.
+
+    Resolves the watch, then records the answer on it through
+    :func:`write_traqo_response`. ``ingest_traqo_container`` reaches this after fetching,
+    and carrier probing reaches it with the payload that proved the carrier rather than
+    fetching the same thing again. One caller spends a request and one does not; both
+    produce the same rows, in the same order, through the same services.
+    """
+    from apps.scm.tracking.manual_refresh import get_or_create_container_subscription
+    from apps.scm.tracking.services import create_sync_run
+    from apps.scm.tracking.sync import apply_sync_outcome
 
     # Ensures the provider row carries Traqo's base URL before the subscription helper
     # get_or_creates the same row by code.
@@ -142,53 +279,121 @@ def ingest_traqo_container(
     subscription = get_or_create_container_subscription(
         team=team,
         container=container,
-        carrier_code=PROVIDER_CODE,
-        carrier_name=PROVIDER_NAME,
+        provider_code=PROVIDER_CODE,
+        provider_name=PROVIDER_NAME,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+        carrier_source=carrier_source,
+        # The sealine is what a later fetch needs in order to ask Traqo the same
+        # question again — which is what makes the watch schedulable at all.
+        provider_reference=response.sealine,
     )
     if subscription is None:  # pragma: no cover — only if the provider code is blank
         raise RuntimeError("Could not resolve a Traqo tracking subscription.")
 
     sync_run = create_sync_run(team=team, subscription=subscription, provider=subscription.provider)
-    outcome = store_verified_carrier_result(subscription, raw_payload=payload, events=events)
-    apply_sync_outcome(subscription, sync_run, outcome)
+    write = write_traqo_response(subscription=subscription, container=container, response=response)
+    # Applies the outcome and, last of all, runs the ETA observation the write deferred.
+    apply_sync_outcome(subscription, sync_run, write.outcome)
 
-    # After the events, because whether this forecast is worth recording depends on what
-    # they say: a box the events have already brought home has no arrival left to
-    # forecast, however Traqo still describes it.
-    observation = read_traqo_eta_observation(payload, observed_at=timezone.now())
-    eta_row = (
-        record_provider_eta_observation(
-            team=team,
+    return write.as_ingest_result(sync_run=sync_run)
+
+
+@dataclass
+class TraqoResponseWrite:
+    """One Traqo answer recorded on an existing watch, in the order the halves require.
+
+    The unit the two callers share. Its ``outcome`` is the payload-and-events half, which
+    is already persisted by the time this exists; ``record_eta_observation`` is the half
+    that must wait until the outcome has been applied, and it is attached to the outcome
+    as :attr:`~apps.scm.tracking.sync.SyncOutcome.after_apply` rather than called here.
+
+    That is what lets a scheduled cycle and an activation produce identical state. The
+    scheduler owns the run and applies the outcome itself; activation applies it directly.
+    Neither has to remember to record the ETA, and neither can record it too early.
+    """
+
+    subscription: TrackingSubscription
+    container: Container
+    response: TraqoContainerResponse
+    outcome: SyncOutcome
+    eta_observation_recorded: bool = False
+
+    def record_eta_observation(self) -> None:
+        """Record Traqo's own arrival forecast, if it made one worth keeping.
+
+        Runs after the events, because whether this forecast is worth recording depends on
+        what they say: a box the events have already brought home has no arrival left to
+        forecast, however Traqo still describes it.
+        """
+        from apps.scm.tracking.eta_observations import record_provider_eta_observation
+
+        observation = read_traqo_eta_observation(self.response.payload, observed_at=timezone.now())
+        if observation is None:
+            return
+        eta_row = record_provider_eta_observation(
+            team=self.subscription.team,
             observation=observation,
-            shipment=subscription.shipment,
-            container=container,
+            shipment=self.subscription.shipment,
+            container=self.container,
         )
-        if observation is not None
-        else None
+        self.eta_observation_recorded = eta_row is not None
+
+    def as_ingest_result(self, *, sync_run: TrackingSyncRun | None = None) -> TraqoIngestResult:
+        """Read this write into the result shape the Traqo callers report."""
+        return TraqoIngestResult(
+            container_number=self.container.container_id,
+            sealine=self.response.sealine,
+            sandbox=self.response.sandbox,
+            events_mapped=len(self.response.events),
+            events_created=self.outcome.events_created,
+            events_updated=self.outcome.events_updated,
+            events_failed=self.outcome.events_failed,
+            raw_payloads_created=self.outcome.raw_payloads_created,
+            subscription=self.subscription,
+            sync_run=sync_run,
+            payload=self.response.payload,
+            eta_observation_recorded=self.eta_observation_recorded,
+        )
+
+
+def write_traqo_response(
+    *,
+    subscription: TrackingSubscription,
+    container: Container,
+    response: TraqoContainerResponse,
+) -> TraqoResponseWrite:
+    """Record a Traqo answer on a watch that already exists. Spends no request.
+
+    The single write path for Traqo events, whoever obtained the payload: activation after
+    discovery, a manual refresh and a scheduled poll all arrive here. The raw payload and
+    the events go through ``store_verified_carrier_result`` — the provider-neutral one —
+    so Traqo events land in ``TrackingEvent`` through the same fingerprinting and
+    idempotent upsert as a carrier's, and polling the same payload twice creates nothing.
+
+    Does *not* apply the outcome: the caller owns the run. See :class:`TraqoResponseWrite`.
+    """
+    from apps.scm.tracking.sync import store_verified_carrier_result
+
+    events = list(response.events)
+    outcome = store_verified_carrier_result(subscription, raw_payload=response.payload, events=events)
+
+    write = TraqoResponseWrite(
+        subscription=subscription,
+        container=container,
+        response=response,
+        outcome=outcome,
     )
+    outcome.after_apply = write.record_eta_observation
 
     logger.info(
-        "Traqo ingest for %s (%s, %s): %d mapped, %d created, %d updated, ETA observation %s.",
-        container_number,
-        sealine,
-        "sandbox" if sandbox else "live",
+        "Traqo answer for %s (%s, %s) recorded on subscription %s: %d mapped, %d created, %d updated.",
+        container.container_id,
+        response.sealine,
+        "sandbox" if response.sandbox else "live",
+        subscription.pk,
         len(events),
         outcome.events_created,
         outcome.events_updated,
-        "recorded" if eta_row else "not recorded",
     )
-
-    return TraqoIngestResult(
-        container_number=container_number,
-        sealine=sealine,
-        sandbox=sandbox,
-        events_mapped=len(events),
-        events_created=outcome.events_created,
-        events_updated=outcome.events_updated,
-        events_failed=outcome.events_failed,
-        raw_payloads_created=outcome.raw_payloads_created,
-        subscription=subscription,
-        sync_run=sync_run,
-        payload=payload,
-        eta_observation_recorded=eta_row is not None,
-    )
+    return write

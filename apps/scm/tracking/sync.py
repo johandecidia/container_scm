@@ -27,6 +27,7 @@ FAILED
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from django.utils import timezone
@@ -57,7 +58,7 @@ from .services import (
     store_raw_payload,
     update_subscription_sync_state,
 )
-from .sources import get_non_carrier_source
+from .sources import get_non_carrier_source, get_scheduled_provider_sync
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,14 @@ class SyncOutcome:
     raw_payloads_created: int = 0
     retry_after_seconds: int | None = None
     metadata: dict = field(default_factory=dict)
+    # A derivation that must not run until the outcome has been *applied*, because it
+    # depends on the shipment's milestones already being current. Traqo's ETA observation
+    # is the case that forces it: recorded before the new events had moved the shipment, a
+    # forecast would be written against a journey the same batch of events had already
+    # brought home. Set by the provider adapter that needs it; run last by
+    # :func:`apply_sync_outcome`, so the ordering is stated once and holds for every
+    # caller — activation, manual refresh and the scheduled poller alike.
+    after_apply: Callable[[], None] | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -208,10 +217,21 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
 
     provider_code = subscription.provider.code
 
-    # 0. Is this poller even the right caller? A non-carrier provider is a working
-    # provider whose data arrives another way, so stepping aside is the correct
-    # outcome — not a fault, and specifically not NOT_CONFIGURED, which would mark
-    # the subscription untrackable and stop the UI offering it at all.
+    # 0. Who fetches for this provider?
+    #
+    # A provider outside the carrier registry that can nonetheless refresh an established
+    # watch — Traqo — supplies its own fetch here and hands back the same SyncOutcome the
+    # carrier branch below produces. Everything after that point is shared: the run, the
+    # raw payload, event upsert, state transition and cadence. The alternative, a fake
+    # carrier adapter, would have had to pretend a sealine was a carrier credential.
+    scheduled_sync = get_scheduled_provider_sync(provider_code)
+    if scheduled_sync is not None:
+        return scheduled_sync(subscription)
+
+    # A non-carrier provider with no sync of its own is a working provider whose data
+    # arrives another way, so stepping aside is the correct outcome — not a fault, and
+    # specifically not NOT_CONFIGURED, which would mark the subscription untrackable and
+    # stop the UI offering it at all.
     non_carrier = get_non_carrier_source(provider_code)
     if non_carrier is not None:
         return SyncOutcome(
@@ -258,7 +278,7 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
             metadata={"no_data": True, "carrier_message": str(exc)},
         )
     except CarrierError as exc:
-        return _outcome_for_carrier_error(exc)
+        return outcome_for_carrier_error(exc)
 
     # 4. Store the raw response before trusting it.
     raw_payload_record = store_raw_payload(
@@ -346,8 +366,14 @@ def store_verified_carrier_result(
     return _persist_events(subscription, events, raw_payload_record)
 
 
-def _outcome_for_carrier_error(exc: CarrierError) -> SyncOutcome:
-    """Classify a typed carrier error into a sync outcome."""
+def outcome_for_carrier_error(exc: CarrierError) -> SyncOutcome:
+    """Classify a typed carrier error into a sync outcome.
+
+    Public because a non-carrier provider that fetches for itself raises the same typed
+    errors and must be classified the same way — a Traqo timeout has to back off exactly
+    as a carrier timeout does, and a second opinion on what "transient" means is how two
+    providers end up with two retry policies.
+    """
     for error_class, error_type in _SKIP_ERRORS.items():
         if isinstance(exc, error_class):
             return SyncOutcome(
@@ -465,6 +491,8 @@ def apply_sync_outcome(
     if outcome.succeeded:
         _complete_if_terminal(subscription)
 
+    _run_after_apply(subscription, outcome)
+
     logger.info(
         "Sync %s for subscription %s: %d created, %d updated (%s).",
         outcome.status,
@@ -473,6 +501,20 @@ def apply_sync_outcome(
         outcome.events_updated,
         outcome.error_type or "no error",
     )
+
+
+def _run_after_apply(subscription: TrackingSubscription, outcome: SyncOutcome) -> None:
+    """Run the outcome's post-application step, if it has one.
+
+    Failing here must not fail the sync, for the same reason the shipment derivation must
+    not: the events are already stored, and what follows from them can be re-derived.
+    """
+    if outcome.after_apply is None:
+        return
+    try:
+        outcome.after_apply()
+    except Exception:  # noqa: BLE001 — stored events must survive a derivation bug
+        logger.exception("Post-sync step failed for subscription %s.", subscription.pk)
 
 
 def _integration_config(subscription: TrackingSubscription) -> dict:

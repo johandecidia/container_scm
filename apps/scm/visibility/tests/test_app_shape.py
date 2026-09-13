@@ -31,9 +31,35 @@ class VisibilityAppShapeTest(SimpleTestCase):
         self.assertFalse((APP_DIR / "services.py").exists())
 
     def test_it_has_the_files_it_does_need(self):
-        for name in ("apps.py", "selectors.py", "read_models.py", "geojson.py", "views.py", "urls.py"):
+        for name in (
+            "apps.py",
+            "selectors.py",
+            "read_models.py",
+            "geojson.py",
+            "map_positions.py",
+            "location_quality.py",
+            "views.py",
+            "urls.py",
+        ):
             with self.subTest(name=name):
                 self.assertTrue((APP_DIR / name).exists(), f"Missing apps/scm/visibility/{name}")
+
+    def test_no_module_in_the_app_writes(self):
+        """The pressure this locks down is a page that "just saves this one thing".
+
+        LOC-5 is the case that made it worth stating for the whole app rather than
+        only for the queues: its rows are edits to location master data, and the
+        obvious shortcut is for the read model to record the alias itself. It does
+        not — the write lives in ``containers``, which owns that data — and this
+        test is what stops the shortcut being taken later.
+        """
+        for module in sorted(APP_DIR.glob("**/*.py")):
+            if "tests" in module.parts:
+                continue
+            source = module.read_text()
+            for forbidden in ("models.Model", "BaseTeamModel", ".objects.create(", ".save(", ".delete("):
+                with self.subTest(module=str(module), forbidden=forbidden):
+                    self.assertNotIn(forbidden, source)
 
     def test_the_work_queues_own_no_state_either(self):
         """Exceptions and Arrivals are views over supply chain state, not records of it.

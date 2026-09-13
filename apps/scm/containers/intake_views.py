@@ -21,7 +21,7 @@ from django.views.decorators.http import require_POST
 
 from apps.scm.decorators import scm_login_required
 
-from .forms import ContainerCsvImportForm, ContainerPasteForm, QuickContainerForm
+from .forms import ContainerAttributesForm, ContainerCsvImportForm, ContainerPasteForm, QuickContainerForm
 from .intake import (
     bulk_create_containers,
     create_or_get_container,
@@ -107,7 +107,7 @@ def container_create(request):
     team = request.default_team
     purchase_order = _purchase_order(request)
     if request.method == "POST":
-        form = QuickContainerForm(request.POST)
+        form = QuickContainerForm(request.POST, team=team)
         if form.is_valid():
             try:
                 container, created = create_or_get_container(
@@ -115,6 +115,7 @@ def container_create(request):
                     user=request.user,
                     number=form.cleaned_data["container_number"],
                     carrier=form.cleaned_data.get("carrier", ""),
+                    attributes=form.container_attributes(),
                 )
             except ValidationError as exc:
                 form.add_error("container_number", exc)
@@ -137,7 +138,7 @@ def container_create(request):
         team,
         tab="single",
         body_template=SINGLE_TEMPLATE,
-        form=QuickContainerForm(),
+        form=QuickContainerForm(team=team),
         purchase_order=purchase_order,
     )
 
@@ -166,10 +167,17 @@ def container_import_paste(request):
     team = request.default_team
     purchase_order = _purchase_order(request)
     if request.method == "POST":
-        form = ContainerPasteForm(request.POST)
+        form = ContainerPasteForm(request.POST, team=team)
         if form.is_valid():
             entries = entries_from_text(form.cleaned_data["numbers"], form.cleaned_data.get("carrier", ""))
-            return _preview_response(request, team, entries=entries, tab="paste", purchase_order=purchase_order)
+            return _preview_response(
+                request,
+                team,
+                entries=entries,
+                tab="paste",
+                attribute_values=form.selected_values(),
+                purchase_order=purchase_order,
+            )
         return _modal(
             request, team, tab="paste", body_template=PASTE_TEMPLATE, form=form, purchase_order=purchase_order
         )
@@ -179,7 +187,7 @@ def container_import_paste(request):
         team,
         tab="paste",
         body_template=PASTE_TEMPLATE,
-        form=ContainerPasteForm(),
+        form=ContainerPasteForm(team=team),
         purchase_order=purchase_order,
     )
 
@@ -190,7 +198,7 @@ def container_import_csv(request):
     team = request.default_team
     purchase_order = _purchase_order(request)
     if request.method == "POST":
-        form = ContainerCsvImportForm(request.POST, request.FILES)
+        form = ContainerCsvImportForm(request.POST, request.FILES, team=team)
         if form.is_valid():
             try:
                 entries = entries_from_csv(form.cleaned_data["file"])
@@ -200,7 +208,14 @@ def container_import_csv(request):
                 if not entries:
                     form.add_error("file", _("No container numbers were found in the file."))
                 else:
-                    return _preview_response(request, team, entries=entries, tab="csv", purchase_order=purchase_order)
+                    return _preview_response(
+                        request,
+                        team,
+                        entries=entries,
+                        tab="csv",
+                        attribute_values=form.selected_values(),
+                        purchase_order=purchase_order,
+                    )
         return _modal(request, team, tab="csv", body_template=CSV_TEMPLATE, form=form, purchase_order=purchase_order)
 
     return _modal(
@@ -208,7 +223,7 @@ def container_import_csv(request):
         team,
         tab="csv",
         body_template=CSV_TEMPLATE,
-        form=ContainerCsvImportForm(),
+        form=ContainerCsvImportForm(team=team),
         purchase_order=purchase_order,
     )
 
@@ -221,25 +236,42 @@ def container_import_confirm(request):
     purchase_order = _purchase_order(request)
     entries = _entries_from_payload(request.POST.get("entries", ""))
     tab = request.POST.get("tab") or "paste"
-    if not entries:
+    # The attributes were chosen a request ago and came back through the browser, so
+    # they are validated here rather than trusted — a tampered or stale choice sends
+    # the operator back to the form instead of reaching the writes.
+    attributes_form = ContainerAttributesForm(request.POST, team=team)
+    if not entries or not attributes_form.is_valid():
         return _modal(
             request,
             team,
             tab=tab,
             body_template=PASTE_TEMPLATE if tab != "csv" else CSV_TEMPLATE,
-            form=ContainerPasteForm() if tab != "csv" else ContainerCsvImportForm(),
+            form=ContainerPasteForm(team=team) if tab != "csv" else ContainerCsvImportForm(team=team),
             intake_error=_("That import could not be read. Paste the numbers again."),
             purchase_order=purchase_order,
         )
 
-    result = bulk_create_containers(team=team, user=request.user, entries=entries)
+    result = bulk_create_containers(
+        team=team,
+        user=request.user,
+        entries=entries,
+        attributes=attributes_form.container_attributes(),
+    )
     if purchase_order is not None and result.containers:
         return _link_step(request, team, purchase_order, result.containers)
     context = {"result": result, "tab": tab, **_refreshed_table_context(team, purchase_order)}
     return render(request, RESULT_TEMPLATE, context)
 
 
-def _preview_response(request, team, *, entries: list[tuple[str, str]], tab: str, purchase_order=None):
+def _preview_response(
+    request,
+    team,
+    *,
+    entries: list[tuple[str, str]],
+    tab: str,
+    attribute_values: dict | None = None,
+    purchase_order=None,
+):
     preview = preview_containers(team=team, entries=entries)
     return _modal(
         request,
@@ -248,6 +280,9 @@ def _preview_response(request, team, *, entries: list[tuple[str, str]], tab: str
         body_template=PREVIEW_TEMPLATE,
         preview=preview,
         payload=json.dumps([[row.number, row.carrier] for row in preview.rows]),
+        # The attributes chosen before the preview travel on to the confirm as hidden
+        # fields, and are validated again there — this side of the trip is the browser's.
+        attribute_values=attribute_values or {},
         purchase_order=purchase_order,
     )
 

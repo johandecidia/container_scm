@@ -1,18 +1,24 @@
 // Supply chain visibility map.
 //
-// One module for all three map contexts — the overview, a shipment journey and a
-// container journey — because they draw the same GeoJSON contract and differ only
-// in which layers they add.
+// One module for all three map contexts — the operational map, a shipment journey
+// and a container journey — because they draw the same GeoJSON contract and differ
+// only in which layers they add.
 //
-// Two things this module deliberately does not do:
+// Three things this module deliberately does not do:
 //
-//   * It never decides what a position means. Quality, whether an event was
-//     observed or forecast, and every label come from Container SCM as feature
-//     properties. Re-deriving any of that here would give the platform two
-//     answers to the same question.
+//   * It never decides what a position means. Whether a marker is a physical
+//     location, carrier evidence or a destination, how old it is, and every label
+//     come from Container SCM as feature properties. In particular the precedence
+//     physical > tracking > nothing is decided server-side; re-deriving any of it
+//     here would give the platform two answers to the same question.
 //
-//   * It never rebuilds the map. Filters replace the data in the existing
-//     GeoJSON source, so panning and zoom survive a filter change.
+//   * It never separates markers that share a coordinate. Containers standing at
+//     one terminal arrive already grouped, carrying a count. Jittering them apart
+//     would draw a precision the data does not have: the coordinate belongs to the
+//     terminal, not to the box somewhere inside it.
+//
+//   * It never rebuilds the map. Filters replace the data in the existing GeoJSON
+//     source, so panning and zoom survive a filter change.
 //
 // Mapbox is an enhancement. Without a token the page renders its configuration
 // notice, this module finds no map element to initialise, and nothing throws.
@@ -21,6 +27,8 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 const SOURCE_ID = 'scm-visibility';
+// A world view, not a home port. Centring an empty map on Gothenburg would imply
+// activity there; this implies nothing.
 const FALLBACK_CENTER = [10, 35];
 const FALLBACK_ZOOM = 1.4;
 const FIT_PADDING = 56;
@@ -29,24 +37,53 @@ const MAX_FIT_ZOOM = 9;
 // Semantic colours, mirroring the roles DaisyUI uses for the same meanings.
 // Fixed hex rather than theme variables because Mapbox GL cannot parse the
 // oklch() values the theme exposes.
+//
+// Colour is never the only difference between two position classes — each has its
+// own marker shape as well, so the map survives greyscale printing and the common
+// forms of colour blindness. See makeMarkerImage.
 const COLOR = {
-  onTime: '#16a34a',
-  delayed: '#f59e0b',
-  exception: '#dc2626',
-  unknown: '#64748b',
+  physical: '#16a34a',
+  tracking: '#0284c7',
+  destination: '#f59e0b',
   actual: '#0f766e',
   forecast: '#6366f1',
   selected: '#0284c7',
+  ink: '#0f172a',
 };
 
-const HEALTH_COLOR = [
+// Marker shape per position class. The shape carries the meaning; the colour only
+// reinforces it.
+//
+//   physical      ● a filled disc      — accepted, the strongest claim
+//   tracking      ◇ a hollow diamond   — evidence, deliberately lighter
+//   destination   ▣ a hollow square    — an intention, not a position
+const MARKER_SHAPE = {
+  physical: 'disc',
+  tracking: 'diamond',
+  destination: 'square',
+};
+
+// Weakest claim first. The destination square is drawn largest and lowest so that
+// a physical disc landing on the same terminal sits inside it and both stay
+// readable — which is the honest picture when boxes are there and more are coming.
+const DRAW_ORDER = ['destination', 'tracking', 'physical'];
+
+const MARKER_SIZE = {
+  physical: 26,
+  tracking: 28,
+  destination: 38,
+};
+
+// White on the filled disc, ink on the hollow shapes. Readability, not decoration.
+const MARKER_TEXT_COLOR = [
   'match',
-  ['get', 'health'],
-  'exception', COLOR.exception,
-  'delayed', COLOR.delayed,
-  'on_time', COLOR.onTime,
-  COLOR.unknown,
+  ['get', 'position_class'],
+  'physical', '#ffffff',
+  COLOR.ink,
 ];
+
+const IS_POSITION = ['==', ['get', 'object_type'], 'map_position'];
+const IS_EVENT = ['==', ['get', 'object_type'], 'event'];
 
 const EMPTY = { type: 'FeatureCollection', features: [] };
 
@@ -54,9 +91,12 @@ class VisibilityMap {
   constructor(element) {
     this.element = element;
     this.mode = element.dataset.mapMode || 'overview';
-    this.dataUrl = element.dataset.mapDataUrl || '';
+    // The URL describing the current selection, without the map's own view state.
+    // Kept apart from dataUrl so a board swap can replace the selection while the
+    // legend's toggles keep applying.
+    this.baseUrl = element.dataset.mapDataUrl || '';
+    this.dataUrl = this.baseUrl;
     this.panelSelector = element.dataset.mapPanelTarget || '';
-    this.clustered = this.mode === 'overview';
     this.selectedEventId = null;
     this.data = EMPTY;
 
@@ -76,77 +116,74 @@ class VisibilityMap {
     this.map.addSource(SOURCE_ID, {
       type: 'geojson',
       data: EMPTY,
-      // Clustering only on the overview: a journey has few points and they must
-      // each stay visible, while the overview has to scale to a whole fleet.
-      cluster: this.clustered,
-      clusterRadius: 44,
-      clusterMaxZoom: 8,
+      // No Mapbox clustering. Containers at one canonical location are grouped
+      // server-side, by that location, which is the grouping that means something:
+      // "84 at Oceanterminalen" rather than "84 within 44 screen pixels".
+      cluster: false,
     });
-    if (this.clustered) {
-      this.addClusterLayers();
-      this.addObjectLayers();
-    } else {
-      this.addJourneyLayers();
-    }
+    // Journey layers first so the canonical markers draw on top of the evidence.
+    if (this.mode !== 'overview') this.addJourneyLayers();
+    this.addPositionLayers();
     this.map.resize();
-    this.refresh(this.dataUrl);
+    this.refresh(withMapFilters(this.baseUrl));
   }
 
-  addClusterLayers() {
-    this.map.addLayer({
-      id: 'scm-clusters',
-      type: 'circle',
-      source: SOURCE_ID,
-      filter: ['has', 'point_count'],
-      paint: {
-        'circle-color': COLOR.unknown,
-        'circle-opacity': 0.85,
-        'circle-radius': ['step', ['get', 'point_count'], 16, 10, 22, 50, 30],
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff',
-      },
-    });
-    this.map.addLayer({
-      id: 'scm-cluster-count',
-      type: 'symbol',
-      source: SOURCE_ID,
-      filter: ['has', 'point_count'],
-      layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 12 },
-      paint: { 'text-color': '#ffffff' },
-    });
-    this.map.on('click', 'scm-clusters', (event) => this.zoomIntoCluster(event));
-    this.pointer('scm-clusters');
-  }
+  addPositionLayers() {
+    // One layer per class, added weakest first, so a physical disc draws on top of
+    // a destination square at the same terminal and the square still shows around
+    // it. Two markers on one coordinate is the truth — some boxes are there, more
+    // are coming — and nudging them apart would draw a distance that is not real.
+    DRAW_ORDER.forEach((positionClass) => {
+      const image = `scm-marker-${positionClass}`;
+      if (!this.map.hasImage(image)) {
+        this.map.addImage(
+          image,
+          makeMarkerImage(MARKER_SHAPE[positionClass], COLOR[positionClass], MARKER_SIZE[positionClass]),
+          { pixelRatio: 2 },
+        );
+      }
 
-  addObjectLayers() {
-    this.map.addLayer({
-      id: 'scm-objects',
-      type: 'circle',
-      source: SOURCE_ID,
-      filter: ['!', ['has', 'point_count']],
-      paint: {
-        'circle-color': HEALTH_COLOR,
-        'circle-radius': ['case', ['>', ['get', 'container_count'], 1], 12, 8],
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff',
-      },
+      const id = `scm-positions-${positionClass}`;
+      this.map.addLayer({
+        id,
+        type: 'symbol',
+        source: SOURCE_ID,
+        filter: ['all', IS_POSITION, ['==', ['get', 'position_class'], positionClass]],
+        layout: {
+          'icon-image': image,
+          // Markers are never dropped for want of room: a hidden container is
+          // worse than a crowded map, and the count is the answer to crowding.
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          // The count sits inside the marker; one container shows none, because
+          // "1" on every dot is noise.
+          'text-field': ['case', ['>', ['get', 'container_count'], 1], ['to-string', ['get', 'container_count']], ''],
+          'text-size': 11,
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: { 'text-color': MARKER_TEXT_COLOR },
+      });
+      this.map.on('click', id, (event) => this.selectPosition(event));
+      this.pointer(id);
     });
+
     this.map.addLayer({
-      id: 'scm-object-labels',
+      id: 'scm-position-labels',
       type: 'symbol',
       source: SOURCE_ID,
-      filter: ['!', ['has', 'point_count']],
+      filter: IS_POSITION,
       layout: {
-        'text-field': ['get', 'label'],
+        'text-field': ['get', 'location_name'],
         'text-size': 11,
-        'text-offset': [0, 1.4],
+        'text-offset': [0, 1.8],
         'text-anchor': 'top',
+        // Labels may be dropped where they would collide. The markers underneath
+        // never are, so nothing is hidden — only a name is, until you zoom in.
         'text-allow-overlap': false,
       },
       paint: { 'text-color': '#334155', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
     });
-    this.map.on('click', 'scm-objects', (event) => this.selectObject(event));
-    this.pointer('scm-objects');
   }
 
   addJourneyLayers() {
@@ -173,14 +210,16 @@ class VisibilityMap {
         'line-dasharray': [1.5, 1.5],
       },
     });
-    // A halo on the point the domain says the container is at now. Which point that
+    // A halo on the event the domain says the container is at now. Which event that
     // is comes from the server as is_current — it is not always the newest one, and
     // deciding it here would give the platform two answers to the same question.
+    // The server drops the flag entirely once a canonical marker is being drawn,
+    // so this halo and that marker can never both claim "now".
     this.map.addLayer({
       id: 'scm-event-current',
       type: 'circle',
       source: SOURCE_ID,
-      filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'is_current'], true]],
+      filter: ['all', IS_EVENT, ['==', ['get', 'is_current'], true]],
       paint: {
         'circle-color': 'rgba(0,0,0,0)',
         'circle-radius': 13,
@@ -193,7 +232,10 @@ class VisibilityMap {
       id: 'scm-events',
       type: 'circle',
       source: SOURCE_ID,
-      filter: ['==', ['geometry-type'], 'Point'],
+      // Events only. The canonical position markers share this source and are
+      // drawn by scm-positions; a geometry-type filter would catch both and style
+      // a physical location as a carrier event.
+      filter: IS_EVENT,
       paint: {
         'circle-color': ['case', ['get', 'is_actual'], COLOR.actual, '#ffffff'],
         'circle-radius': 7,
@@ -205,7 +247,7 @@ class VisibilityMap {
       id: 'scm-event-selected',
       type: 'circle',
       source: SOURCE_ID,
-      filter: ['==', ['get', 'event_id'], -1],
+      filter: ['all', IS_EVENT, ['==', ['get', 'event_id'], -1]],
       paint: {
         'circle-color': 'rgba(0,0,0,0)',
         'circle-radius': 14,
@@ -259,26 +301,69 @@ class VisibilityMap {
 
   // -- interaction --------------------------------------------------------
 
-  zoomIntoCluster(event) {
-    const feature = event.features[0];
-    this.map.getSource(SOURCE_ID).getClusterExpansionZoom(feature.properties.cluster_id, (error, zoom) => {
-      if (error) return;
-      this.map.easeTo({ center: feature.geometry.coordinates, zoom });
-    });
+  setBaseUrl(url) {
+    this.baseUrl = url || this.baseUrl;
   }
 
-  selectObject(event) {
-    const properties = event.features[0].properties;
+  applyFilters() {
+    return this.refresh(withMapFilters(this.baseUrl));
+  }
+
+  selectPosition(event) {
+    const feature = event.features[0];
+    this.openPositionPopup(feature);
+    this.loadPanel(feature.properties.panel_url);
+  }
+
+  loadPanel(url) {
     const target = this.panelSelector ? document.querySelector(this.panelSelector) : null;
-    if (!target || !properties.panel_url) return;
+    if (!target || !url) return;
     // Rendered by Django, so the carrier's own strings are escaped server-side.
     if (window.htmx) {
-      window.htmx.ajax('GET', properties.panel_url, { target, swap: 'innerHTML' });
+      window.htmx.ajax('GET', url, { target, swap: 'innerHTML' });
     } else {
-      fetch(properties.panel_url)
+      fetch(url)
         .then((response) => response.text())
         .then((html) => { target.innerHTML = html; });
     }
+  }
+
+  openPositionPopup(feature) {
+    const p = feature.properties;
+    const node = document.createElement('div');
+    node.className = 'scm-map-popup text-sm';
+
+    // The kind of claim comes first. A reader who sees the place name first has
+    // already assumed the container is there.
+    node.appendChild(line(p.position_class_label, 'text-xs font-semibold uppercase tracking-wide opacity-70'));
+    // "At Oceanterminalen", never a coordinate — the point locates the place.
+    node.appendChild(line(p.place_statement || p.location_name, 'font-medium'));
+    if (p.container_count > 1) {
+      node.appendChild(line(`${p.container_count} containers`, 'text-xs'));
+    } else if (p.container_number) {
+      node.appendChild(line(p.container_number, 'text-xs font-mono'));
+    }
+    if (p.detail || p.source_label) {
+      node.appendChild(line([p.detail, p.source_label].filter(Boolean).join(' · '), 'text-xs opacity-70'));
+    }
+    // Freshness, already worded by Django so it matches every other age on the page.
+    if (p.age_display) node.appendChild(line(p.age_display, 'text-xs opacity-60'));
+    if (p.occurred_at_display) node.appendChild(line(p.occurred_at_display, 'text-xs opacity-50'));
+    if (p.arrival_state_label) node.appendChild(line(p.arrival_state_label, 'badge badge-xs badge-ghost mt-1'));
+    if (p.overdue_count > 0) {
+      node.appendChild(line(`${p.overdue_count} overdue`, 'badge badge-xs badge-warning mt-1'));
+    }
+    if (p.eta_display) node.appendChild(line(`ETA ${p.eta_display}`, 'text-xs opacity-60'));
+    // Only on a current marker: repeating it on a destination marker would print
+    // the same place twice and read as a route.
+    if (p.is_current && p.destination_label) {
+      node.appendChild(line(`→ ${p.destination_label}`, 'text-xs opacity-60'));
+    }
+
+    new mapboxgl.Popup({ closeButton: true, maxWidth: '280px' })
+      .setLngLat(feature.geometry.coordinates)
+      .setDOMContent(node)
+      .addTo(this.map);
   }
 
   selectEvent(event) {
@@ -315,7 +400,7 @@ class VisibilityMap {
   highlightEvent(eventId) {
     this.selectedEventId = eventId;
     if (this.map.getLayer('scm-event-selected')) {
-      this.map.setFilter('scm-event-selected', ['==', ['get', 'event_id'], eventId]);
+      this.map.setFilter('scm-event-selected', ['all', IS_EVENT, ['==', ['get', 'event_id'], eventId]]);
     }
   }
 
@@ -343,6 +428,74 @@ function labelFor(timeType) {
 }
 
 // ---------------------------------------------------------------------------
+// Markers
+// ---------------------------------------------------------------------------
+
+// A drawn shape rather than a font glyph or a bundled sprite. Glyph coverage
+// varies by Mapbox style, and a marker that silently fails to render is worse than
+// no marker at all — so the three shapes are painted here, where they cannot go
+// missing.
+function makeMarkerImage(shape, color, sizeInPixels) {
+  const size = sizeInPixels * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  const middle = size / 2;
+  const radius = middle - 5;
+
+  context.lineWidth = 5;
+  context.strokeStyle = shape === 'disc' ? '#ffffff' : color;
+  // A filled disc for the accepted position; hollow shapes for the weaker claims,
+  // so the strongest marker is also the most solid-looking one.
+  context.fillStyle = shape === 'disc' ? color : '#ffffff';
+
+  context.beginPath();
+  if (shape === 'disc') {
+    context.arc(middle, middle, radius, 0, Math.PI * 2);
+  } else if (shape === 'diamond') {
+    context.moveTo(middle, middle - radius);
+    context.lineTo(middle + radius, middle);
+    context.lineTo(middle, middle + radius);
+    context.lineTo(middle - radius, middle);
+    context.closePath();
+  } else {
+    const side = radius * 1.6;
+    context.rect(middle - side / 2, middle - side / 2, side, side);
+  }
+  context.fill();
+  context.stroke();
+
+  return { width: size, height: size, data: context.getImageData(0, 0, size, size).data };
+}
+
+// ---------------------------------------------------------------------------
+// Map filters
+//
+// The map's own view state: which position classes to draw, and whether to show
+// the destination overlay. Applied by asking the server again rather than by
+// hiding layers, so the endpoint's answer and the map always agree about what is
+// being shown — and so the destination overlay is genuinely absent until asked
+// for, rather than delivered and hidden.
+// ---------------------------------------------------------------------------
+
+function mapFilterParams() {
+  const params = new URLSearchParams();
+  document.querySelectorAll('[data-scm-map-filter]').forEach((element) => {
+    if (element.type === 'checkbox' && !element.checked) return;
+    if (element.value) params.append(element.name, element.value);
+  });
+  return params;
+}
+
+function withMapFilters(base) {
+  if (!base) return base;
+  const params = mapFilterParams().toString();
+  if (!params) return base;
+  return `${base}${base.includes('?') ? '&' : '?'}${params}`;
+}
+
+// ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
 
@@ -355,6 +508,11 @@ function initialise() {
   if (!element || element.dataset.scmMapReady === '1') return;
   element.dataset.scmMapReady = '1';
   instance = new VisibilityMap(element);
+}
+
+function onMapFilterChange(event) {
+  if (!instance || !event.target.closest('[data-scm-map-filter]')) return;
+  instance.applyFilters();
 }
 
 function onTimelineClick(event) {
@@ -373,17 +531,23 @@ function onEventSelected(event) {
 }
 
 function onAfterSwap(event) {
-  // A filter change swaps the board and leaves the map alone: we only point its
-  // existing source at the URL describing the new selection.
+  // A board filter change swaps the board and leaves the map alone: we only point
+  // its existing source at the URL describing the new selection, then re-apply the
+  // map's own toggles on top — those live in the map card, outside the swap, and
+  // must survive it.
   const source = event.target.querySelector
     ? event.target.querySelector('[data-scm-map-source]') || event.target.closest('[data-scm-map-source]')
     : null;
-  if (instance && source) instance.refresh(source.dataset.scmMapSource);
+  if (instance && source) {
+    instance.setBaseUrl(source.dataset.scmMapSource);
+    instance.applyFilters();
+  }
   initialise();
 }
 
 document.addEventListener('DOMContentLoaded', initialise);
 document.addEventListener('click', onTimelineClick);
+document.addEventListener('change', onMapFilterChange);
 document.addEventListener('scm-map:event-selected', onEventSelected);
 // htmx events bubble to document, so one listener covers every swap on the page.
 document.addEventListener('htmx:afterSwap', onAfterSwap);

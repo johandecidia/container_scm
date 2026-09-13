@@ -1,0 +1,39 @@
+{% load i18n %}
+
+{% comment %}
+  How much master-data work stands behind this list, and where to do it.
+
+  A pointer rather than a panel of rows. The Location Data Quality queue aggregates
+  the evidence and owns the actions; repeating a table of it here would give the two
+  pages two chances to disagree about how much there is to fix.
+
+  Rendered only when there is something to say — see the guard in the page.
+{% endcomment %}
+
+<section class="app-card mt-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-sm font-semibold">{% translate "Location data quality" %}</h2>
+      <p class="text-sm text-base-content/60 mt-1">
+        {% if quality.locations_missing_coordinates %}
+          {% blocktranslate trimmed count count=quality.locations_missing_coordinates %}
+            {{ count }} location has no coordinates and cannot be drawn on a map.
+          {% plural %}
+            {{ count }} locations have no coordinates and cannot be drawn on a map.
+          {% endblocktranslate %}
+        {% endif %}
+        {% if quality.unmatched_evidence %}
+          {% blocktranslate trimmed count count=quality.unmatched_evidence %}
+            {{ count }} tracking event names a place no location here claims.
+          {% plural %}
+            {{ count }} tracking events name places no location here claims.
+          {% endblocktranslate %}
+        {% endif %}
+      </p>
+    </div>
+    <a href="{% url 'visibility:location_quality' %}" class="btn btn-sm btn-outline">
+      <i class="fa fa-location-crosshairs"></i>
+      {% translate "Fix location coverage" %}
+    </a>
+  </div>
+</section>

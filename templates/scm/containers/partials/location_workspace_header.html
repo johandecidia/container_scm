@@ -7,9 +7,14 @@
   `current_location` points here, counted on read. There is no stored count and
   nothing to keep in sync.
 
-  Expected arrivals are deliberately absent from the header. No reliable
-  relationship connects a location to a shipment's destination yet, and a number
-  here would be the most visible place to put a guess. The Expected tab says why.
+  The canonical identifiers sit under the name: the parent this place is inside, and
+  its UN/LOCODE. The code is shown without any suggestion that it is unique — several
+  places under one port legitimately share one — so it reads as an attribute of this
+  place rather than as its identity.
+
+  Expected arrivals now appear here, and only from canonical destinations. The
+  number is safe to put in a header precisely because it is not matched on names:
+  it counts what somebody said is coming to this location.
 
   Same frame as the container and purchase order headers: back link, identity,
   context, the figures that matter, actions.
@@ -37,7 +42,27 @@
         {% if workspace.place %}
           <span class="text-base-content/30 mx-1">·</span>{{ workspace.place }}
         {% endif %}
+        {% if workspace.unlocode %}
+          <span class="text-base-content/30 mx-1">·</span>
+          <span class="font-mono" title="{% translate 'UN/LOCODE. Several places may share one code.' %}">{{ workspace.unlocode }}</span>
+        {% endif %}
       </p>
+
+      {% if workspace.hierarchy.has_parent %}
+        {% comment %}
+          The whole path rather than just the parent: "Oceanterminalen" inside
+          "Göteborg" is one fact, but a yard three levels down reads as a mystery
+          without the port at the front of it. Already loaded by the workspace, so
+          this costs no queries. The panel on the Overview tab is the same path.
+        {% endcomment %}
+        <p class="text-xs text-base-content/50 mt-1 flex flex-wrap items-center gap-x-1">
+          <span>{% translate "Inside" %}</span>
+          {% for step in workspace.hierarchy.ancestors %}
+            <a href="{% url 'containers:location_detail' step.pk %}" class="link link-hover">{{ step.name }}</a>
+            {% if not forloop.last %}<span class="text-base-content/30">›</span>{% endif %}
+          {% endfor %}
+        </p>
+      {% endif %}
 
       {% if location.owner_name or location.external_reference %}
         <p class="text-xs text-base-content/50 mt-1">
@@ -55,6 +80,16 @@
             {{ count }} containers currently here
           {% endblocktranslate %}
         </span>
+        {% if workspace.expected.count %}
+          <span class="text-base-content/30 hidden sm:inline">·</span>
+          <span class="text-base-content/70 basis-full sm:basis-auto">
+            {% blocktranslate trimmed count count=workspace.expected.count %}
+              {{ count }} arrival expected
+            {% plural %}
+              {{ count }} arrivals expected
+            {% endblocktranslate %}
+          </span>
+        {% endif %}
         {% if workspace.moved_in_last_week %}
           {# The separator only earns its place when the two phrases share a line. #}
           <span class="text-base-content/30 hidden sm:inline">·</span>
@@ -71,9 +106,10 @@
 
     {% comment %}
       Actions. Editing a location and toggling it active are real endpoints and are
-      offered. Gate in, gate out and move are not: `set_container_location` exists as
-      a service but nothing exposes it over HTTP, so there is no workflow behind
-      those buttons. A menu entry that opened nothing would misdescribe the platform.
+      offered. Gate in and gate out are not offered *here*: a movement is about one
+      container, and there is nothing on this page to say which. They live on the
+      container workspace, where the subject is unambiguous, and this page's Activity
+      tab shows the result.
     {% endcomment %}
     <div class="dropdown dropdown-end shrink-0">
       <div tabindex="0" role="button" class="btn btn-outline btn-sm">

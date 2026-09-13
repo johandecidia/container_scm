@@ -8,7 +8,7 @@ from django.views.decorators.http import require_POST
 from apps.teams.decorators import login_and_team_required
 from apps.teams.forms import MembershipForm
 from apps.teams.models import Membership
-from apps.teams.roles import ROLE_ADMIN
+from apps.teams.roles import is_final_admin
 from apps.web.forms import set_form_fields_disabled
 
 
@@ -60,18 +60,16 @@ def remove_team_membership(request, team_slug, membership_id):
     can_edit_team_members = request.team_membership.is_admin()
     if not can_edit_team_members and not removing_self:
         return HttpResponseForbidden(_("You don't have permission to remove others from that team."))
-    if membership.role == ROLE_ADMIN:
-        admin_count = Membership.objects.filter(team=request.team, role=ROLE_ADMIN).count()
-        if admin_count == 1:
-            # trying to remove the last admin. this will get us in trouble.
-            messages.error(
-                request,
-                _(
-                    "You cannot remove the only administrator from a team. "
-                    "Make another team member an administrator and try again."
-                ),
-            )
-            return HttpResponseRedirect(reverse("single_team:manage_team", args=[request.team.slug]))
+    if is_final_admin(membership):
+        # trying to remove the last admin. this will get us in trouble.
+        messages.error(
+            request,
+            _(
+                "You cannot remove the only administrator from a team. "
+                "Make another team member an administrator and try again."
+            ),
+        )
+        return HttpResponseRedirect(reverse("single_team:manage_team", args=[request.team.slug]))
 
     membership.delete()
     messages.success(

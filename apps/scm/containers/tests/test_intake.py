@@ -20,7 +20,7 @@ from apps.scm.containers.intake import (
     preview_containers,
     split_container_numbers,
 )
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
@@ -30,6 +30,11 @@ _TEST_STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+
+
+def _condition(team, code="NEW") -> ContainerCondition:
+    """One of the team's own conditions, seeded when the team was created."""
+    return ContainerCondition.objects.get(team=team, code=code)
 
 
 def _number(owner: str, serial: str, category: str = "U") -> str:
@@ -47,6 +52,18 @@ def _et() -> EquipmentType:
     return EquipmentType.objects.get_or_create(
         iso_code="20GP",
         defaults={"category": "GP", "length_ft": 20, "high_cube": False, "description": "20' GP"},
+    )[0]
+
+
+def _et_alt() -> EquipmentType:
+    """A second equipment type, so "the one that was chosen" is distinguishable from the default.
+
+    Sorts after ``20GP`` by ISO code, which is what ``get_default_equipment_type``
+    orders on, so this one is never picked by accident.
+    """
+    return EquipmentType.objects.get_or_create(
+        iso_code="45HC",
+        defaults={"category": "GP", "length_ft": 45, "high_cube": True, "description": "45' HC"},
     )[0]
 
 
@@ -138,7 +155,8 @@ class CreateOrGetContainerTest(TestCase):
         container, _created = create_or_get_container(team=self.team, user=self.user, number=VALID_A)
         self.assertEqual(container.equipment_type, _et())
         self.assertEqual(container.status, "AVAILABLE")
-        self.assertEqual(container.condition, "GOOD")
+        # The team's first active condition, not a value baked into the model.
+        self.assertEqual(container.condition, _condition(self.team, "NEW"))
         self.assertEqual(container.created_by, self.user)
 
     def test_lowercase_input_creates_the_same_container(self):
@@ -169,6 +187,34 @@ class CreateOrGetContainerTest(TestCase):
         EquipmentType.objects.all().delete()
         with self.assertRaises(ValidationError):
             create_or_get_container(team=self.team, user=self.user, number=VALID_A)
+
+    def test_chosen_attributes_are_written_onto_a_new_container(self):
+        container, _created = create_or_get_container(
+            team=self.team,
+            user=self.user,
+            number=VALID_A,
+            attributes={
+                "equipment_type": _et_alt(),
+                "condition": _condition(self.team, "CW"),
+                "color_code": "5010",
+                "color_system": "RAL",
+            },
+        )
+        self.assertEqual(container.equipment_type, _et_alt())
+        self.assertEqual(container.condition, _condition(self.team, "CW"))
+        self.assertEqual(container.color_code, "5010")
+        self.assertEqual(container.color_system, "RAL")
+
+    def test_attributes_leave_an_already_registered_container_alone(self):
+        """An import is not an edit — the existing row may have been corrected by hand."""
+        first, _created = create_or_get_container(team=self.team, user=self.user, number=VALID_A)
+        second, created = create_or_get_container(
+            team=self.team, user=self.user, number=VALID_A, attributes={"condition": _condition(self.team, "AI")}
+        )
+        self.assertFalse(created)
+        self.assertEqual(second.pk, first.pk)
+        second.refresh_from_db()
+        self.assertEqual(second.condition, _condition(self.team, "NEW"))
 
     def test_chosen_carrier_is_recorded_as_the_carrier_to_ask(self):
         from apps.scm.containers.models import PlannedContainer
@@ -282,6 +328,24 @@ class BulkCreateContainersTest(TestCase):
         )
         self.assertEqual(PlannedContainer.objects.filter(team=self.team, carrier="maersk").count(), 2)
 
+    def test_attributes_apply_to_every_container_in_the_list(self):
+        result = bulk_create_containers(
+            team=self.team,
+            user=self.user,
+            entries=entries_from_text(f"{VALID_A}\n{VALID_B}"),
+            attributes={
+                "equipment_type": _et_alt(),
+                "condition": _condition(self.team, "CW"),
+                "color_code": "5010",
+                "color_system": "RAL",
+            },
+        )
+        self.assertEqual(result.created_count, 2)
+        containers = Container.objects.filter(team=self.team)
+        self.assertEqual({c.equipment_type_id for c in containers}, {_et_alt().pk})
+        self.assertEqual({c.condition for c in containers}, {_condition(self.team, "CW")})
+        self.assertEqual({c.color_display for c in containers}, {"RAL5010"})
+
 
 class EntriesFromCsvTest(TestCase):
     def test_container_number_column_only(self):
@@ -361,6 +425,31 @@ class IntakeViewTest(TestCase):
         self.assertContains(response, "already exists")
         self.assertEqual(Container.objects.filter(team=self.team).count(), 1)
 
+    def test_single_submit_applies_the_chosen_attributes(self):
+        response = self.client.post(
+            reverse("containers:create"),
+            data={
+                "container_number": VALID_A,
+                "equipment_type": _et_alt().pk,
+                "condition": _condition(self.team, "CW").pk,
+                "color_code": "5010",
+                "color_system": "RAL",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        container = Container.objects.get(team=self.team, serial_number="925896")
+        self.assertEqual(container.equipment_type, _et_alt())
+        self.assertEqual(container.condition, _condition(self.team, "CW"))
+        self.assertEqual(container.color_display, "RAL5010")
+
+    def test_single_submit_without_attributes_still_uses_the_defaults(self):
+        self.client.post(reverse("containers:create"), data={"container_number": VALID_A}, HTTP_HX_REQUEST="true")
+        container = Container.objects.get(team=self.team, serial_number="925896")
+        self.assertEqual(container.equipment_type, _et())
+        self.assertEqual(container.condition, _condition(self.team, "NEW"))
+        self.assertEqual(container.color_display, "")
+
     def test_number_check_reports_valid_parts(self):
         response = self.client.post(reverse("containers:number_check"), data={"container_number": VALID_A})
         self.assertContains(response, "Valid container number")
@@ -416,6 +505,52 @@ class IntakeViewTest(TestCase):
         result = response.context["result"]
         self.assertEqual((result.created_count, result.existed_count, result.invalid_count), (2, 0, 1))
         self.assertEqual(Container.objects.filter(team=self.team).count(), 2)
+
+    def test_attributes_survive_the_preview_step(self):
+        condition = _condition(self.team, "CW")
+        attributes = {"condition": condition.pk, "color_code": "5010", "color_system": "RAL"}
+        preview_response = self.client.post(
+            reverse("containers:import_paste"),
+            data={"numbers": f"{VALID_A}\n{VALID_B}", **attributes},
+            HTTP_HX_REQUEST="true",
+        )
+        # Carried to the confirm as hidden fields, so the browser has to send them back.
+        self.assertEqual(preview_response.context["attribute_values"], attributes)
+
+        response = self.client.post(
+            reverse("containers:import_confirm"),
+            data={"entries": preview_response.context["payload"], "tab": "paste", **attributes},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.context["result"].created_count, 2)
+        containers = Container.objects.filter(team=self.team)
+        self.assertEqual({c.condition for c in containers}, {condition})
+        self.assertEqual({c.color_display for c in containers}, {"RAL5010"})
+
+    def test_confirm_with_an_invalid_attribute_imports_nothing(self):
+        preview_response = self.client.post(
+            reverse("containers:import_paste"), data={"numbers": VALID_A}, HTTP_HX_REQUEST="true"
+        )
+        response = self.client.post(
+            reverse("containers:import_confirm"),
+            data={
+                "entries": preview_response.context["payload"],
+                "tab": "paste",
+                "condition": "NOT-A-CONDITION",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "scm/containers/partials/container_intake_paste.html")
+        self.assertFalse(Container.objects.filter(team=self.team).exists())
+
+    def test_csv_upload_carries_the_attributes_into_the_preview(self):
+        response = self.client.post(
+            reverse("containers:import_csv"),
+            data={"file": _csv(f"container_number\n{VALID_A}\n"), "equipment_type": _et_alt().pk},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.context["attribute_values"], {"equipment_type": _et_alt().pk})
 
     def test_confirm_with_an_unreadable_payload_imports_nothing(self):
         response = self.client.post(
@@ -484,6 +619,22 @@ class IntakeViewTest(TestCase):
             reverse("containers:import_paste"), data={"numbers": VALID_A}, HTTP_HX_REQUEST="true"
         )
         self.assertEqual(response.context["preview"].new_count, 1)
+
+    # -- attributes --------------------------------------------------------
+
+    def test_every_tab_offers_the_same_attributes(self):
+        for url in (
+            reverse("containers:create"),
+            reverse("containers:import_paste"),
+            reverse("containers:import_csv"),
+        ):
+            with self.subTest(url=url):
+                response = self.client.get(url, HTTP_HX_REQUEST="true")
+                self.assertTemplateUsed(response, "scm/containers/partials/container_intake_attributes.html")
+                self.assertContains(response, "Default type")
+                self.assertContains(response, "Default condition")
+                self.assertContains(response, "Color code")
+                self.assertContains(response, "Color system")
 
     # -- access ------------------------------------------------------------
 

@@ -2,12 +2,90 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+# Choices only, from a module that imports no models — the canonical location
+# vocabulary is owned by the containers app and must not be restated here.
+from apps.scm.containers.choices import LocationResolutionMethod, LocationResolutionStatus
+
+# A constant, from a package whose __init__ holds nothing but constants — the default
+# tracking provider's code must not be a second spelling of Traqo's.
+from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
 from apps.teams.models import BaseTeamModel
 from apps.utils.models import BaseModel
 
 
+class CarrierSource(models.TextChoices):
+    """How we know which carrier is moving a container.
+
+    Provenance, kept as a field because "who is the carrier" and "how do we know" are
+    two different answers and only the second says how much the first is worth. A
+    carrier a person chose and a carrier an aggregator guessed are not interchangeable,
+    and a system that stored only the name could never tell them apart again.
+
+    Ordered strongest-evidence first, which is also the order carrier resolution tries:
+    a fact already held beats a free lookup, which beats a probe that returned this
+    container's own events, which beats a paid identification.
+
+    ``TRAQO_LOOKUP`` and ``TRAQO_PROBE`` are both Traqo and are deliberately not one
+    value. The lookup is Traqo's free "which carrier is likely to know this number" —
+    a named carrier, and nothing seen of this box. The probe asked Traqo's container
+    endpoint about a candidate carrier and got this container's tracking data back,
+    which proves the carrier the way a direct call does. Storing them as one value
+    would make an aggregator's guess indistinguishable from its evidence.
+    """
+
+    MANUAL = "manual", _("Chosen by a person")
+    SHIPMENT = "shipment", _("From the shipment")
+    PLANNED_CONTAINER = "planned_container", _("From the planned container")
+    EXISTING_VERIFIED_SOURCE = "existing_verified_source", _("Already verified for this container")
+    TRAQO_LOOKUP = "traqo_lookup", _("Traqo carrier lookup")
+    TRAQO_PROBE = "traqo_probe", _("Traqo container tracking data")
+    DIRECT_API = "direct_api", _("Direct carrier tracking events")
+    VIZION_ACI = "vizion_aci", _("Vizion Auto Carrier Identification")
+
+
+class TeamTrackingSettings(BaseTeamModel):
+    """A team's default tracking provider. One row per team, one field on it.
+
+    The provider a container falls back to when no carrier can be called directly —
+    Traqo today, which is why that is the default and the only value Settings offers.
+    It is a row rather than a constant because "who do we ask when we cannot ask the
+    line" is a per-customer commercial fact, and with it in code every change of
+    aggregator would be a deployment.
+
+    Deliberately *not* a routing policy. There is no cost model, no preference order
+    and no per-carrier rules here: direct-before-aggregator is
+    :mod:`apps.scm.tracking.provider_routing`'s decision, and this only names the
+    aggregator tier it falls through to. See
+    :mod:`apps.scm.tracking.preferences` for the read and write.
+    """
+
+    default_provider_code = models.CharField(
+        _("default tracking provider"),
+        max_length=50,
+        default=TRAQO_PROVIDER_CODE,
+        help_text=_("The provider used when no direct carrier integration can answer for a container."),
+    )
+
+    class Meta:
+        verbose_name = _("Team Tracking Settings")
+        verbose_name_plural = _("Team Tracking Settings")
+        constraints = [
+            models.UniqueConstraint(fields=["team"], name="unique_team_tracking_settings"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.team}: default {self.default_provider_code}"
+
+
 class TrackingProvider(BaseModel):
-    """Represents an external tracking source (carrier API, scraping, webhook, manual)."""
+    """The *technical* source a tracking payload is fetched from.
+
+    Not the carrier. Most rows here do name a shipping line, because Container SCM calls
+    most lines directly and one code serves as both — but an aggregator is a provider
+    too, and ``TrackingSubscription.carrier_code`` is where the carrier's own identity
+    lives. ``provider.code = traqo`` with ``carrier_code = one`` is a valid and expected
+    combination: Traqo supplies the data, ONE is moving the box.
+    """
 
     class ProviderType(models.TextChoices):
         API = "api", _("API")
@@ -88,8 +166,44 @@ class TrackingSubscription(BaseTeamModel):
         on_delete=models.PROTECT,
         related_name="subscriptions",
         verbose_name=_("provider"),
+        help_text=_("The technical provider whose API supplies this watch's data — not necessarily the carrier."),
     )
+
+    # Carrier identity, kept apart from the provider above.
+    #
+    # For a direct watch these agree: Maersk supplies the data and Maersk is moving the
+    # box. For an aggregator they do not, and that is the whole reason these fields
+    # exist — ``provider.code = traqo`` alongside ``carrier_code = one`` is the shape a
+    # container tracked through Traqo under ONE actually has.
+    #
+    # Blank is honest and expected: a watch created before the carrier was separated
+    # out, or one whose provider named no carrier, genuinely does not know. Nothing
+    # infers a carrier from the provider to fill it in.
+    carrier_code = models.CharField(
+        _("carrier code"),
+        max_length=50,
+        blank=True,
+        help_text=_("The registry code of the carrier moving this container, when it is known."),
+    )
+    carrier_name = models.CharField(_("carrier name"), max_length=200, blank=True)
+    carrier_source = models.CharField(
+        _("carrier identified via"),
+        max_length=30,
+        choices=CarrierSource.choices,
+        blank=True,
+        help_text=_("How the carrier was established. Blank when no carrier is recorded."),
+    )
+
     tracking_reference = models.CharField(_("tracking reference"), max_length=200)
+    provider_reference = models.CharField(
+        _("provider reference"),
+        max_length=200,
+        blank=True,
+        help_text=_(
+            "The provider's own handle for this watch — Traqo's sealine, Vizion's reference id. "
+            "What a later fetch needs in order to ask the same question again."
+        ),
+    )
     reference_type = models.CharField(
         _("reference type"), max_length=30, choices=ReferenceType.choices, default=ReferenceType.CONTAINER_NUMBER
     )
@@ -131,10 +245,26 @@ class TrackingSubscription(BaseTeamModel):
             models.Index(fields=["team", "container"]),
             models.Index(fields=["next_sync_at"]),
             models.Index(fields=["team", "tracking_status"]),
+            models.Index(fields=["team", "carrier_code"]),
         ]
 
     def __str__(self) -> str:
         return f"{self.tracking_reference} ({self.get_reference_type_display()})"
+
+    @property
+    def is_direct(self) -> bool:
+        """True when the provider supplying the data is the carrier itself."""
+        return bool(self.carrier_code) and self.carrier_code == self.provider.code
+
+    @property
+    def carrier_label(self) -> str:
+        """The carrier to show for this watch, or "" when none is recorded.
+
+        Deliberately never falls back to the provider's name. A watch through Traqo whose
+        carrier is unknown must read as "carrier unknown", not as "carrier: Traqo" —
+        naming the aggregator would be the exact conflation these fields exist to end.
+        """
+        return self.carrier_name or self.carrier_code
 
 
 class TrackingEvent(BaseTeamModel):
@@ -238,11 +368,41 @@ class TrackingEvent(BaseTeamModel):
     description = models.TextField(_("description"), blank=True)
     carrier_description = models.TextField(_("carrier description"), blank=True)
 
-    # Location
+    # Location.
+    #
+    # The four fields below are *evidence*: what the carrier said about where this
+    # happened, kept verbatim. They are never rewritten to match a canonical
+    # location, because a carrier's own wording is the record of what it reported.
+    #
+    # `location` is the canonical identity that evidence was resolved to, and the two
+    # resolution fields say whether and how. An unresolved location is normal and is
+    # not an error: the event is still valid tracking evidence and is still stored.
+    # See apps/scm/containers/location_resolver.py.
     location_name = models.CharField(_("location name"), max_length=200, blank=True)
     location_unlocode = models.CharField(_("UN/LOCODE"), max_length=10, blank=True)
     location_latitude = models.DecimalField(_("latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
     location_longitude = models.DecimalField(_("longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    location = models.ForeignKey(
+        "scm_containers.ContainerLocation",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tracking_events",
+        verbose_name=_("canonical location"),
+        help_text=_("The canonical location this event's reported place resolved to, when it did."),
+    )
+    location_resolution_status = models.CharField(
+        _("location resolution status"),
+        max_length=20,
+        choices=LocationResolutionStatus.choices,
+        blank=True,
+    )
+    location_resolution_method = models.CharField(
+        _("location resolution method"),
+        max_length=20,
+        choices=LocationResolutionMethod.choices,
+        blank=True,
+    )
 
     # Transport
     vessel_name = models.CharField(_("vessel name"), max_length=200, blank=True)
@@ -277,6 +437,9 @@ class TrackingEvent(BaseTeamModel):
             models.Index(fields=["event_datetime"]),
             models.Index(fields=["source_event_id"]),
             models.Index(fields=["team", "container", "event_time_type"]),
+            models.Index(fields=["team", "location"]),
+            # Finding the evidence that still needs an alias recorded for it.
+            models.Index(fields=["team", "location_resolution_status"]),
         ]
         constraints = [
             # The fingerprint is the single deduplication key: it is derived from the

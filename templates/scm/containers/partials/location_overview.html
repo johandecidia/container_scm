@@ -9,11 +9,24 @@
 
   Expected arrivals get a panel here rather than being hidden, because "nothing is
   expected" and "we cannot tell you what is expected" are different answers and the
-  second one is the true one today. It says so in one sentence and points at the
-  Arrivals queue, which does answer the question for the fleet as a whole.
+  first one is now the true one: the set comes from canonical destinations, so an
+  empty list means nothing is routed here rather than that the question is
+  unanswerable.
+
+  Since LOC-4 the place itself is on a map when its coordinates are recorded, and
+  says so plainly when they are not. One marker for the location, carrying the
+  inventory count — not one per container, because they all share the location's
+  single coordinate and eighty stacked discs would say nothing eighty times.
+
+  The hierarchy panel sits below them. It is on the Overview rather than behind a tab
+  of its own because containment is part of what this place *is* — the same category
+  as its code and its type — and because it is the panel somebody arrives at from the
+  data-quality queue.
 {% endcomment %}
 
 <div class="flex flex-col gap-4">
+  {% include "scm/containers/partials/location_map.html" %}
+
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
     {# ---------------------------------------------------------------- #}
     {# Current inventory.                                               #}
@@ -42,13 +55,18 @@
     </section>
 
     {# ---------------------------------------------------------------- #}
-    {# Expected arrivals — or why there is no honest number.            #}
+    {# Expected arrivals, from canonical destinations only.             #}
     {# ---------------------------------------------------------------- #}
     <section class="scm-panel">
-      {% include "scm/components/section_header.html" with title=_("Expected arrivals") %}
-      {% include "scm/containers/partials/location_expected_note.html" %}
+      {% include "scm/components/section_header.html" with title=_("Expected arrivals") count=workspace.expected.count %}
+      {% include "scm/containers/partials/location_expected.html" %}
     </section>
   </div>
+
+  {# ------------------------------------------------------------------ #}
+  {# Where this place sits: the path down to it, and what is inside it.  #}
+  {# ------------------------------------------------------------------ #}
+  {% include "scm/containers/partials/location_hierarchy.html" %}
 
   {# ------------------------------------------------------------------ #}
   {# Recent movement.                                                    #}

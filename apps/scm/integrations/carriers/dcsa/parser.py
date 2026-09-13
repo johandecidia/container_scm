@@ -225,7 +225,14 @@ class DcsaParser:
         latitude, longitude = _extract_coordinates(raw)
         vessel_name, vessel_imo, voyage = _extract_vessel(raw)
         transport_mode = _first_present(raw, call, keys=("modeOfTransport", "transportMode"))
-        description = raw.get("description") or raw.get("eventDescription") or raw.get("statusName") or ""
+        # ``reason`` last: DCSA puts a shipment event's own free text there rather than
+        # in a description field, so without it a whole class of events — booking
+        # received, document issued — would arrive with no carrier wording at all. It
+        # is the final fallback because where a carrier sends both, the description is
+        # about the event and the reason is about why it happened.
+        description = (
+            raw.get("description") or raw.get("eventDescription") or raw.get("statusName") or raw.get("reason") or ""
+        )
 
         # References. Each is looked for flat, then in the DCSA reference arrays, so
         # an event that only names its container in ``references`` is still tied to it.

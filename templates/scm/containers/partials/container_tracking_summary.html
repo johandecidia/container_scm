@@ -21,6 +21,12 @@
   A container can have several verified sources at once — carriers that covered
   different legs, plus our own physical record — so they are listed here and every
   timeline entry says which one reported it.
+
+  The carrier and the *provider* that supplies its data are also two different things,
+  and are shown as two lines. A box moving with ONE whose tracking arrives through Traqo
+  reads "ONE" with "via Traqo" underneath — never "Traqo" as though it were the line.
+  Where a carrier is moving the box and the carrier's own API answers, the second line
+  reads "Direct API" instead of repeating the name.
 {% endcomment %}
 
 <div id="container-tracking-panel" class="scm-panel">
@@ -31,7 +37,17 @@
       </h2>
       <p class="text-sm mt-1">
         {% if workspace.is_tracked %}
-          <span class="font-medium">{{ workspace.tracking_carrier_name }}</span>
+          {% comment %}
+            The carrier, or an explicit statement that we do not know it. A watch exists
+            because a provider returned data; that does not always establish who is
+            carrying the box, and filling the gap with the provider's name would be the
+            one thing this line must not do.
+          {% endcomment %}
+          {% if workspace.tracking_carrier_name %}
+            <span class="font-medium">{{ workspace.tracking_carrier_name }}</span>
+          {% else %}
+            <span class="font-medium text-base-content/60">{% translate "Carrier unknown" %}</span>
+          {% endif %}
           {% if workspace.has_tracking_error %}
             <span class="text-error ml-2">! {{ workspace.tracking_status|default:_("Error") }}</span>
           {% elif workspace.is_tracking_active %}
@@ -52,6 +68,31 @@
         Maersk rather than a gap in the setup. What the last refresh actually
         returned is the banner's job.
       {% endcomment %}
+      {% comment %}
+        Where the data comes from, and how the carrier was worked out. Two short facts
+        rather than one blurred one: "via Traqo" answers who supplies the payload, and
+        "identified via Vizion ACI" answers why we believe the carrier above. The second
+        is only worth showing when it was not the carrier's own events that proved it —
+        "Carrier: Maersk, identified via Maersk" is noise.
+      {% endcomment %}
+      {% if workspace.is_tracked %}
+        <p class="text-xs text-base-content/60 mt-1">
+          {% if workspace.tracking_is_direct %}
+            {% translate "Tracking: Direct API" %}
+          {% else %}
+            {% blocktranslate trimmed with provider=workspace.tracking_provider_label %}
+              Tracking: via {{ provider }}
+            {% endblocktranslate %}
+          {% endif %}
+          {% if workspace.carrier_source_label and not workspace.tracking_is_direct %}
+            <span class="text-base-content/40">·</span>
+            {% blocktranslate trimmed with evidence=workspace.carrier_source_label %}
+              carrier identified via {{ evidence }}
+            {% endblocktranslate %}
+          {% endif %}
+        </p>
+      {% endif %}
+
       {% if not workspace.is_tracked %}
         <p class="text-xs text-base-content/60 mt-1">
           {% if workspace.shipment_carrier %}
@@ -90,6 +131,43 @@
       <span class="htmx-request-show">{% translate "Refreshing…" %}</span>
     </button>
   </div>
+
+  {% comment %}
+    Which provider this container is tracked through, for administrators only. The
+    server enforces that — see `tracking_source_views` — and also decides what may
+    be chosen: the team's standard routing, Traqo explicitly, and a direct carrier
+    only when it is the carrier actually moving this box and the integration is
+    active with credentials.
+
+    Separate from the carrier lines above on purpose. This says who supplies the
+    data; the carrier is who is moving the box, and the two are different facts.
+  {% endcomment %}
+  {% if can_manage_tracking_source and tracking_provider_options %}
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <span class="text-xs text-base-content/60">{% translate "Tracking via" %}</span>
+      <form
+        hx-post="{% url 'containers:set_tracking_source' container.pk %}"
+        hx-target="#container-tracking-panel"
+        hx-swap="outerHTML"
+        hx-disabled-elt="find select"
+      >
+        {% csrf_token %}
+        <select name="provider" class="select select-bordered select-sm" onchange="this.form.requestSubmit()">
+          {% for option in tracking_provider_options %}
+            <option value="{{ option.value }}" {% if option.is_selected %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+    </div>
+  {% endif %}
+
+  {% if tracking_source_error %}
+    <div role="alert" class="alert alert-error alert-soft mb-4">
+      <i class="fa fa-circle-exclamation"></i>
+      <span class="text-sm">{{ tracking_source_error }}</span>
+    </div>
+  {% endif %}
 
   {% if refresh %}
     {% include "scm/containers/partials/container_tracking_result.html" with refresh=refresh %}

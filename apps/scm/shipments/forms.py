@@ -1,7 +1,9 @@
+from typing import cast
+
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
-from apps.scm.containers.models import Container
+from apps.scm.containers.models import Container, ContainerLocation
 
 from .models import Shipment
 
@@ -11,6 +13,12 @@ class ShipmentForm(forms.ModelForm):
 
     Does not expose: team, created_by, tracking_status, last_tracking_sync_at.
     Status changes must go through ShipmentStatusForm / the status-change view.
+
+    The routing fields come in pairs, and both halves are offered on purpose. The
+    port text is what was booked; the location is which place in MCR's own records
+    that is. Choosing a location does not clear the text, and nothing in the
+    tracking pipeline will replace the location — a canonical destination somebody
+    selected here is theirs until they change it.
     """
 
     class Meta:
@@ -24,6 +32,8 @@ class ShipmentForm(forms.ModelForm):
             "bill_of_lading_number",
             "origin_port",
             "destination_port",
+            "origin_location",
+            "destination_location",
             "etd",
             "eta",
             "notes",
@@ -37,10 +47,30 @@ class ShipmentForm(forms.ModelForm):
             "bill_of_lading_number": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
             "origin_port": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
             "destination_port": forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+            "origin_location": forms.Select(attrs={"class": "select select-bordered w-full"}),
+            "destination_location": forms.Select(attrs={"class": "select select-bordered w-full"}),
             "etd": forms.DateInput(attrs={"type": "date", "class": "input input-bordered w-full"}),
             "eta": forms.DateInput(attrs={"type": "date", "class": "input input-bordered w-full"}),
             "notes": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 3}),
         }
+
+    def __init__(self, *args, team=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scoped on the queryset, not only validated afterwards: a location id from
+        # another team is not offered and cannot be posted. Without a team — which
+        # only happens if a caller forgets to pass one — nothing is offered, so the
+        # failure is an empty dropdown rather than a cross-tenant write.
+        team = team or (self.instance.team if self.instance and self.instance.team_id else None)
+        locations = (
+            ContainerLocation.objects.none()
+            if team is None
+            else ContainerLocation.objects.filter(team=team, is_active=True).order_by("name")
+        )
+        for name in ("origin_location", "destination_location"):
+            field = cast(forms.ModelChoiceField, self.fields[name])
+            field.queryset = locations
+            field.required = False
+            field.empty_label = _("— Not set —")
 
 
 class ShipmentStatusForm(forms.Form):

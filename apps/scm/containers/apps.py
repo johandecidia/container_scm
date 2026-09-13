@@ -5,3 +5,6 @@ class ContainersConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.scm.containers"
     label = "scm_containers"
+
+    def ready(self):
+        from . import signals  # noqa: F401

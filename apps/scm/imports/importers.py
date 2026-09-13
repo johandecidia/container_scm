@@ -6,7 +6,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.scm.containers.choices import LocationSource, LocationType, MovementType
-from apps.scm.containers.models import Container, ContainerLocation, ContainerMovement, EquipmentType
+from apps.scm.containers.models import Container, ContainerLocation, EquipmentType
+from apps.scm.containers.movements import record_container_movement
 
 from .models import ImportJob, ImportRow
 
@@ -178,23 +179,19 @@ def _import_container_movement_row(row: ImportRow, job: ImportJob, *, update_exi
     elif not timezone.is_aware(occurred_at):
         occurred_at = timezone.make_aware(occurred_at)
 
-    # Create movement and update container location
-    old_location = container.current_location
-    ContainerMovement.objects.create(
+    # Recorded through the state transition service, not written here. An import
+    # file is one more source of movements, and it gets the same precedence rules as
+    # every other: a backdated row lands in the history without displacing a newer
+    # observation, which is what makes importing an old movement log safe.
+    record_container_movement(
         team=job.team,
         container=container,
-        from_location=old_location,
-        to_location=location,
         movement_type=MovementType.POSITION_UPDATE,
+        to_location=location,
         occurred_at=occurred_at,
         source=LocationSource.IMPORT,
         notes=data.get("notes") or "",
     )
-    container.current_location = location
-    container.location_source = LocationSource.IMPORT
-    container.last_location_update = occurred_at
-    container.save(update_fields=["current_location", "location_source", "last_location_update"])
-
     return "created"
 
 

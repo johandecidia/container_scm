@@ -5,7 +5,7 @@ from pathlib import Path
 from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
@@ -91,7 +91,8 @@ class ContainerHtmxTest(TestCase):
         self.assertIn("scm/containers/partials/container_intake_modal.html", template_names)
         self.assertIn("scm/containers/partials/container_intake_single.html", template_names)
 
-    def test_update_htmx_returns_row_on_success(self):
+    def test_update_htmx_refreshes_page_on_success(self):
+        """A saved edit asks HTMX to reload, so the list and the workspace both catch up."""
         container = _make_container(self.team)
         et = _et()
         client = Client()
@@ -102,14 +103,30 @@ class ContainerHtmxTest(TestCase):
                 "container_id_input": VALID_ID,
                 "equipment_type": et.pk,
                 "status": "BOOKED",
-                "condition": "GOOD",
+                # The team's own condition, seeded when the team was created.
+                "condition": ContainerCondition.objects.get(team=self.team, code="CW").pk,
                 "color_system": "UNKNOWN",
             },
             HTTP_HX_REQUEST="true",
         )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["HX-Refresh"], "true")
+        container.refresh_from_db()
+        self.assertEqual(container.status, "BOOKED")
+
+    def test_update_htmx_returns_modal_on_invalid(self):
+        """An invalid edit comes back as the modal itself, which is what the form targets."""
+        container = _make_container(self.team)
+        client = Client()
+        client.force_login(self.user)
+        response = client.post(
+            reverse("containers:update", kwargs={"container_id": container.pk}),
+            data={"container_id_input": "not-a-container-id"},
+            HTTP_HX_REQUEST="true",
+        )
         self.assertEqual(response.status_code, 200)
         template_names = [t.name for t in response.templates]
-        self.assertIn("scm/containers/partials/container_row.html", template_names)
+        self.assertIn("scm/containers/partials/container_form.html", template_names)
 
     def test_empty_state_when_no_containers(self):
         client = Client()

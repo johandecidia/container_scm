@@ -47,9 +47,30 @@
           {% blocktranslate trimmed with place=other_place %}to {{ place }}{% endblocktranslate %}
         {% endif %}
       {% endif %}
+      {% if movement.gate_name %}
+        <span class="text-base-content/30">·</span>
+        {% blocktranslate trimmed with gate=movement.gate_name %}gate {{ gate }}{% endblocktranslate %}
+      {% endif %}
     </p>
+    {% comment %}
+      Who claims this happened. A carrier-derived movement is badged rather than
+      merely named, because the difference between "an operator saw the box here"
+      and "a carrier's event was interpreted this way" is the one thing a reader
+      most needs to be able to tell at a glance — the source label alone reads as a
+      system name and is easy to skim past.
+    {% endcomment %}
     {% if movement.source %}
-      <p class="text-xs text-base-content/50 mt-0.5">{{ movement.get_source_display }}</p>
+      <p class="text-xs text-base-content/50 mt-0.5 flex flex-wrap items-center gap-1.5">
+        <span>{{ movement.get_source_display }}</span>
+        {% if movement.is_tracking_derived %}
+          <span class="badge badge-ghost badge-xs">{% translate "Carrier-derived" %}</span>
+        {% elif movement.is_observed %}
+          <span class="badge badge-ghost badge-xs">{% translate "Observed" %}</span>
+        {% endif %}
+        {% if not movement.affects_current_state %}
+          <span class="badge badge-ghost badge-xs">{% translate "History only" %}</span>
+        {% endif %}
+      </p>
     {% endif %}
   </div>
 </li>

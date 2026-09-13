@@ -17,7 +17,8 @@ from django.utils import timezone
 
 from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
 from apps.scm.tracking.positions import PositionType
-from apps.scm.visibility.geojson import overview_feature_collection
+from apps.scm.visibility.geojson import map_feature_collection
+from apps.scm.visibility.map_positions import PositionClass, get_operational_map
 from apps.scm.visibility.read_models import JourneyState, ObjectKind
 from apps.scm.visibility.selectors import get_container_visibility, list_visibility_objects
 
@@ -25,9 +26,16 @@ from .factories import (
     TEST_STORAGES,
     ingest_maersk_events,
     make_container,
+    make_location,
     make_user_and_team,
     payload_in_transit,
+    resolve_tracking_to,
 )
+
+
+def map_features(team):
+    """The operational map's features for a team, through the real read model."""
+    return map_feature_collection(get_operational_map(team, list_visibility_objects(team)))["features"]
 
 
 class StandaloneContainerTest(TestCase):
@@ -96,10 +104,18 @@ class StandaloneContainerTest(TestCase):
         self.assertEqual(len(objects), 1)
         self.assertEqual(objects[0].kind, ObjectKind.CONTAINER)
 
-    def test_it_appears_on_the_overview_map(self):
-        features = overview_feature_collection(list_visibility_objects(self.team))["features"]
+    def test_it_appears_on_the_operational_map_once_its_place_is_canonical(self):
+        """A container with no shipment is a first-class marker, not a special case."""
+        terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        resolve_tracking_to(self.team, self.container, terminal)
+
+        features = map_features(self.team)
+
         self.assertEqual(len(features), 1)
         self.assertEqual(features[0]["properties"]["container_number"], self.container.container_id)
+        self.assertEqual(features[0]["properties"]["position_class"], PositionClass.TRACKING)
 
 
 class StandaloneContainerWithoutCoordinatesTest(TestCase):
@@ -123,8 +139,26 @@ class StandaloneContainerWithoutCoordinatesTest(TestCase):
         self.assertEqual(position.position_type, PositionType.FACILITY)
 
     def test_it_is_absent_from_the_map_rather_than_placed_at_zero_zero(self):
-        features = overview_feature_collection(list_visibility_objects(self.team))["features"]
-        self.assertEqual(features, [])
+        self.assertEqual(map_features(self.team), [])
+
+    def test_a_canonical_place_without_coordinates_is_reported_rather_than_drawn(self):
+        """The place is real; MCR simply has not recorded where on earth it is.
+
+        Absent from the map and present in the coverage counts, which is the only
+        honest pair of answers: a marker would be invented, and silence would read
+        as "this container is nowhere".
+        """
+        terminal = make_location(self.team, "Oceanterminalen", unlocode="SEGOT")
+        resolve_tracking_to(self.team, self.container, terminal)
+
+        operational_map = get_operational_map(self.team, list_visibility_objects(self.team))
+
+        self.assertEqual(map_feature_collection(operational_map)["features"], [])
+        self.assertEqual(operational_map.coverage.containers_missing_coordinates, 1)
+        self.assertEqual(
+            [location.name for location in operational_map.coverage.locations_missing_coordinates],
+            ["Oceanterminalen"],
+        )
 
 
 @override_settings(STORAGES=TEST_STORAGES)

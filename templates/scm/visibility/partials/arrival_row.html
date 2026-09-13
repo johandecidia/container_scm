@@ -8,9 +8,24 @@
   Same reflowing grid as the exceptions queue — dense from `sm` up, stacked below —
   and the same single link per row, to the object's own page.
 
-  Destination is the shipment's destination port, which is what was booked. Where
-  there is no shipment there is no destination, and the row says so rather than
-  printing where the box is now: current location is not a destination.
+  Destination is the canonical location where the shipment has one, and the booked
+  destination text otherwise — `destination_label` decides, so this template holds
+  no rule about which. A canonical destination also gets a marker, because "bound
+  for the place we call Oceanterminalen" and "bound for somewhere a carrier spelled
+  Gothenburg" are different degrees of certainty and the row should not flatten
+  them.
+
+  Where there is no shipment there is no destination, and the row says so rather
+  than printing where the box is now: current location is not a destination.
+
+  Since LOC-3 the row also carries where this is in the inbound process. Two badges,
+  because they answer different questions: the lifecycle state says whether the box
+  is here, and health says whether the journey is in trouble. A row that showed only
+  one of them would leave the other unanswerable from the queue.
+
+  A row that has arrival evidence prints the movement it rests on — "Gate In 5 Sep
+  14:32" — rather than only a state, so the queue can be interrogated without opening
+  the container.
 {% endcomment %}
 
 <li>
@@ -29,8 +44,11 @@
     <div class="min-w-0 sm:col-span-3">
       <span class="block truncate text-xs text-base-content/70">
         <span class="sm:hidden text-base-content/40">{% translate "To" %}: </span>
-        {% if object.destination %}
-          {{ object.destination }}
+        {% if object.destination_label %}
+          {{ object.destination_label }}
+          {% if object.has_canonical_destination %}
+            <i class="fa fa-location-dot text-[0.6rem] text-base-content/30" title="{% translate 'A canonical location, not carrier text' %}"></i>
+          {% endif %}
         {% else %}
           <span class="text-base-content/40">{% translate "No destination recorded" %}</span>
         {% endif %}
@@ -58,11 +76,39 @@
           {% translate "Shipment" %}
         {% endif %}
       </span>
+      {% comment %}
+        The last thing that actually happened at the destination, where anything has.
+        Named and dated: an arrival somebody can check beats a badge they have to
+        trust.
+      {% endcomment %}
+      {% with movement=object.arrival.latest_relevant_movement %}
+        {% if movement %}
+          <span class="block truncate text-xs text-base-content/60">
+            {{ movement.get_movement_type_display }} {{ movement.occurred_at|date:"d M H:i" }}
+          </span>
+        {% endif %}
+      {% endwith %}
     </div>
 
-    {# In what condition. The visibility layer's own health, unchanged. #}
+    {# Where it has got to, and in what condition. Two questions, two badges. #}
     <div class="min-w-0 sm:col-span-2 sm:text-right">
-      {% include "scm/visibility/components/health_badge.html" with object=object %}
+      <div class="flex flex-wrap gap-1 sm:justify-end">
+        {% include "scm/visibility/components/arrival_state_badge.html" with object=object %}
+      </div>
+      <div class="mt-1 flex flex-wrap gap-1 sm:justify-end">
+        {% include "scm/visibility/components/health_badge.html" with object=object %}
+      </div>
+      {% comment %}
+        A shipment part-way in says how far. One number, only where it adds
+        something: "3/4 arrived" is the fact that decides whether to send a truck.
+      {% endcomment %}
+      {% if object.container_count > 1 and object.arrival.arrived %}
+        <span class="mt-1 block text-xs text-base-content/50">
+          {% blocktranslate trimmed with arrived=object.arrival.arrived total=object.arrival.total %}
+            {{ arrived }}/{{ total }} arrived
+          {% endblocktranslate %}
+        </span>
+      {% endif %}
     </div>
   </a>
 </li>
