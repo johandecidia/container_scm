@@ -1,9 +1,16 @@
 # Container views — request handling, response rendering, form handling only.
 # Business logic belongs in services.py; queries belong in selectors.py.
+#
+# The canonical location views — the Locations list, the Location Workspace, the
+# location and alias forms, and LOC-5's evidence action — live in location_views.py.
+# They were split out unchanged when this file passed 750 lines; the routes and
+# templates are the ones they always had.
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
@@ -13,21 +20,24 @@ from apps.scm.decorators import scm_login_required
 from apps.scm.tracking.manual_refresh import refresh_container_tracking
 from apps.scm.visibility.context import get_container_map_context
 
+from .activity import get_container_activity
+from .choices import MovementType
 from .discovery import (
     add_planned_container,
     cancel_planned_container,
     get_planned_containers,
     run_discovery_for_team,
 )
-from .forms import ContainerForm, ContainerLocationForm, PlannedContainerForm
-from .models import Container, ContainerLocation, PlannedContainer, PlannedContainerStatus
+from .forms import ContainerForm, ContainerMovementForm, PlannedContainerForm
+from .models import Container, PlannedContainer, PlannedContainerStatus
+from .movements import record_container_movement
 from .selectors import (
     filter_containers,
     get_active_equipment_types,
+    get_condition_options,
     get_container_workspace,
-    get_team_locations_with_counts,
 )
-from .services import create_location, delete_container, update_container, update_location
+from .services import delete_container, update_container
 
 CONTAINERS_PER_PAGE = 25
 
@@ -36,13 +46,44 @@ CONTAINERS_PER_PAGE = 25
 TRACKING_PANEL_TEMPLATE = "scm/containers/partials/container_tracking_panel.html"
 
 # Maps a RefreshResult level onto the messages framework, so the tracking service
-# stays independent of it.
-_MESSAGE_LEVELS = {
+# stays independent of it. Public because tracking_source_views.py reports the same
+# kind of result from the same panel.
+MESSAGE_LEVELS = {
     "success": messages.success,
     "info": messages.info,
     "warning": messages.warning,
     "error": messages.error,
 }
+
+
+def tracking_panel_context(request, *, team, container, workspace=None, refresh=None, error: str = "") -> dict:
+    """Everything the tracking panel renders, for whichever action re-rendered it.
+
+    Three views swap this element — the detail page, the Refresh button and the
+    tracking-source selector — and a context built separately in each would let them
+    show three slightly different versions of one container's tracking. The provider
+    options are built here rather than on the workspace because they cost queries:
+    the workspace is also assembled in bulk for the whole fleet, where a per-container
+    option list would be a query per row.
+    """
+    from apps.scm.tracking.preferences import get_provider_options
+    from apps.teams.roles import is_admin
+
+    workspace = workspace or get_container_workspace(team=team, container=container)
+    can_manage = is_admin(request.user, team)
+    return {
+        "container": container,
+        "workspace": workspace,
+        # The panel shows position, ETA and freshness through the shared visibility
+        # components, so anything that re-renders it has to rebuild them too.
+        **get_container_map_context(team=team, container=container, workspace=workspace),
+        "refresh": refresh,
+        "tracking_source_error": error,
+        # Administrators only, and only for them are the options even computed.
+        "can_manage_tracking_source": can_manage,
+        "tracking_provider_options": get_provider_options(team, container) if can_manage else [],
+        "team_slug": team.slug,
+    }
 
 
 @scm_login_required
@@ -69,6 +110,10 @@ def container_list(request):
         "containers": page_obj,
         "page_obj": page_obj,
         "equipment_types": get_active_equipment_types(),
+        # The filter offers the team's active conditions. A container graded with a
+        # retired one still shows it in its row; what is gone is the option to filter
+        # a whole list down to a value nobody is meant to choose any more.
+        "conditions": get_condition_options(team),
         "locations": get_team_locations(team),
         "location_types": LocationType.choices,
         "saved_filters": saved_filters,
@@ -82,6 +127,12 @@ def container_list(request):
 
 @scm_login_required
 def container_detail(request, container_id):
+    """The Container Workspace: overview, journey, activity and related objects.
+
+    Kept on the `containers:detail` route and template name it has always had, so
+    every existing link and redirect still resolves. All four sections are rendered
+    in one response and switched client-side — see the template.
+    """
     team = request.default_team
     container = get_object_or_404(Container, pk=container_id, team=team)
     workspace = get_container_workspace(team=team, container=container)
@@ -89,12 +140,12 @@ def container_detail(request, container_id):
         request,
         "scm/containers/pages/container_detail.html",
         {
-            "container": container,
-            "workspace": workspace,
-            # The map and the journey summary read the same workspace, so the page
-            # loads this container's tracking once.
-            **get_container_map_context(team=team, container=container, workspace=workspace),
-            "team_slug": team.slug,
+            # Derived from what the workspace already loaded, plus one query for the
+            # ETA history. Team-scoped throughout.
+            "activity": get_container_activity(team=team, container=container, workspace=workspace),
+            # The map, the journey summary and the tracking panel read the same
+            # workspace, so the page loads this container's tracking once.
+            **tracking_panel_context(request, team=team, container=container, workspace=workspace),
         },
     )
 
@@ -112,11 +163,12 @@ def container_update(request, container_id):
         if form.is_valid():
             container = update_container(container=container, user=request.user, data=form.get_container_data())
             if request.htmx:
-                return render(
-                    request,
-                    "scm/containers/partials/container_row.html",
-                    {"container": container, "team_slug": team.slug},
-                )
+                # The whole page, for the same reason a movement reloads it: this
+                # modal is opened from both the list and the workspace, and an edit
+                # changes the header, the Overview panel and the row at once.
+                response = HttpResponse(status=204)
+                response["HX-Refresh"] = "true"
+                return response
             messages.success(request, _("Container updated."))
             return redirect("containers:detail", container_id=container_id)
         if request.htmx:
@@ -173,23 +225,104 @@ def container_refresh_tracking(request, container_id):
     result = refresh_container_tracking(team=team, container=container)
 
     if request.htmx:
-        workspace = get_container_workspace(team=team, container=container)
         return render(
             request,
             TRACKING_PANEL_TEMPLATE,
-            {
-                "container": container,
-                "workspace": workspace,
-                # The panel shows position, ETA and freshness through the shared
-                # visibility components, so a refresh has to rebuild them too.
-                **get_container_map_context(team=team, container=container, workspace=workspace),
-                "refresh": result,
-                "team_slug": team.slug,
-            },
+            tracking_panel_context(request, team=team, container=container, refresh=result),
         )
 
-    _MESSAGE_LEVELS[result.level](request, result.message)
+    MESSAGE_LEVELS[result.level](request, result.message)
     return redirect("containers:detail", container_id=container.pk)
+
+
+@scm_login_required
+def container_record_movement(request, container_id):
+    """Record a gate in, gate out, receipt or transfer for this container.
+
+    The view does no state logic at all: it validates the form, hands the values to
+    ``record_container_movement`` and re-renders. Which movement wins, whether the
+    current location changes, and what a gate-out leaves behind are decided in
+    ``movements.py`` — a view that reimplemented any of that would be a second
+    opinion about where containers are.
+
+    Domain validation surfaces as a form error rather than a 500: "a gate-out needs
+    an origin" is something the person filling the form can fix.
+    """
+    team = request.default_team
+    container = get_object_or_404(Container, pk=container_id, team=team)
+    requested_type = request.GET.get("type") or MovementType.GATE_IN
+
+    if request.method == "POST":
+        form = ContainerMovementForm(request.POST, team=team, container=container)
+        if form.is_valid():
+            try:
+                record_container_movement(team=team, container=container, **form.movement_data())
+            except ValidationError as error:
+                form.add_error(None, error)
+            else:
+                if request.htmx:
+                    # The whole page: a movement changes the header's physical state,
+                    # the Overview panel and the Activity tab at once, and swapping
+                    # one of them would leave the other two contradicting it.
+                    response = HttpResponse(status=204)
+                    response["HX-Refresh"] = "true"
+                    return response
+                messages.success(request, _("Movement recorded."))
+                return redirect("containers:detail", container_id=container.pk)
+    else:
+        initial = {"occurred_at": timezone.localtime().strftime("%Y-%m-%dT%H:%M")}
+        if (destination := _inbound_destination_id(team, container, requested_type)) is not None:
+            initial["to_location"] = destination
+        form = ContainerMovementForm(
+            team=team,
+            container=container,
+            movement_type=requested_type,
+            initial=initial,
+        )
+
+    return render(
+        request,
+        "scm/containers/partials/container_movement_form.html",
+        {
+            "form": form,
+            "container": container,
+            "modal_title": _("Record movement"),
+            "form_action": request.path,
+            "team_slug": team.slug,
+        },
+    )
+
+
+def _inbound_destination_id(team, container, movement_type: str) -> int | None:
+    """The canonical place this box is inbound to, for prefilling a receipt.
+
+    Only for a receipt, and only a *default*: receiving is the movement whose
+    destination is knowable in advance, because the shipment already says where the
+    box was booked to. A gate-in can happen anywhere on the way, and offering the
+    booked destination for one would put a guess in the field.
+
+    Read through the arrival lifecycle rather than from ``destination_location``
+    directly, so the field is prefilled with the same place the lifecycle will judge
+    the resulting movement against. Falls back to nothing rather than to the
+    container's current location — a box standing at the wrong depot should not have
+    that depot suggested as where it is being received.
+    """
+    if movement_type != MovementType.RECEIVED:
+        return None
+
+    from apps.scm.shipments.models import ShipmentContainer
+    from apps.scm.visibility.arrival_lifecycle import get_container_arrival_lifecycle
+
+    workspace_shipment = (
+        ShipmentContainer.objects.filter(container=container, shipment__team=team)
+        .select_related("shipment", "shipment__destination_location")
+        .order_by("-created_at")
+        .first()
+    )
+    if workspace_shipment is None:
+        return None
+    lifecycle = get_container_arrival_lifecycle(team, container, workspace_shipment.shipment)
+    return lifecycle.destination.pk if lifecycle.destination is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -263,104 +396,3 @@ def planned_container_run_discovery(request):
             _(f"Discovery complete: checked {summary['checked']}, detected {summary['detected']}."),
         )
     return redirect("containers:discovery_dashboard")
-
-
-# ---------------------------------------------------------------------------
-# Container location views
-# ---------------------------------------------------------------------------
-
-
-@scm_login_required
-def container_location_list(request):
-    """List all container locations with container counts."""
-    team = request.default_team
-    locations = get_team_locations_with_counts(team)
-    return render(
-        request,
-        "scm/containers/pages/container_location_list.html",
-        {"locations": locations, "team_slug": team.slug},
-    )
-
-
-@scm_login_required
-def container_location_create(request):
-    """Create a new container location."""
-    team = request.default_team
-    if request.method == "POST":
-        form = ContainerLocationForm(request.POST)
-        if form.is_valid():
-            create_location(team=team, data=form.cleaned_data)
-            if request.htmx:
-                locations = get_team_locations_with_counts(team)
-                return render(
-                    request,
-                    "scm/containers/partials/container_location_table.html",
-                    {"locations": locations, "team_slug": team.slug},
-                )
-            messages.success(request, _("Location created."))
-            return redirect("containers:location_list")
-        if request.htmx:
-            return render(
-                request,
-                "scm/containers/partials/container_location_form.html",
-                {"form": form, "modal_title": _("New Location"), "form_action": request.path, "team_slug": team.slug},
-            )
-    else:
-        form = ContainerLocationForm()
-    return render(
-        request,
-        "scm/containers/partials/container_location_form.html",
-        {"form": form, "modal_title": _("New Location"), "form_action": request.path, "team_slug": team.slug},
-    )
-
-
-@scm_login_required
-def container_location_update(request, location_id):
-    """Edit an existing container location."""
-    team = request.default_team
-    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
-    if request.method == "POST":
-        form = ContainerLocationForm(request.POST, instance=location)
-        if form.is_valid():
-            update_location(location=location, data=form.cleaned_data)
-            if request.htmx:
-                locations = get_team_locations_with_counts(team)
-                return render(
-                    request,
-                    "scm/containers/partials/container_location_table.html",
-                    {"locations": locations, "team_slug": team.slug},
-                )
-            messages.success(request, _("Location updated."))
-            return redirect("containers:location_list")
-        if request.htmx:
-            return render(
-                request,
-                "scm/containers/partials/container_location_form.html",
-                {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
-            )
-    else:
-        form = ContainerLocationForm(instance=location)
-    return render(
-        request,
-        "scm/containers/partials/container_location_form.html",
-        {"form": form, "modal_title": _("Edit Location"), "form_action": request.path, "team_slug": team.slug},
-    )
-
-
-@scm_login_required
-def container_location_deactivate(request, location_id):
-    """Toggle active state of a container location."""
-    team = request.default_team
-    location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
-    if request.method == "POST":
-        location.is_active = not location.is_active
-        location.save(update_fields=["is_active"])
-        if request.htmx:
-            locations = get_team_locations_with_counts(team)
-            return render(
-                request,
-                "scm/containers/partials/container_location_table.html",
-                {"locations": locations, "team_slug": team.slug},
-            )
-        messages.success(request, _("Location updated."))
-    return redirect("containers:location_list")

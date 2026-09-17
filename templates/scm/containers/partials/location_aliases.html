@@ -1,0 +1,87 @@
+{% load i18n %}
+
+{% comment %}
+  The external names recorded for one location.
+
+  Usage:
+    {% include "scm/containers/partials/location_aliases.html" with location=location aliases=workspace.aliases %}
+
+  Its own HTMX component, swapped whole by every alias write, so adding and removing
+  leave the page showing the current set without a reload. The wrapper id is what
+  those requests target, so it has to stay on the outermost element.
+
+  An alias is the one place a person decides that a carrier's spelling means this
+  place. Nothing infers one and nothing creates one while reading a carrier
+  response, which is why this list is short and why adding to it is a deliberate
+  act rather than something that accumulates on its own.
+{% endcomment %}
+
+<div id="location-aliases">
+  <div class="flex items-start justify-between gap-3 mb-3">
+    <p class="text-sm text-base-content/70">
+      {% blocktranslate trimmed %}
+        What carriers and providers call this place. Tracking evidence carrying one of
+        these names resolves here.
+      {% endblocktranslate %}
+    </p>
+    <button
+      type="button"
+      class="btn btn-outline btn-sm shrink-0"
+      hx-get="{% url 'containers:location_alias_create' location.pk %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      <i class="fa fa-plus text-xs"></i>
+      {% translate "Add alias" %}
+    </button>
+  </div>
+
+  {% if aliases %}
+    <div class="overflow-x-auto">
+      <table class="table table-sm w-full">
+        <thead>
+          <tr>
+            <th>{% translate "Source" %}</th>
+            <th>{% translate "Reported name" %}</th>
+            <th>{% translate "Code" %}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for alias in aliases %}
+            <tr>
+              <td><span class="badge badge-ghost badge-sm font-mono">{{ alias.source }}</span></td>
+              <td class="text-sm">{{ alias.external_name|default:"—" }}</td>
+              <td class="text-sm font-mono text-base-content/60">{{ alias.external_code|default:"—" }}</td>
+              <td class="text-right">
+                {% comment %}
+                  Removing an alias changes what future tracking resolves to, so it
+                  asks first. hx-confirm rather than a modal: this is one row, and a
+                  dialog for it would be heavier than the decision.
+                {% endcomment %}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs text-error"
+                  title="{% translate 'Remove alias' %}"
+                  hx-post="{% url 'containers:location_alias_delete' location.pk alias.pk %}"
+                  hx-target="#location-aliases"
+                  hx-swap="outerHTML"
+                  hx-confirm="{% translate 'Remove this alias? Tracking evidence using this name will stop resolving to this location.' %}"
+                >
+                  <i class="fa fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="text-sm text-base-content/60 py-2">
+      {% blocktranslate trimmed %}
+        No external names recorded. Carrier evidence reaches this location only by
+        UN/LOCODE, coordinates, or this location's own name.
+      {% endblocktranslate %}
+    </p>
+  {% endif %}
+</div>

@@ -1,0 +1,31 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/visibility/components/arrival_state_badge.html" with object=obj %}
+
+  Where an inbound box has got to: expected, arriving, arrived, received. The state
+  comes from the arrival lifecycle, so this template holds no rule about what any of
+  them mean — it only chooses the colour.
+
+  Overdue is a separate badge beside the state rather than a fifth state. "Expected
+  and four days late" is two facts, and collapsing them into a LATE badge would lose
+  the one that says what the box is actually doing.
+
+  Kept apart from the health badge next to it on purpose. Health is about the
+  journey — delayed, held, on time — and this is about the inbound process. A box can
+  be on time and not yet received.
+{% endcomment %}
+
+{% if object.arrival_state == "received" %}
+  <span class="badge badge-sm badge-success badge-soft">{% translate "Received" %}</span>
+{% elif object.arrival_state == "arrived" %}
+  <span class="badge badge-sm badge-info badge-soft">{% translate "Arrived" %}</span>
+{% elif object.arrival_state == "arriving" %}
+  <span class="badge badge-sm badge-primary badge-soft">{% translate "Arriving" %}</span>
+{% else %}
+  <span class="badge badge-sm badge-ghost">{% translate "Expected" %}</span>
+{% endif %}
+
+{% if object.is_arrival_overdue %}
+  <span class="badge badge-sm badge-warning badge-soft">{% translate "Overdue" %}</span>
+{% endif %}

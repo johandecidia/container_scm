@@ -25,12 +25,18 @@
     <option value="DECOMMISSIONED" {% if request.GET.status == "DECOMMISSIONED" %}selected{% endif %}>{% translate "Decommissioned" %}</option>
   </select>
 
+  {% comment %}
+    The team's own conditions, active ones only. Filtering is by code rather than by
+    row id so a saved filter or a shared link keeps meaning the same thing after the
+    condition behind it is renamed.
+  {% endcomment %}
   <select name="condition" class="select select-bordered select-sm">
     <option value="">{% translate "All conditions" %}</option>
-    <option value="NEW" {% if request.GET.condition == "NEW" %}selected{% endif %}>{% translate "New" %}</option>
-    <option value="GOOD" {% if request.GET.condition == "GOOD" %}selected{% endif %}>{% translate "Good" %}</option>
-    <option value="FAIR" {% if request.GET.condition == "FAIR" %}selected{% endif %}>{% translate "Fair" %}</option>
-    <option value="DAMAGED" {% if request.GET.condition == "DAMAGED" %}selected{% endif %}>{% translate "Damaged" %}</option>
+    {% for condition in conditions %}
+      <option value="{{ condition.code }}" {% if request.GET.condition == condition.code %}selected{% endif %}>
+        {{ condition.name }}
+      </option>
+    {% endfor %}
   </select>
 
   <select name="equipment_type" class="select select-bordered select-sm">

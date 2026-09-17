@@ -6,6 +6,7 @@
   hx-swap="innerHTML"
 >
   {% csrf_token %}
+  {% include "scm/containers/partials/container_intake_po_field.html" %}
 
   {% if intake_error %}
     <div class="alert alert-error mb-3"><span>{{ intake_error }}</span></div>
@@ -32,6 +33,8 @@
       <p class="text-error text-sm mt-1">{{ error }}</p>
     {% endfor %}
   </div>
+
+  {% include "scm/containers/partials/container_intake_attributes.html" %}
 
   <div class="modal-action">
     <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">

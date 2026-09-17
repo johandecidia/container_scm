@@ -1,0 +1,93 @@
+{% load i18n %}
+
+{% comment %}
+  What the map above is claiming, in words.
+
+  This exists for the case the map cannot express. A container with no plottable
+  position and a known destination draws exactly one marker — the destination — and
+  a reader glancing at one marker concludes the box is there. Saying "no current
+  plottable position, destination Oceanterminalen" is longer and true.
+
+  Three states, all of them normal:
+
+  * A current position, plottable. The marker is on the map; this line says which
+    kind of claim it is and how fresh.
+  * A current position at a place with no coordinates. The domain knows where the
+    box is; the map cannot draw it. Both facts are stated.
+  * No current position. Said plainly, and the destination is labelled as a
+    destination rather than left to be mistaken for one.
+
+  The destination line reads the shipment's canonical destination, not the map's
+  destination marker. They are not the same thing: the marker exists only while the
+  arrival is outstanding — a received box is not inbound volume — but the booking's
+  destination remains a fact about it afterwards, and printing "no canonical
+  destination" for a delivered container would be false.
+
+  Reads from context: map_positions (visibility.context.ContainerMapPositions) and
+  visibility (the container's VisibilityObject).
+{% endcomment %}
+
+{% if map_positions.current or visibility.has_canonical_destination %}
+  <dl class="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "On the map now" %}</dt>
+      <dd class="text-sm font-medium">
+        {% if map_positions.current %}
+          {% if map_positions.current.position_class == "physical" %}
+            <span class="text-success">●</span>
+          {% else %}
+            <span class="text-info">◇</span>
+          {% endif %}
+          {{ map_positions.current.place_statement }}
+          <span class="block text-xs font-normal text-base-content/60">
+            {{ map_positions.current.position_class_label }}
+            {% if map_positions.current.detail %} · {{ map_positions.current.detail }}{% endif %}
+            {% if map_positions.current.source_label %} · {{ map_positions.current.source_label }}{% endif %}
+          </span>
+          {% if map_positions.current.occurred_at %}
+            <span class="block text-xs font-normal text-base-content/50">
+              {% blocktranslate trimmed with ago=map_positions.current.occurred_at|timesince %}
+                {{ ago }} ago
+              {% endblocktranslate %}
+            </span>
+          {% endif %}
+          {% if not map_positions.current.is_plottable %}
+            {% comment %}
+              The domain knows the place; the master data has no coordinates for
+              it. Both halves matter, and neither is an error.
+            {% endcomment %}
+            <span class="mt-1 block text-xs font-normal text-warning">
+              {% translate "Not on the map — this location has no coordinates yet." %}
+            </span>
+          {% endif %}
+        {% else %}
+          <span class="text-base-content/60">{% translate "No current plottable position" %}</span>
+          <span class="block text-xs font-normal text-base-content/50">
+            {% translate "Nothing has been accepted physically, and no carrier report has resolved to a canonical place." %}
+          </span>
+        {% endif %}
+      </dd>
+    </div>
+
+    <div>
+      <dt class="text-xs text-base-content/60">{% translate "Destination" %}</dt>
+      <dd class="text-sm font-medium">
+        {% if visibility.has_canonical_destination %}
+          <span class="text-warning">▣</span> {{ visibility.destination_location.full_name }}
+          <span class="block text-xs font-normal text-base-content/60">
+            {% if map_positions.destination %}
+              {% translate "Where it is going — not where it is." %}
+            {% else %}
+              {% translate "Where it was booked to. No longer drawn as inbound: it has got there." %}
+            {% endif %}
+          </span>
+        {% else %}
+          <span class="text-base-content/50">{% translate "No canonical destination" %}</span>
+          <span class="block text-xs font-normal text-base-content/50">
+            {% translate "The booking names a place in text only, so nothing can be plotted for it." %}
+          </span>
+        {% endif %}
+      </dd>
+    </div>
+  </dl>
+{% endif %}

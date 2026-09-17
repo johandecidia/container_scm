@@ -1,0 +1,39 @@
+{% load i18n %}
+
+{% comment %}
+  Where this location is, when MCR has recorded it — and an honest account of the
+  gap when it has not.
+
+  Two states, and they are different sentences:
+
+  * Coordinates recorded. One marker, carrying the inventory count. The wording is
+    "at" the place rather than a quoted position, because the coordinate belongs to
+    the location and not to any container standing inside it.
+
+  * No coordinates. Not an error, and not a marker at 0, 0. LOC-1 deliberately did
+    not invent latitudes it could not verify, so this is a normal state of the
+    master data — and the fix is the location form, which is the button offered.
+
+  Reads from context: location, workspace, mapbox, map_data_url (set by the view).
+{% endcomment %}
+
+{% if workspace.has_coordinates %}
+  {% include "scm/visibility/components/map_card.html" with map_mode="location" map_card_class="scm-panel" map_title=_("Where this is") map_height="h-64" map_note=_("The location's own coordinates. Containers here share this point — it locates the place, not each box inside it.") %}
+{% else %}
+  <section class="scm-panel">
+    {% include "scm/components/section_header.html" with title=_("Where this is") %}
+    <div class="flex flex-col items-center justify-center rounded-box border border-dashed border-base-300 bg-base-200 p-6 text-center">
+      <i class="fa fa-location-crosshairs mb-2 text-3xl text-base-content/20"></i>
+      <p class="text-sm font-medium text-base-content/70">{% translate "No coordinates recorded" %}</p>
+      <p class="mt-1 max-w-md text-xs text-base-content/50">
+        {% blocktranslate trimmed with place=location.name %}
+          {{ place }} is a valid location — it simply has no latitude and longitude yet, so it cannot
+          appear on the operational map. Add them to plot it and every container standing here.
+        {% endblocktranslate %}
+      </p>
+      <a href="{% url 'containers:location_update' location.pk %}" class="btn btn-outline btn-sm mt-3">
+        {% translate "Add coordinates" %}
+      </a>
+    </div>
+  </section>
+{% endif %}

@@ -1,0 +1,131 @@
+{
+  "events": [
+    {
+      "eventID": "5f1e8a10-0000-4000-8000-00000000a001",
+      "eventCreatedDateTime": "2026-06-01T08:12:44Z",
+      "eventType": "SHIPMENT",
+      "eventClassifierCode": "ACT",
+      "eventDateTime": "2026-06-01T08:10:00+02:00",
+      "eventDateTimeTimezone": "+02:00",
+      "shipmentEventTypeCode": "RECE",
+      "documentTypeCode": "BKG",
+      "documentID": "HLCU-BKG-8891234",
+      "reason": "Booking request received",
+      "documentReferences": [
+        { "documentReferenceType": "BKG", "documentReferenceValue": "HLCU-BKG-8891234" }
+      ],
+      "references": [{ "referenceType": "EQ", "referenceValue": "HLXU8891233" }]
+    },
+    {
+      "eventID": "5f1e8a10-0000-4000-8000-00000000a002",
+      "eventCreatedDateTime": "2026-06-14T06:31:02Z",
+      "eventType": "EQUIPMENT",
+      "eventClassifierCode": "ACT",
+      "eventDateTime": "2026-06-14T08:24:00+02:00",
+      "eventDateTimeTimezone": "+02:00",
+      "equipmentEventTypeCode": "GTIN",
+      "equipmentReference": "HLXU8891233",
+      "ISOEquipmentCode": "45G1",
+      "emptyIndicatorCode": "LADEN",
+      "description": "Container gate in at terminal",
+      "eventLocation": {
+        "locationName": "Container Terminal Altenwerder",
+        "UNLocationCode": "DEHAM",
+        "facilityCode": "CTA",
+        "facilityCodeListProvider": "SMDG",
+        "latitude": "53.500000",
+        "longitude": "9.933333",
+        "address": {
+          "city": "Hamburg",
+          "countryCode": "DE"
+        }
+      },
+      "transportCall": {
+        "transportCallID": "TC-DEHAM-0034W",
+        "carrierServiceCode": "AX1",
+        "exportVoyageNumber": "0034W",
+        "modeOfTransport": "VESSEL",
+        "UNLocationCode": "DEHAM",
+        "vessel": {
+          "vesselIMONumber": "9450648",
+          "vesselName": "HAMBURG EXPRESS"
+        }
+      },
+      "documentReferences": [
+        { "documentReferenceType": "BKG", "documentReferenceValue": "HLCU-BKG-8891234" },
+        { "documentReferenceType": "TRD", "documentReferenceValue": "HLCUDE1889123478" }
+      ]
+    },
+    {
+      "eventID": "5f1e8a10-0000-4000-8000-00000000a003",
+      "eventCreatedDateTime": "2026-06-15T19:05:10Z",
+      "eventType": "TRANSPORT",
+      "eventClassifierCode": "ACT",
+      "eventDateTime": "2026-06-15T20:45:00+02:00",
+      "eventDateTimeTimezone": "+02:00",
+      "transportEventTypeCode": "DEPA",
+      "description": "Vessel departure",
+      "transportCall": {
+        "transportCallID": "TC-DEHAM-0034W",
+        "carrierServiceCode": "AX1",
+        "exportVoyageNumber": "0034W",
+        "modeOfTransport": "VESSEL",
+        "UNLocationCode": "DEHAM",
+        "location": {
+          "locationName": "Hamburg",
+          "UNLocationCode": "DEHAM",
+          "latitude": "53.550000",
+          "longitude": "9.993000"
+        },
+        "vessel": {
+          "vesselIMONumber": "9450648",
+          "vesselName": "HAMBURG EXPRESS"
+        }
+      },
+      "references": [{ "referenceType": "EQ", "referenceValue": "HLXU8891233" }]
+    },
+    {
+      "eventID": "5f1e8a10-0000-4000-8000-00000000a004",
+      "eventCreatedDateTime": "2026-06-16T04:00:00Z",
+      "eventType": "EQUIPMENT",
+      "eventClassifierCode": "ACT",
+      "eventDateTime": "2026-06-16T05:30:00+02:00",
+      "eventDateTimeTimezone": "+02:00",
+      "equipmentEventTypeCode": "STUF",
+      "equipmentReference": "HLXU8891233",
+      "description": "Container stuffing completed at inland depot",
+      "eventLocation": {
+        "locationName": "Bremer Binnenterminal Nord",
+        "latitude": "53.108000",
+        "longitude": "8.752000"
+      },
+      "references": [{ "referenceType": "EQ", "referenceValue": "HLXU8891233" }]
+    },
+    {
+      "eventID": "5f1e8a10-0000-4000-8000-00000000a005",
+      "eventCreatedDateTime": "2026-06-16T05:00:00Z",
+      "eventType": "TRANSPORT",
+      "eventClassifierCode": "EST",
+      "eventDateTime": "2026-07-04T14:00:00-04:00",
+      "eventDateTimeTimezone": "-04:00",
+      "transportEventTypeCode": "ARRI",
+      "description": "Estimated vessel arrival",
+      "transportCall": {
+        "transportCallID": "TC-USNYC-0034E",
+        "carrierServiceCode": "AX1",
+        "importVoyageNumber": "0034E",
+        "modeOfTransport": "VESSEL",
+        "UNLocationCode": "USNYC",
+        "location": {
+          "locationName": "New York",
+          "UNLocationCode": "USNYC"
+        },
+        "vessel": {
+          "vesselIMONumber": "9450648",
+          "vesselName": "HAMBURG EXPRESS"
+        }
+      },
+      "references": [{ "referenceType": "EQ", "referenceValue": "HLXU8891233" }]
+    }
+  ]
+}

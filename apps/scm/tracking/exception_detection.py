@@ -23,11 +23,35 @@ from .models import TrackingEvent
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ExceptionIssue:
+    """One exception, with the reason it was raised.
+
+    ``exception_type`` is the code the rest of the platform matches on;
+    ``detail`` is this engine's own sentence about why, e.g. "Customs hold at
+    Rotterdam". They belong together: a caller that wants to show a reason beside
+    a type must not have to guess which detail goes with which code.
+    """
+
+    exception_type: str
+    detail: str
+
+
 @dataclass
 class ExceptionReport:
+    """What this engine found, in three views of the same findings.
+
+    ``issues`` pairs each type with its reason and is the primary answer.
+    ``exception_types`` and ``details`` are the flat lists callers have always
+    read; they are kept because de-duplication differs between them — a shipment
+    reports one ``customs_hold`` type across four boxes but keeps all four reasons,
+    so neither flat list can be recovered from the other.
+    """
+
     has_exception: bool
     exception_types: list[str] = field(default_factory=list)
     details: list[str] = field(default_factory=list)
+    issues: list[ExceptionIssue] = field(default_factory=list)
 
 
 # Carrier event codes / descriptions that typically indicate a rollover.
@@ -52,37 +76,35 @@ def evaluate_container_exceptions(events) -> ExceptionReport:
     """
     events = list(events)
 
-    exception_types: list[str] = []
-    details: list[str] = []
+    issues: list[ExceptionIssue] = []
+    found: set[str] = set()
+
+    def record(exception_type: str, detail: str) -> None:
+        if exception_type in found:
+            return
+        found.add(exception_type)
+        issues.append(ExceptionIssue(exception_type=exception_type, detail=detail))
 
     for event in events:
         text = f"{event.event_code} {event.description} {event.status}".lower()
 
-        if event.event_type == TrackingEvent.EventType.CUSTOMS_HOLD and "customs_hold" not in exception_types:
-            exception_types.append("customs_hold")
-            details.append(f"Customs hold at {event.location_name or 'unknown'}")
+        if event.event_type == TrackingEvent.EventType.CUSTOMS_HOLD:
+            record("customs_hold", f"Customs hold at {event.location_name or 'unknown'}")
 
-        if any(kw in text for kw in _ROLLOVER_KEYWORDS) and "rolled" not in exception_types:
-            exception_types.append("rolled")
-            details.append(f"Possible rollover: {event.description or event.event_code}")
+        if any(kw in text for kw in _ROLLOVER_KEYWORDS):
+            record("rolled", f"Possible rollover: {event.description or event.event_code}")
 
-        if any(kw in text for kw in _CONGESTION_KEYWORDS) and "port_congestion" not in exception_types:
-            exception_types.append("port_congestion")
-            details.append(f"Port congestion: {event.description or event.location_name}")
+        if any(kw in text for kw in _CONGESTION_KEYWORDS):
+            record("port_congestion", f"Port congestion: {event.description or event.location_name}")
 
     # Check for stale tracking (no event in 5 days for active containers)
     latest_event = events[0] if events else None
     if latest_event and latest_event.event_datetime:
         age = timezone.now() - latest_event.event_datetime
         if age > timedelta(days=5):
-            exception_types.append("missing_event")
-            details.append(f"No tracking update for {age.days} days")
+            record("missing_event", f"No tracking update for {age.days} days")
 
-    return ExceptionReport(
-        has_exception=bool(exception_types),
-        exception_types=exception_types,
-        details=details,
-    )
+    return _report_from_issues(issues)
 
 
 def check_shipment_exceptions(team: Team, shipment) -> ExceptionReport:
@@ -93,20 +115,45 @@ def check_shipment_exceptions(team: Team, shipment) -> ExceptionReport:
         "container_id", flat=True
     )
 
-    all_types: list[str] = []
-    all_details: list[str] = []
-
     from apps.scm.containers.models import Container
 
-    for container in Container.objects.filter(pk__in=container_ids):
-        report = check_container_exceptions(team=team, container=container)
-        for exc_type in report.exception_types:
-            if exc_type not in all_types:
-                all_types.append(exc_type)
-        all_details.extend(report.details)
+    return merge_exception_reports(
+        check_container_exceptions(team=team, container=container)
+        for container in Container.objects.filter(pk__in=container_ids)
+    )
 
+
+def merge_exception_reports(reports) -> ExceptionReport:
+    """Combine several containers' reports into one for the thing that carries them.
+
+    Types and issues are de-duplicated — one customs hold across four boxes is one
+    exception for the shipment, and the first box's reason is the one kept. ``details``
+    stays complete, because four boxes held at four different ports have four reasons
+    worth reading.
+
+    Lives here rather than in each caller so a shipment's exceptions mean the same
+    thing whether the shipment view, the visibility overview or a work queue asked.
+    """
+    issues: list[ExceptionIssue] = []
+    found: set[str] = set()
+    details: list[str] = []
+    for report in reports:
+        if report is None:
+            continue
+        details.extend(report.details)
+        for issue in report.issues:
+            if issue.exception_type in found:
+                continue
+            found.add(issue.exception_type)
+            issues.append(issue)
+    return _report_from_issues(issues, details=details)
+
+
+def _report_from_issues(issues: list[ExceptionIssue], *, details: list[str] | None = None) -> ExceptionReport:
+    """Build a report from paired issues, deriving the flat lists callers read."""
     return ExceptionReport(
-        has_exception=bool(all_types),
-        exception_types=all_types,
-        details=all_details,
+        has_exception=bool(issues),
+        exception_types=[issue.exception_type for issue in issues],
+        details=[issue.detail for issue in issues] if details is None else details,
+        issues=issues,
     )

@@ -3,7 +3,7 @@
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
 from apps.teams.roles import ROLE_MEMBER
@@ -152,7 +152,7 @@ class ContainerUpdateTest(TestCase):
         response = client.get(url)
         self.assertEqual(response.status_code, 200)
 
-    def test_update_htmx_returns_row_partial(self):
+    def test_update_htmx_saves_and_refreshes(self):
         _et()
         client = Client()
         client.force_login(self.user)
@@ -162,12 +162,15 @@ class ContainerUpdateTest(TestCase):
             "container_id_input": f"UPDU111111{check}",
             "equipment_type": _et().pk,
             "status": "AVAILABLE",
-            "condition": "FAIR",
+            "condition": ContainerCondition.objects.get(team=self.team, code="WW").pk,
             "color_system": "UNKNOWN",
         }
         response = client.post(url, data=data, HTTP_HX_REQUEST="true")
-        # HTMX valid update returns row partial
-        self.assertIn(response.status_code, [200, 302])
+        # A valid HTMX update saves and asks the page to reload.
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["HX-Refresh"], "true")
+        self.container.refresh_from_db()
+        self.assertEqual(self.container.condition.code, "WW")
 
 
 @override_settings(STORAGES=_TEST_STORAGES)

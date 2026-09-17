@@ -56,6 +56,11 @@ def _normalised(**kwargs) -> NormalisedTrackingEvent:
     return NormalisedTrackingEvent(**defaults)
 
 
+def _counts(result: dict) -> dict:
+    """Just the tallies from a batch result, without the fingerprints it also reports."""
+    return {key: result[key] for key in ("created", "updated", "failed")}
+
+
 # ---------------------------------------------------------------------------
 # Field mapping
 # ---------------------------------------------------------------------------
@@ -357,14 +362,23 @@ class PersistBatchTest(TestCase):
     def test_batch_counts_created_and_updated(self):
         events = [_normalised(), _normalised(raw_event_id="EVT-2", event_code="DISC")]
         first = persist_normalised_events(team=self.team, provider=self.provider, events=events)
-        self.assertEqual(first, {"created": 2, "updated": 0, "failed": 0})
+        self.assertEqual(_counts(first), {"created": 2, "updated": 0, "failed": 0})
         second = persist_normalised_events(team=self.team, provider=self.provider, events=events)
-        self.assertEqual(second, {"created": 0, "updated": 2, "failed": 0})
+        self.assertEqual(_counts(second), {"created": 0, "updated": 2, "failed": 0})
+
+    def test_the_batch_reports_which_events_it_wrote(self):
+        """A re-parse identifies the rows it replaced by what this run did not write."""
+        events = [_normalised(), _normalised(raw_event_id="EVT-2", event_code="DISC")]
+        result = persist_normalised_events(team=self.team, provider=self.provider, events=events)
+
+        written = set(result["fingerprints"])
+        self.assertEqual(len(written), 2)
+        self.assertEqual(written, set(TrackingEvent.objects.values_list("event_fingerprint", flat=True)))
 
     def test_empty_batch_is_not_an_error(self):
         self.assertEqual(
             persist_normalised_events(team=self.team, provider=self.provider, events=[]),
-            {"created": 0, "updated": 0, "failed": 0},
+            {"created": 0, "updated": 0, "failed": 0, "fingerprints": []},
         )
 
     def test_dcsa_fixture_events_persist_end_to_end(self):

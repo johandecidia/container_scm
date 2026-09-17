@@ -1,0 +1,44 @@
+{% load i18n %}
+
+{% comment %}
+  One day of arrivals.
+
+  Usage: {% include "scm/visibility/partials/arrival_group.html" with group=group %}
+
+  The heading is the date, with Today and Tomorrow named because that is how the
+  next two days are talked about. A day in the past is marked overdue rather than
+  quietly listed as if it were still ahead.
+
+  The day is the only time unit here. The ETA the domain holds is a date; a clock
+  time exists only where a carrier forecast supplied one, and only those rows show
+  it. No arrival is given a time it does not have.
+{% endcomment %}
+
+<section class="scm-panel">
+  <div class="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-base-300 pb-2">
+    <h2 class="flex items-baseline gap-2 text-xs font-semibold uppercase tracking-wide">
+      {% if group.label %}
+        <span class="text-base-content/80">{{ group.label }}</span>
+        <span class="font-normal normal-case tracking-normal text-base-content/40">{{ group.day|date:"D d M" }}</span>
+      {% else %}
+        <span class="text-base-content/60">{{ group.day|date:"D d M Y" }}</span>
+      {% endif %}
+      {% if group.is_overdue %}
+        <span class="badge badge-xs badge-warning badge-soft normal-case tracking-normal">{% translate "Overdue" %}</span>
+      {% endif %}
+    </h2>
+    <p class="text-xs text-base-content/40">
+      {% blocktranslate trimmed count count=group.container_count %}
+        {{ count }} container
+      {% plural %}
+        {{ count }} containers
+      {% endblocktranslate %}
+    </p>
+  </div>
+
+  <ul class="divide-y divide-base-200">
+    {% for object in group.items %}
+      {% include "scm/visibility/partials/arrival_row.html" with object=object %}
+    {% endfor %}
+  </ul>
+</section>

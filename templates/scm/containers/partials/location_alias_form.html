@@ -1,0 +1,102 @@
+{% load i18n %}
+
+{% comment %}
+  The add-alias modal.
+
+  Posts back into #location-aliases — the panel on the Location Workspace — so a
+  successful add re-renders the list in place and a validation error re-renders this
+  form with its messages. A duplicate is one of those errors: the unique constraints
+  on (team, source, code) and (team, source, name) are what let the resolver treat
+  an alias hit as certain, so a collision has to be shown here rather than surfacing
+  as a database fault.
+
+  The source is free text with suggestions rather than a dropdown, because most
+  valid values are TrackingProvider codes — database rows, added as providers are
+  onboarded — and a fixed list would go stale.
+{% endcomment %}
+
+<div class="modal modal-open">
+  <div class="modal-box max-w-lg">
+    <h3 class="font-bold text-lg mb-1">{{ modal_title }}</h3>
+    <p class="text-sm text-base-content/60 mb-4">
+      {% blocktranslate trimmed with location=location.name %}
+        Record what an external source calls {{ location }}.
+      {% endblocktranslate %}
+    </p>
+
+    <form
+      method="post"
+      action="{{ form_action }}"
+      hx-post="{{ form_action }}"
+      hx-target="#location-aliases"
+      hx-swap="outerHTML"
+    >
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div role="alert" class="alert alert-error mb-4 text-sm">
+          <i class="fa fa-circle-exclamation"></i>
+          <span>{{ form.non_field_errors|join:" " }}</span>
+        </div>
+      {% endif %}
+
+      <div class="space-y-4">
+        <div class="form-control">
+          <label class="label" for="{{ form.source.id_for_label }}">
+            <span class="label-text">{{ form.source.label }}</span>
+          </label>
+          {{ form.source }}
+          <datalist id="alias-source-options">
+            {% for source in alias_source_suggestions %}
+              <option value="{{ source }}"></option>
+            {% endfor %}
+          </datalist>
+          <p class="text-xs text-base-content/50 mt-1">{{ form.source.help_text }}</p>
+          {% if form.source.errors %}<p class="text-error text-xs mt-1">{{ form.source.errors|join:" " }}</p>{% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.external_name.id_for_label }}">
+            <span class="label-text">{{ form.external_name.label }}</span>
+          </label>
+          {{ form.external_name }}
+          <p class="text-xs text-base-content/50 mt-1">
+            {% translate "The place name this source reports, exactly as it sends it." %}
+          </p>
+          {% if form.external_name.errors %}<p class="text-error text-xs mt-1">{{ form.external_name.errors|join:" " }}</p>{% endif %}
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="{{ form.external_code.id_for_label }}">
+            <span class="label-text">{{ form.external_code.label }}</span>
+          </label>
+          {{ form.external_code }}
+          <p class="text-xs text-base-content/50 mt-1">
+            {% translate "Optional. The source's own identifier for the place, if it has one." %}
+          </p>
+          {% if form.external_code.errors %}<p class="text-error text-xs mt-1">{{ form.external_code.errors|join:" " }}</p>{% endif %}
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label" for="{{ form.latitude.id_for_label }}">
+              <span class="label-text">{{ form.latitude.label }}</span>
+            </label>
+            {{ form.latitude }}
+          </div>
+          <div class="form-control">
+            <label class="label" for="{{ form.longitude.id_for_label }}">
+              <span class="label-text">{{ form.longitude.label }}</span>
+            </label>
+            {{ form.longitude }}
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-action">
+        <button type="button" class="btn btn-ghost" onclick="this.closest('.modal').remove()">{% translate "Cancel" %}</button>
+        <button type="submit" class="btn btn-primary">{% translate "Add alias" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

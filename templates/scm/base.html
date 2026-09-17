@@ -1,2 +1,18 @@
 {% extends "web/app/app_base.html" %}
 {% load i18n %}
+
+{% comment %}
+  The SCM application shell. Every SCM page extends this and fills `{% block app %}`.
+
+  Global search lives here rather than on any page, because "find the container and
+  go to it" is how the product is entered, not a feature of one screen. It is put
+  in `app_topbar`, above the content column, so it is reachable at every viewport
+  width without competing with the primary navigation in the sidebar or the mobile
+  drawer.
+{% endcomment %}
+
+{% block app_topbar %}
+  <div class="mb-4 flex justify-end px-4 lg:px-0">
+    {% include "scm/components/global_search.html" %}
+  </div>
+{% endblock %}

@@ -3,6 +3,11 @@
 from apps.teams.models import Team
 
 from .models import PurchaseOrder, PurchaseOrderEvent, PurchaseOrderLine, PurchaseOrderLogisticsStatus
+from .workspace import (
+    PurchaseOrderWorkspace,
+    get_purchase_order_line_summaries,
+    get_purchase_order_workspace,
+)
 
 
 def get_team_purchase_orders(team: Team):
@@ -77,3 +82,17 @@ def get_purchase_order_logistics_status(purchase_order: PurchaseOrder) -> str:
     if shipped > 0:
         return S.PARTIALLY_SHIPPED
     return S.NOT_STARTED
+
+
+# The purchase order workspace read model lives in workspace.py; re-exported here so
+# callers keep importing selectors for reads, as they do for containers.
+__all__ = [
+    "PurchaseOrderWorkspace",
+    "get_purchase_order_events",
+    "get_purchase_order_for_team",
+    "get_purchase_order_line_summaries",
+    "get_purchase_order_lines",
+    "get_purchase_order_logistics_status",
+    "get_purchase_order_workspace",
+    "get_team_purchase_orders",
+]

@@ -39,6 +39,45 @@ def get_delivery_lines_for_delivery(team: Team, delivery: SupplierDelivery):
     )
 
 
+def get_remaining_qty_by_po_line(purchase_order: PurchaseOrder) -> dict[int, Decimal]:
+    """Return, per PO line id, the qty not yet booked onto any supplier delivery.
+
+    This is what is still free to put on a new delivery line, which is a different
+    question from ``get_po_delivery_summary``'s remaining (ordered minus *received*).
+    It is the same figure ``_validate_delivery_line_qty`` enforces, so a prefill
+    taken from here is always accepted.
+    """
+    booked = {
+        row["purchase_order_line_id"]: row["total"] or Decimal("0")
+        for row in SupplierDeliveryLine.objects.filter(purchase_order_line__purchase_order=purchase_order)
+        .values("purchase_order_line_id")
+        .annotate(total=Sum("delivery_qty"))
+    }
+    return {
+        line.pk: max(line.ordered_qty - booked.get(line.pk, Decimal("0")), Decimal("0"))
+        for line in purchase_order.lines.all()
+    }
+
+
+def get_containers_for_purchase_order(team: Team, purchase_order: PurchaseOrder):
+    """Return the containers booked against a purchase order, via its delivery lines.
+
+    Container has no purchase order column: the link is
+    ``Container → SupplierDeliveryLine → PurchaseOrderLine → PurchaseOrder``, and this
+    is the one place that walks it in that direction.
+    """
+    from apps.scm.containers.models import Container
+
+    return (
+        Container.objects.filter(
+            team=team,
+            supplier_delivery_lines__purchase_order_line__purchase_order=purchase_order,
+        )
+        .distinct()
+        .order_by("owner_code", "serial_number")
+    )
+
+
 def get_delivery_total_qty(delivery: SupplierDelivery) -> Decimal:
     """Return total qty across all lines for a single delivery."""
     result = SupplierDeliveryLine.objects.filter(delivery=delivery).aggregate(total=Sum("delivery_qty"))

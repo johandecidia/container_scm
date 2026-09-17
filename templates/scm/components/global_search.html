@@ -1,33 +1,56 @@
 {% load i18n %}
 
 {% comment %}
-  SCM global search widget.
-  Usage: {% include "scm/components/global_search.html" %}
-  Can be embedded in any SCM page header or nav area.
+  SCM global search. Included by the SCM shell (scm/base.html), so it is on every
+  SCM page rather than on any one of them.
+
+  The backend is `analytics:search` over `search_scm` — one search implementation,
+  team-scoped in the selector. This is only the way in.
+
+  ⌘K / Ctrl-K focuses the field. Deliberately small: a shortcut, not a command
+  palette. It only steals the key combination while an SCM page is open, and
+  Escape closes the panel and returns the keyboard to the page.
+
+  Alpine owns the panel's open state and HTMX owns its contents. The results
+  partial keeps the `#scm-search-results` id in every state, including the empty
+  one, so a cleared query cannot leave stale results on screen.
 {% endcomment %}
 
 <div
-  class="relative"
+  class="relative w-full sm:max-w-md"
   x-data="{ open: false }"
   @click.outside="open = false"
+  @keydown.escape.prevent="open = false; $refs.input.blur()"
+  @keydown.window.meta.k.prevent="$refs.input.focus()"
+  @keydown.window.ctrl.k.prevent="$refs.input.focus()"
 >
   <div class="relative">
-    <i class="fa fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40 text-sm pointer-events-none"></i>
+    <i class="fa fa-magnifying-glass pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-base-content/40"></i>
     <input
+      x-ref="input"
       type="search"
       name="q"
-      placeholder="{% translate 'Search containers, shipments…' %}"
-      class="input input-bordered input-sm pl-9 w-64"
+      placeholder="{% translate 'Search containers, POs, shipments…' %}"
+      aria-label="{% translate 'Search Container SCM' %}"
+      class="input input-bordered input-sm w-full pl-9 pr-14"
       hx-get="{% url 'analytics:search' %}"
       hx-trigger="keyup changed delay:300ms, search"
       hx-target="#scm-search-results"
       hx-swap="outerHTML"
       @focus="open = true"
-      @keydown.escape="open = false"
       autocomplete="off"
     >
+    {% comment %}
+      The hint is decoration for the shortcut above it, so it is hidden from
+      assistive technology and from the touch screens where it means nothing.
+    {% endcomment %}
+    <kbd
+      aria-hidden="true"
+      class="kbd kbd-xs pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-base-content/40 lg:inline-flex"
+    >⌘K</kbd>
   </div>
-  <div x-show="open" class="absolute top-full mt-1 z-50 w-full">
+
+  <div x-show="open" x-cloak class="absolute top-full z-50 mt-1 w-full">
     <div id="scm-search-results"></div>
   </div>
 </div>

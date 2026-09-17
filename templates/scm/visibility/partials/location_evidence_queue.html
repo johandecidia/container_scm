@@ -1,0 +1,178 @@
+{% load i18n %}
+
+{% comment %}
+  Usage:
+    {% include "scm/visibility/partials/location_evidence_queue.html" with rows=quality.ambiguous_evidence hidden=quality.ambiguous_hidden total=quality.ambiguous_total section="ambiguous" %}
+
+  One section of the evidence queue. The same markup for both statuses because the
+  row is the same shape and the action is the same action; only the reason differs,
+  and the reason is what the two headers say.
+
+  A row is a decision, not an event. Repeated evidence — one provider, one reported
+  name, one reported code — is grouped, so a carrier that has said "GOTHENBURG" four
+  hundred times is one line of work. The event count is how much evidence is
+  currently unattached, not a severity.
+
+  Ambiguous rows carry the resolver's own candidate list: the places it could not
+  choose between. They are shown and not chosen from automatically, which is the
+  point — a port and a terminal inside it legitimately share a UN/LOCODE, and
+  picking one on the operator's behalf is exactly the confidently-wrong answer the
+  resolver refuses to give.
+
+  Where the tie is *structural* — the resolver could not choose between places that
+  share a code and that nothing relates — the row also offers the hierarchy. That is
+  the difference between fixing one provider's spelling and fixing the code for all of
+  them. It appears only for a UN/LOCODE tie, never for a coordinate or naming one, and
+  it proposes no relationship: it opens the location form.
+
+  Recording an alias changes what the *next* resolution decides. It does not rewrite
+  the events already stored, and this section says so rather than leaving somebody to
+  wonder why the row is still here.
+{% endcomment %}
+
+<section class="app-card mt-6">
+  {% if section == "ambiguous" %}
+    {% include "scm/components/section_header.html" with title=_("Ambiguous location evidence") count=total subtitle=_("Matched several canonical locations, so none was chosen") %}
+  {% else %}
+    {% include "scm/components/section_header.html" with title=_("Unresolved location evidence") count=total subtitle=_("No canonical location claims these places") %}
+  {% endif %}
+
+  {% if rows %}
+    <div class="overflow-x-auto">
+      <table class="table table-sm w-full">
+        <thead>
+          <tr>
+            <th>{% translate "Reported place" %}</th>
+            <th>{% translate "Source" %}</th>
+            <th>{% translate "UN/LOCODE" %}</th>
+            <th class="text-right">{% translate "Events" %}</th>
+            <th class="text-right">{% translate "Containers" %}</th>
+            <th>{% translate "Last seen" %}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td class="text-sm font-medium">
+                {{ row.label }}
+                {% if row.is_ambiguous and row.has_candidates %}
+                  <div class="text-xs text-base-content/50 mt-0.5">
+                    {% translate "Could be:" %}
+                    {% for candidate in row.candidates %}
+                      <a href="{% url 'containers:location_detail' candidate.pk %}" class="link link-hover">{{ candidate.full_name }}</a>{% if not forloop.last %}, {% endif %}
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                {% if row.needs_hierarchy_review %}
+                  {% comment %}
+                    A structural tie rather than a naming one: these places share a
+                    code and nothing records that either is inside the other. An alias
+                    would fix this one provider's word for the place; a containment
+                    relationship fixes the code for every provider at once.
+
+                    So the hint names the problem and opens the edit form for each
+                    candidate. It does not say which way round the relationship goes —
+                    a shared UN/LOCODE makes it worth reviewing and is not proof of
+                    containment, and guessing here would be the same
+                    confidently-wrong answer the resolver refused to give.
+                  {% endcomment %}
+                  <div class="mt-2 rounded border border-warning/40 bg-warning/5 p-2">
+                    <p class="text-xs font-medium text-warning">{% translate "Potential hierarchy issue" %}</p>
+                    <p class="text-xs text-base-content/60 mt-0.5">
+                      {% blocktranslate trimmed with code=row.shared_identity %}
+                        {{ code }} resolves to several places, and no containment
+                        relationship currently distinguishes them.
+                      {% endblocktranslate %}
+                    </p>
+                    <div class="flex flex-wrap gap-1 mt-1.5">
+                      {% for candidate in row.candidates %}
+                        <button
+                          type="button"
+                          class="btn btn-xs btn-outline btn-warning"
+                          hx-get="{% url 'containers:location_update' candidate.pk %}?return_to=location_quality"
+                          hx-target="#modal-container"
+                          hx-swap="innerHTML"
+                        >
+                          {% blocktranslate trimmed with name=candidate.name %}
+                            Review hierarchy — {{ name }}
+                          {% endblocktranslate %}
+                        </button>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+              </td>
+              <td><span class="badge badge-ghost badge-sm font-mono">{{ row.provider_code|default:"—" }}</span></td>
+              <td class="text-sm font-mono text-base-content/60">{{ row.raw_unlocode|default:"—" }}</td>
+              <td class="text-sm text-right tabular-nums">{{ row.event_count }}</td>
+              <td class="text-sm text-right tabular-nums">{{ row.container_count }}</td>
+              <td class="text-sm text-base-content/60">
+                {% if row.last_seen_at %}{{ row.last_seen_at|date:"j M Y" }}{% else %}—{% endif %}
+              </td>
+              <td class="text-right whitespace-nowrap">
+                {% if row.is_aliased %}
+                  {% comment %}
+                    The decision has been taken and the historic rows have not
+                    changed, because nothing here rewrites stored evidence. Said
+                    plainly so the row's continued presence is not read as a failure.
+                  {% endcomment %}
+                  <span class="text-xs text-success" title="{% translate 'Stored events keep their original resolution. The next refresh of these events uses the alias.' %}">
+                    <i class="fa fa-link"></i>
+                    {% blocktranslate trimmed with location=row.alias_location.full_name %}
+                      Alias set — {{ location }}
+                    {% endblocktranslate %}
+                  </span>
+                {% elif row.can_record_alias %}
+                  <button
+                    class="btn btn-xs btn-primary"
+                    hx-get="{% url 'containers:location_evidence_alias' %}?source={{ row.provider_code|urlencode }}&name={{ row.raw_name|urlencode }}&unlocode={{ row.raw_unlocode|urlencode }}"
+                    hx-target="#modal-container"
+                    hx-swap="innerHTML"
+                  >
+                    {% translate "Map to location" %}
+                  </button>
+                {% else %}
+                  {% comment %}
+                    Evidence with no reported name. An alias matches on the name, so
+                    there is nothing to record — the code has to go on a location, or
+                    the locations sharing it have to be arranged into the hierarchy
+                    they really form.
+                  {% endcomment %}
+                  <a href="{% url 'containers:location_list' %}" class="text-xs link link-hover">
+                    {% translate "Set this code on a location" %}
+                  </a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if hidden %}
+      <p class="text-xs text-base-content/40 mt-3">
+        {% blocktranslate trimmed count count=hidden %}
+          {{ count }} more decision is not shown.
+        {% plural %}
+          {{ count }} more decisions are not shown.
+        {% endblocktranslate %}
+      </p>
+    {% endif %}
+
+    <p class="text-xs text-base-content/40 mt-3 pt-3 border-t border-base-300">
+      {% blocktranslate trimmed %}
+        An alias records what one source calls a place. It is applied the next time
+        these events are refreshed or re-parsed — stored evidence is never rewritten.
+      {% endblocktranslate %}
+    </p>
+  {% else %}
+    <p class="text-sm text-base-content/50">
+      {% if section == "ambiguous" %}
+        {% translate "No evidence is currently ambiguous." %}
+      {% else %}
+        {% translate "Every place a provider has named resolves to a canonical location." %}
+      {% endif %}
+    </p>
+  {% endif %}
+</section>

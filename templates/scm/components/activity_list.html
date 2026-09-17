@@ -1,0 +1,83 @@
+{% load i18n %}
+
+{% comment %}
+  The Activity tab's list, shared by every workspace that has one.
+
+  Usage — on one line:
+
+    {% templatetag openblock %} include "scm/components/activity_list.html" with activity=activity empty_message=_("Nothing recorded yet.") note=_("Derived from …") {% templatetag closeblock %}
+
+  Optional: title (defaults to "Activity"), empty_message, note.
+
+  Every workspace derives its own entries from records that exist for their own
+  reasons — see apps/scm/activity.py for the shape they all produce. The `note` is
+  where each one says what it cannot show; it is part of the feature, not an
+  apology, because a derived timeline that stays silent about its gaps reads as a
+  complete history when it is not one.
+{% endcomment %}
+
+<section class="scm-panel">
+  {% include "scm/components/section_header.html" with title=title|default:_("Activity") count=activity|length %}
+
+  {% if activity %}
+    <ol class="divide-y divide-base-200">
+      {% for entry in activity %}
+        <li class="py-3 flex items-start gap-3">
+          <span class="text-base-content/40 pt-0.5 shrink-0">
+            {% if entry.kind == "movement" %}
+              <i class="fa fa-dolly w-4"></i>
+            {% elif entry.kind == "shipment" %}
+              <i class="fa fa-ship w-4"></i>
+            {% elif entry.kind == "delivery" %}
+              <i class="fa fa-truck w-4"></i>
+            {% elif entry.kind == "tracking" %}
+              <i class="fa fa-satellite-dish w-4"></i>
+            {% elif entry.kind == "refresh" %}
+              <i class="fa fa-rotate w-4"></i>
+            {% elif entry.kind == "eta" %}
+              <i class="fa fa-clock w-4"></i>
+            {% elif entry.kind == "arrival" %}
+              <i class="fa fa-anchor w-4"></i>
+            {% elif entry.kind == "received" %}
+              <i class="fa fa-clipboard-check w-4"></i>
+            {% elif entry.kind == "source" %}
+              <i class="fa fa-database w-4"></i>
+            {% elif entry.kind == "created" %}
+              <i class="fa fa-plus w-4"></i>
+            {% else %}
+              <i class="fa fa-pen w-4"></i>
+            {% endif %}
+          </span>
+
+          <p class="text-xs text-base-content/50 shrink-0 w-20 sm:w-28 pt-0.5">
+            {{ entry.occurred_at|date:"d M H:i" }}
+          </p>
+
+          <div class="min-w-0">
+            <p class="text-sm font-medium">
+              {% if entry.url %}
+                <a href="{{ entry.url }}" class="link link-hover">{{ entry.title }}</a>
+              {% else %}
+                {{ entry.title }}
+              {% endif %}
+            </p>
+            {% if entry.detail %}
+              <p class="text-xs text-base-content/70 mt-0.5">{{ entry.detail }}</p>
+            {% endif %}
+            {% if entry.actor %}
+              <p class="text-xs text-base-content/50 mt-0.5">{{ entry.actor }}</p>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <p class="text-sm text-base-content/60 py-4">
+      {{ empty_message|default:_("Nothing has been recorded against this record yet.") }}
+    </p>
+  {% endif %}
+
+  {% if note %}
+    <p class="text-xs text-base-content/40 mt-4 pt-4 border-t border-base-300">{{ note }}</p>
+  {% endif %}
+</section>

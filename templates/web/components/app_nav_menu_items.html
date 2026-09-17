@@ -1,39 +1,62 @@
 {% load i18n %}
+{% load team_tags %}
+
+{% comment %}
+  Primary navigation for Container SCM.
+
+  Grouped by the work a supply chain user does, not by Django app: Control,
+  Supply Chain, Network, Insights. Pegasus owns the shell — the team selector
+  above this list, the account and admin groups below it — and this file only
+  decides what the SCM experience puts inside it.
+
+  Control is a drill-down, not three views of the same thing: the Control Tower is
+  the summary, and Exceptions and Arrivals are the work queues it leads into. They
+  were filter links onto the Control Tower until the queues existed; the old
+  filtered URLs still work, but they are no longer where the navigation points.
+
+  Tracking, Discovery, Imports, Integrations, Supplier Deliveries and AI Chat are
+  deliberately absent from the primary groups. Every one of those routes still
+  works; the technical capabilities are reached from the objects they belong to,
+  and the administrative ones from Settings below.
+{% endcomment %}
+
 <li class="menu-title">
-  <span>{% translate "Application" %}</span>
+  <span>{% translate "Control" %}</span>
 </li>
+{% comment %}
+  Active state is an exact path match, not a prefix one: all three Control entries
+  live under /scm/visibility/, so `in request.path` would light up Control Tower on
+  the queue pages too.
+{% endcomment %}
+{% url 'visibility:overview' as overview_url %}
+{% url 'visibility:exceptions' as exceptions_url %}
+{% url 'visibility:arrivals' as arrivals_url %}
 <li>
-  <a href="{% url 'web:home' %}" {% if active_tab == 'dashboard' %}class="menu-active"{% endif %}>
-    <i class="fa fa-home h-4 w-4"></i>
-    {% translate "Dashboard" %}
+  <a href="{{ overview_url }}" {% if request.path == overview_url %}class="menu-active"{% endif %}>
+    <i class="fa fa-satellite-dish h-4 w-4"></i>
+    {% translate "Control Tower" %}
   </a>
 </li>
-{% include "web/components/team_nav.html" %}
+<li>
+  <a href="{{ exceptions_url }}" {% if request.path == exceptions_url %}class="menu-active"{% endif %}>
+    <i class="fa fa-triangle-exclamation h-4 w-4"></i>
+    {% translate "Exceptions" %}
+  </a>
+</li>
+<li>
+  <a href="{{ arrivals_url }}" {% if request.path == arrivals_url %}class="menu-active"{% endif %}>
+    <i class="fa fa-anchor h-4 w-4"></i>
+    {% translate "Arrivals" %}
+  </a>
+</li>
+
 <li class="menu-title">
   <span>{% translate "Supply Chain" %}</span>
 </li>
 <li>
-  <a href="{% url 'analytics:dashboard' %}" {% if '/scm/analytics/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-gauge h-4 w-4"></i>
-    {% translate "Overview" %}
-  </a>
-</li>
-<li>
-  <a href="{% url 'procurement:purchase_order_list' %}" {% if '/scm/procurement/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-file-invoice h-4 w-4"></i>
-    {% translate "Purchase Orders" %}
-  </a>
-</li>
-<li>
-  <a href="{% url 'supplier_deliveries:list' %}" {% if '/scm/supplier-deliveries/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-truck h-4 w-4"></i>
-    {% translate "Supplier Deliveries" %}
-  </a>
-</li>
-<li>
-  <a href="{% url 'visibility:overview' %}" {% if '/scm/visibility/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-earth-americas h-4 w-4"></i>
-    {% translate "Visibility" %}
+  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path and '/discovery/' not in request.path and '/locations/' not in request.path and '/conditions/' not in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-box h-4 w-4"></i>
+    {% translate "Containers" %}
   </a>
 </li>
 <li>
@@ -43,28 +66,49 @@
   </a>
 </li>
 <li>
-  <a href="{% url 'containers:list' %}" {% if '/scm/containers/' in request.path and '/discovery/' not in request.path and '/locations/' not in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-box h-4 w-4"></i>
-    {% translate "Containers" %}
+  <a href="{% url 'procurement:purchase_order_list' %}" {% if '/scm/procurement/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-file-invoice h-4 w-4"></i>
+    {% translate "Purchase Orders" %}
   </a>
 </li>
+
+<li class="menu-title">
+  <span>{% translate "Network" %}</span>
+</li>
+{% url 'visibility:location_quality' as location_quality_url %}
 <li>
   <a href="{% url 'containers:location_list' %}" {% if '/scm/containers/locations/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-map-marker-alt h-4 w-4"></i>
-    {% translate "Container Locations" %}
+    {% translate "Locations" %}
   </a>
 </li>
+{% comment %}
+  Data Quality sits under Network rather than Control: its rows are edits to the
+  location master data this group owns, not supply chain events to react to.
+{% endcomment %}
 <li>
-  <a href="{% url 'containers:discovery_dashboard' %}" {% if '/scm/containers/discovery/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-magnifying-glass h-4 w-4"></i>
-    {% translate "Discovery" %}
+  <a href="{{ location_quality_url }}" {% if request.path == location_quality_url %}class="menu-active"{% endif %}>
+    <i class="fa fa-location-crosshairs h-4 w-4"></i>
+    {% translate "Data Quality" %}
   </a>
 </li>
+
+<li class="menu-title">
+  <span>{% translate "Insights" %}</span>
+</li>
 <li>
-  <a href="{% url 'tracking:list' %}" {% if '/scm/tracking/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-map-marker-alt h-4 w-4"></i>
-    {% translate "Tracking" %}
+  <a href="{% url 'analytics:dashboard' %}" {% if '/scm/analytics/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-chart-line h-4 w-4"></i>
+    {% translate "Analytics" %}
   </a>
+</li>
+
+{% comment %}
+  Settings: data plumbing and the Pegasus team-level pages. Administrative rather
+  than operational, so it sits below the work.
+{% endcomment %}
+<li class="menu-title">
+  <span>{% translate "Settings" %}</span>
 </li>
 <li>
   <a href="{% url 'imports:list' %}" {% if '/scm/imports/' in request.path %}class="menu-active"{% endif %}>
@@ -78,12 +122,23 @@
     {% translate "Integrations" %}
   </a>
 </li>
+{% comment %}
+  Team Settings is administrator-only, and so is everything inside it — Members,
+  Tracking integrations and Container settings (the team's grading vocabulary, which
+  used to have its own entry here and is now a tab in there). The check keeps the
+  link out of a member's sidebar; what actually closes the area is
+  `@scm_team_admin_required` on every view behind it.
+{% endcomment %}
+{% if request.user|is_admin_of:request.default_team %}
 <li>
-  <a href="{% url 'chat:chat_home' %}" {% if active_tab == 'ai-chat' %}class="menu-active"{% endif %}>
-    <i class="fa-solid fa-robot h-4 w-4"></i>
-    {% translate "AI Chat" %}
+  <a href="{% url 'team_settings:members' %}" {% if '/scm/settings/' in request.path or '/scm/containers/conditions/' in request.path %}class="menu-active"{% endif %}>
+    <i class="fa fa-gear h-4 w-4"></i>
+    {% translate "Team Settings" %}
   </a>
 </li>
+{% endif %}
+{% include "web/components/team_nav.html" %}
+
 {% if not user.is_anonymous %}
 <li class="menu-title">
   <span>{% translate "My Account" %}</span>

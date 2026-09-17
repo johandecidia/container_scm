@@ -1,0 +1,6 @@
+{% comment %}
+  Carries the purchase order across one step of the intake modal. Every form in the
+  modal includes this, so the order survives a preview, a validation error and a
+  tab switch alike. Renders nothing for a plain add.
+{% endcomment %}
+{% if purchase_order %}<input type="hidden" name="purchase_order" value="{{ purchase_order.pk }}">{% endif %}

@@ -1,0 +1,19 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Exceptions — the operational work queue for what needs attention now.
+
+  The page is the frame; everything that answers to a filter lives in the partial,
+  which HTMX swaps whole. That is why the count sits inside the partial and only the
+  title and the standing description are here.
+
+  This queue answers "what currently needs operational attention?" — not "what has
+  ever happened". It is a view over current supply chain state, so nothing is
+  archived and nothing is dismissed.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/components/page_header.html" with title=_("Exceptions") subtitle=_("Supply chain issues that need attention.") %}
+  {% include "scm/visibility/partials/exceptions_queue.html" %}
+{% endblock %}

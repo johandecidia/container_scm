@@ -31,15 +31,15 @@ def home(request):
 
 @login_and_team_required
 def team_home(request, team_slug):
-    return render(
-        request,
-        "web/app_home.html",
-        context={
-            "team": request.team,
-            "active_tab": "dashboard",
-            "page_title": _("{team} Dashboard").format(team=request.team),
-        },
-    )
+    """Send an authenticated SCM user to their Control Tower.
+
+    A redirect rather than a second rendering of the Control Tower: that page has
+    one source of truth, the visibility overview. The URL stays valid so team
+    switching, invitations and ``Team.get_absolute_url`` keep working — and because
+    reaching it with a slug is what puts the team in the session, the team-less
+    ``/scm/`` URLs resolve to the team the user just picked.
+    """
+    return HttpResponseRedirect(reverse("visibility:overview"))
 
 
 def simulate_error(request):

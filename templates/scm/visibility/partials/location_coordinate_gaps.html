@@ -1,0 +1,85 @@
+{% load i18n %}
+
+{% comment %}
+  Canonical locations the map cannot draw, worst first.
+
+  Three counts per row and they are three different answers: containers standing
+  here, active shipments routed here, and map positions the location blocked.
+  Deliberately not summed — a container the map cannot place may have no accepted
+  physical position at all, so adding them would produce a number that means nothing.
+
+  A location with no impact is still listed. It is master data that will be wrong the
+  first time a box arrives there, and the fix takes a minute now.
+
+  The action is the ordinary location form, opened with `return_to=location_quality`
+  so saving comes back here with the row gone. Coordinates are typed by a person and
+  validated by `ContainerLocation.clean` — there is no geocoder, no lookup and no
+  "find it for me", because a guessed coordinate is indistinguishable from a
+  surveyed one once it is a dot on a map.
+{% endcomment %}
+
+<section class="app-card mt-6">
+  {% include "scm/components/section_header.html" with title=_("Locations missing coordinates") count=quality.summary.locations_missing_coordinates %}
+
+  {% if quality.coordinate_gaps %}
+    <div class="overflow-x-auto">
+      <table class="table table-sm w-full">
+        <thead>
+          <tr>
+            <th>{% translate "Location" %}</th>
+            <th>{% translate "Type" %}</th>
+            <th>{% translate "UN/LOCODE" %}</th>
+            <th class="text-right">{% translate "Containers" %}</th>
+            <th class="text-right">{% translate "Shipments" %}</th>
+            <th class="text-right">{% translate "Blocked markers" %}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for gap in quality.coordinate_gaps %}
+            <tr>
+              <td class="text-sm font-medium">
+                <a href="{% url 'containers:location_detail' gap.location.pk %}" class="link link-hover">{{ gap.name }}</a>
+              </td>
+              <td class="text-sm text-base-content/60">{{ gap.type_label }}</td>
+              <td class="text-sm font-mono text-base-content/60">{{ gap.unlocode|default:"—" }}</td>
+              <td class="text-sm text-right tabular-nums">{{ gap.container_count|default_if_none:0 }}</td>
+              <td class="text-sm text-right tabular-nums">{{ gap.shipment_count|default_if_none:0 }}</td>
+              <td class="text-sm text-right tabular-nums">
+                {% if gap.blocked_positions %}
+                  <span class="text-warning">{{ gap.blocked_positions }}</span>
+                {% else %}
+                  <span class="text-base-content/30">0</span>
+                {% endif %}
+              </td>
+              <td class="text-right">
+                <button
+                  class="btn btn-xs btn-primary"
+                  hx-get="{% url 'containers:location_update' gap.location.pk %}?return_to=location_quality"
+                  hx-target="#modal-container"
+                  hx-swap="innerHTML"
+                >
+                  {% translate "Add coordinates" %}
+                </button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if quality.gaps_hidden %}
+      <p class="text-xs text-base-content/40 mt-3">
+        {% blocktranslate trimmed count count=quality.gaps_hidden %}
+          {{ count }} more location is not shown. Fix these and it will appear.
+        {% plural %}
+          {{ count }} more locations are not shown. Fix these and they will appear.
+        {% endblocktranslate %}
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="text-sm text-base-content/50">
+      {% translate "Every active location has coordinates." %}
+    </p>
+  {% endif %}
+</section>

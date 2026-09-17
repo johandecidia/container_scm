@@ -1,0 +1,52 @@
+{% load i18n %}
+
+{% comment %}
+  How current the tracking is, in one line, for a workspace header.
+
+  Usage: {% include "scm/components/tracking_state_line.html" with workspace=workspace %}
+
+  The three-column `visibility/components/tracking_freshness.html` answers the same
+  question in full and stays the detailed view. This is the glance version: whether
+  a source is watching the object, and how long ago it last answered. Both read the
+  same derived fields, so they cannot disagree.
+
+  "Not tracked" is a finished answer, not a missing one — nothing has proved itself
+  as a source for this object yet — so it is stated plainly rather than shown as an
+  empty freshness.
+{% endcomment %}
+
+<p class="text-sm inline-flex flex-wrap items-baseline gap-x-2 gap-y-1">
+  {% if not workspace.is_tracked %}
+    <span class="text-base-content/50">○ {% translate "Not tracked" %}</span>
+  {% elif workspace.has_tracking_error %}
+    <span class="text-error">! {% translate "Tracking error" %}</span>
+  {% elif workspace.is_tracking_active %}
+    <span class="text-success">● {% translate "Tracking current" %}</span>
+  {% else %}
+    <span class="text-base-content/50">○ {{ workspace.active_subscription.get_status_display }}</span>
+  {% endif %}
+
+  {% if workspace.last_refreshed_at %}
+    <span class="text-base-content/50 text-xs">
+      {% blocktranslate trimmed with ago=workspace.last_refreshed_at|timesince %}
+        updated {{ ago }} ago
+      {% endblocktranslate %}
+    </span>
+  {% elif workspace.is_tracked %}
+    <span class="text-base-content/50 text-xs">{% translate "never checked" %}</span>
+  {% endif %}
+
+  {% comment %}
+    Several carriers can watch one box at once, so the count is shown rather than
+    implying the one name above it is the whole story.
+  {% endcomment %}
+  {% if workspace.has_multiple_tracking_sources %}
+    <span class="badge badge-xs badge-ghost">
+      {% blocktranslate trimmed count sources=workspace.tracking_sources|length %}
+        {{ sources }} source
+      {% plural %}
+        {{ sources }} sources
+      {% endblocktranslate %}
+    </span>
+  {% endif %}
+</p>

@@ -15,6 +15,20 @@ booking or bill of lading instead of a container number. Both share the same
 carrier registry, credential resolution, probe semantics and auto-link service —
 only the starting reference differs.
 
+Which carrier is asked is not this module's decision either. ``PlannedContainer``
+may name one, but a number registered from a packing list often does not, and the
+one it names can be wrong. So each pass hands the question to the shared
+:func:`~apps.scm.integrations.carriers.carrier_discovery.discover_carrier_for_container`
+— the same sweep the container detail page's "Refresh tracking" uses — which tries
+the planned carrier first and falls back to the team's other connected carriers.
+The carrier that actually answers is the one the container is promoted with.
+
+One pass is one attempt, however many carriers it had to ask: the attempt budget
+and backoff exist to limit how often *this number* is chased, not how many carriers
+a single chase touches. Each carrier is asked at most once per pass, so a carrier
+that rate-limits us is not hammered — it simply waits for the next interval like
+everyone else.
+
 Nothing is invented when a carrier has no data: no container, no shipment and no
 event is created until the carrier actually reports the number.
 """
@@ -155,8 +169,13 @@ def _resolve_carrier(*, carrier: str, owner_code: str) -> str:
     return suggest_carrier_for_owner_code(owner_code) or ""
 
 
-def mark_planned_container_detected(planned: PlannedContainer, container=None) -> PlannedContainer:
-    """Transition a planned container from PLANNED → DETECTED."""
+def mark_planned_container_detected(planned: PlannedContainer, container=None, carrier: str = "") -> PlannedContainer:
+    """Transition a planned container from PLANNED → DETECTED.
+
+    ``carrier`` records which carrier actually reported the number, which may differ
+    from the one it was registered with. Unlike a guess before the fact, this is the
+    carrier's own answer, so it is worth keeping.
+    """
     now = timezone.now()
     planned.status = PlannedContainerStatus.DETECTED
     planned.last_result = PlannedContainerResult.DETECTED
@@ -166,6 +185,8 @@ def mark_planned_container_detected(planned: PlannedContainer, container=None) -
     planned.last_error_message = ""
     if container is not None:
         planned.container = container
+    if carrier:
+        planned.carrier = carrier
     planned.save(
         update_fields=[
             "status",
@@ -175,6 +196,7 @@ def mark_planned_container_detected(planned: PlannedContainer, container=None) -
             "next_check_at",
             "last_error_message",
             "container",
+            "carrier",
             "updated_at",
         ]
     )
@@ -262,61 +284,79 @@ def run_discovery_for_team(team: Team, providers: list | None = None) -> dict:
 
 
 def check_planned_container(planned: PlannedContainer, *, client=None) -> str:
-    """Ask the carrier about one planned container and record the outcome.
+    """Ask the candidate carriers about one planned container and record the outcome.
 
-    Returns the PlannedContainerResult that was recorded. On a hit, the Container,
-    its shipment link and its tracking subscription are created atomically.
+    The planned carrier is tried first when there is one; a NOT_FOUND from it is not
+    the end of the pass, because the number may well be moving with a different
+    carrier than the one recorded. Whichever carrier answers with data is the one the
+    container is promoted with.
+
+    Returns the PlannedContainerResult that was recorded, summarising the whole pass
+    as a single attempt. On a hit, the Container, its shipment link and its tracking
+    subscription are created atomically.
+
+    ``client`` injects an adapter for the planned carrier in tests.
     """
-    from apps.scm.integrations.carriers.probe import probe_container_number
+    from apps.scm.integrations.carriers.carrier_discovery import discover_carrier_for_container
 
-    result = probe_container_number(
+    outcome = discover_carrier_for_container(
         team=planned.team,
         container_number=planned.container_number,
-        carrier_code=planned.carrier,
-        client=client,
+        preferred_carrier_codes=[planned.carrier] if planned.carrier else (),
+        clients={planned.carrier: client} if client is not None and planned.carrier else None,
     )
 
-    if result.found:
-        _promote_detected_container(planned, result)
+    if outcome.found:
+        _promote_detected_container(planned, outcome)
         return PlannedContainerResult.DETECTED
 
-    if result.outcome == "not_found":
+    if outcome.not_found:
+        # At least one carrier gave a real answer, so the pass counts — even if
+        # another carrier happened to be unreachable at the same time.
         _record_attempt(planned, result=PlannedContainerResult.NOT_FOUND)
         return PlannedContainerResult.NOT_FOUND
 
-    if result.outcome == "skipped":
-        # Nothing was asked, so this does not count as an attempt against the limit.
+    if outcome.errored:
         _record_attempt(
             planned,
-            result=PlannedContainerResult.SKIPPED,
-            error_message=result.error_message,
-            count_attempt=False,
+            result=PlannedContainerResult.ERROR,
+            error_message=_attempt_summary(outcome.errored),
         )
-        return PlannedContainerResult.SKIPPED
+        return PlannedContainerResult.ERROR
 
-    _record_attempt(planned, result=PlannedContainerResult.ERROR, error_message=result.error_message)
-    return PlannedContainerResult.ERROR
+    # Nothing was asked, so this does not count as an attempt against the limit.
+    _record_attempt(
+        planned,
+        result=PlannedContainerResult.SKIPPED,
+        error_message=_attempt_summary(outcome.skipped),
+        count_attempt=False,
+    )
+    return PlannedContainerResult.SKIPPED
 
 
-def _promote_detected_container(planned: PlannedContainer, result) -> None:
+def _attempt_summary(attempts) -> str:
+    """Summarise why carriers did not answer, for the record on the planned number.
+
+    Internal diagnostics: carrier error text can echo a response body, so this is
+    stored and logged but never rendered to a user.
+    """
+    return "; ".join(attempt.error_message or attempt.error_kind or attempt.carrier_code for attempt in attempts)
+
+
+def _promote_detected_container(planned: PlannedContainer, outcome) -> None:
     """Create the Container, its shipment link and its tracking subscription.
 
-    Done in one transaction so a partial promotion cannot leave a container without
-    tracking, or tracking without a container.
+    Uses the carrier that actually returned data, which is not always the carrier
+    the number was registered with. Done in one transaction so a partial promotion
+    cannot leave a container without tracking, or tracking without a container.
     """
     from apps.scm.integrations.carriers.auto_link import create_or_link_discovered_container
-    from apps.scm.integrations.carriers.registry import get_carrier_definition
     from apps.scm.integrations.carriers.schemas import ContainerDiscoveryResult
-
-    try:
-        carrier_name = get_carrier_definition(result.carrier_code).name
-    except Exception:  # noqa: BLE001 — an unregistered carrier still gets its code recorded
-        carrier_name = result.carrier_code
 
     discovery_result = ContainerDiscoveryResult(
         container_number=planned.container_number,
-        carrier_code=result.carrier_code,
-        carrier_name=carrier_name,
+        carrier_code=outcome.carrier_code,
+        carrier_name=outcome.carrier_name or outcome.carrier_code,
         shipment_reference=planned.shipment.reference if planned.shipment else None,
     )
 
@@ -327,12 +367,12 @@ def _promote_detected_container(planned: PlannedContainer, result) -> None:
             result=discovery_result,
         )
         container = link_summary.get("container")
-        mark_planned_container_detected(planned, container=container)
+        mark_planned_container_detected(planned, container=container, carrier=outcome.carrier_code)
 
     logger.info(
         "Planned container %s detected at %s (container_created=%s, subscription_created=%s)",
         planned.container_number,
-        result.carrier_code,
+        outcome.carrier_code,
         link_summary.get("container_created"),
         link_summary.get("subscription_created"),
     )

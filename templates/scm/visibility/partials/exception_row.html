@@ -1,0 +1,78 @@
+{% load i18n %}
+
+{% comment %}
+  One row of the Exceptions queue.
+
+  Usage: {% include "scm/visibility/partials/exception_row.html" with item=item %}
+
+  The whole row is the link, and it goes to `object.detail_url` — the shipment for a
+  shipment, the workspace for a container tracked on its own. One object, one row,
+  however many things are wrong with it: the leading issue is the highest band, and
+  the others stay beside it rather than becoming rows of their own.
+
+  Every line is the domain's own words. The reason under the issue is the exception
+  engine's detail or the delay engine's verdict, and the state is the carrier's
+  wording via `current_status`. Nothing is written here to fill a column: an empty
+  value renders as an em dash.
+{% endcomment %}
+
+<li>
+  <a href="{{ item.object.detail_url }}"
+     class="group -mx-2 grid grid-cols-1 gap-x-3 gap-y-1 rounded-box px-2 py-3 transition-colors hover:bg-base-200 sm:grid-cols-12 sm:items-start">
+
+    {# Issue. First on both layouts: it is why this row exists. #}
+    <div class="min-w-0 sm:col-span-3">
+      <span class="flex flex-wrap items-center gap-1">
+        {% include "scm/visibility/components/issue_badge.html" with issue=item.primary_issue %}
+        {% for issue in item.other_issues %}
+          {% include "scm/visibility/components/issue_badge.html" with issue=issue size="xs" %}
+        {% endfor %}
+      </span>
+      {% if item.primary_issue.detail %}
+        <span class="mt-1 block text-xs text-base-content/60">{{ item.primary_issue.detail }}</span>
+      {% endif %}
+    </div>
+
+    {# Object. #}
+    <div class="min-w-0 sm:col-span-3">
+      {% include "scm/visibility/components/object_identity.html" with object=item.object show_route=True %}
+      {% if item.object.carrier_name %}
+        <span class="mt-0.5 block truncate text-xs text-base-content/50">{{ item.object.carrier_name }}</span>
+      {% endif %}
+    </div>
+
+    {# Where it is now. #}
+    <div class="min-w-0 sm:col-span-3">
+      <span class="block truncate text-xs text-base-content/70">
+        <span class="sm:hidden text-base-content/40">{% translate "State" %}: </span>
+        {{ item.object.current_status|default:_("No carrier status yet") }}
+      </span>
+      {% if item.object.position.label %}
+        <span class="block truncate text-xs text-base-content/50">{{ item.object.position.label }}</span>
+      {% endif %}
+    </div>
+
+    {# When it is expected. #}
+    <div class="min-w-0 sm:col-span-2">
+      <span class="block text-xs">
+        <span class="sm:hidden text-base-content/40">{% translate "ETA" %}: </span>
+        {% if item.object.current_eta %}
+          {{ item.object.current_eta|date:"d M Y" }}
+        {% else %}
+          <span class="text-base-content/40">{% translate "No ETA" %}</span>
+        {% endif %}
+      </span>
+    </div>
+
+    {# How current this is. The last event the carrier actually reported. #}
+    <div class="min-w-0 sm:col-span-1 sm:text-right">
+      <span class="block text-xs text-base-content/50">
+        {% if item.object.last_event_at %}
+          {% blocktranslate trimmed with ago=item.object.last_event_at|timesince %}{{ ago }} ago{% endblocktranslate %}
+        {% else %}
+          —
+        {% endif %}
+      </span>
+    </div>
+  </a>
+</li>

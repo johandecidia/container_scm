@@ -1,5 +1,5 @@
 # Carrier registry — single source of truth for supported carriers and their capabilities.
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .base import BaseCarrierClient, BaseCarrierParser, CarrierCapability
 
@@ -22,20 +22,54 @@ class CarrierDefinition:
     # be leased or subchartered, so the prefix can be misleading and must never
     # override an explicitly chosen carrier.
     owner_prefixes: tuple[str, ...] = ()
+    # The SCACs that identify this carrier to the outside world, canonical first.
+    #
+    # Unlike ``owner_prefixes`` these are *identity*, not a hint: a provider that
+    # answers "this box is ONEY" has named the carrier. They live here so an
+    # aggregator that speaks SCAC — Traqo's lookup, Vizion's ACI — translates into
+    # the registry's own vocabulary through one table rather than each keeping its
+    # own. More than one is normal: Yang Ming's SCAC moved from YMLU to YMJA in
+    # 2023 and providers still report either.
+    scac_codes: tuple[str, ...] = ()
+    # The verified endpoint settings this carrier ships with, applied to a team's
+    # ``Integration.config`` when that integration is first created. Configuration,
+    # never a secret — an API key or client secret lives only in the encrypted
+    # credential row.
+    #
+    # Empty is meaningful: it says this adapter has no working live configuration, so
+    # Settings must not offer to connect it. That is what separates the three carriers
+    # with real DCSA clients from the seven registered stubs, and it is a fact about
+    # the adapter, so it belongs here rather than in a list of names kept by a view.
+    default_config: dict = field(default_factory=dict)
+
+    @property
+    def is_connectable(self) -> bool:
+        """Whether a team could actually configure and use this carrier today.
+
+        Three things at once: a live configuration to start from, the ability to pull,
+        and the ability to answer about a container number. Anything less and offering
+        "Connect" would lead to a call that cannot succeed.
+        """
+        return bool(
+            self.default_config and self.capabilities.supports_pull and self.capabilities.supports_tracking_by_container
+        )
 
 
 def _build_registry() -> dict[str, CarrierDefinition]:
     # Imports are deferred to avoid circular imports at module level.
+    from .cma_cgm.client import PUBLIC_TRACK_AND_TRACE_CONFIG as CMA_CGM_CONFIG
     from .cma_cgm.client import CmaCgmClient
     from .cma_cgm.parser import CmaCgmParser
     from .cosco.client import CoscoClient
     from .cosco.parser import CoscoParser
     from .evergreen.client import EvergreenClient
     from .evergreen.parser import EvergreenParser
+    from .hapag_lloyd.client import TRACK_AND_TRACE_CONFIG as HAPAG_LLOYD_CONFIG
     from .hapag_lloyd.client import HapagLloydClient
     from .hapag_lloyd.parser import HapagLloydParser
     from .hmm.client import HmmClient
     from .hmm.parser import HmmParser
+    from .maersk.client import PUBLIC_TRACK_AND_TRACE_CONFIG as MAERSK_CONFIG
     from .maersk.client import MaerskClient
     from .maersk.parser import MaerskParser
     from .msc.client import MscClient
@@ -70,6 +104,8 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("MAEU", "MRKU", "MSKU", "MRSU"),
+            scac_codes=("MAEU",),
+            default_config=dict(MAERSK_CONFIG),
         ),
         "msc": CarrierDefinition(
             provider_code="msc",
@@ -91,6 +127,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("MSCU", "MEDU"),
+            scac_codes=("MSCU",),
         ),
         "cma_cgm": CarrierDefinition(
             provider_code="cma_cgm",
@@ -109,9 +146,13 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 supports_schedules=False,
                 supports_booking=False,
                 requires_customer_approval=True,
-                requires_account_number=True,
+                # The public Track & Trace events endpoint answers on the keyId API
+                # key alone — see carriers/cma_cgm/client.py.
+                requires_account_number=False,
             ),
             owner_prefixes=("CMAU", "CGMU", "ECMU"),
+            scac_codes=("CMDU",),
+            default_config=dict(CMA_CGM_CONFIG),
         ),
         "cosco": CarrierDefinition(
             provider_code="cosco",
@@ -133,6 +174,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("COSU", "CBHU", "CCLU"),
+            scac_codes=("COSU",),
         ),
         "hapag_lloyd": CarrierDefinition(
             provider_code="hapag_lloyd",
@@ -154,6 +196,8 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=True,
             ),
             owner_prefixes=("HLXU", "HLCU", "HLBU"),
+            scac_codes=("HLCU",),
+            default_config=dict(HAPAG_LLOYD_CONFIG),
         ),
         "one": CarrierDefinition(
             provider_code="one",
@@ -175,6 +219,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("ONEU", "NYKU", "MOLU"),
+            scac_codes=("ONEY",),
         ),
         "evergreen": CarrierDefinition(
             provider_code="evergreen",
@@ -196,6 +241,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("EGLV", "EISU", "EGHU"),
+            scac_codes=("EGLV",),
         ),
         "hmm": CarrierDefinition(
             provider_code="hmm",
@@ -217,6 +263,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("HMMU", "HDMU"),
+            scac_codes=("HDMU",),
         ),
         "yang_ming": CarrierDefinition(
             provider_code="yang_ming",
@@ -238,6 +285,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("YMLU", "YMMU"),
+            scac_codes=("YMLU", "YMJA"),
         ),
         "zim": CarrierDefinition(
             provider_code="zim",
@@ -259,6 +307,7 @@ def _build_registry() -> dict[str, CarrierDefinition]:
                 requires_account_number=False,
             ),
             owner_prefixes=("ZIMU", "ZCSU"),
+            scac_codes=("ZIMU",),
         ),
     }
 
@@ -305,6 +354,17 @@ def list_carriers() -> list[CarrierDefinition]:
     return sorted(_get_registry().values(), key=lambda d: d.provider_code)
 
 
+def list_connectable_carriers() -> list[CarrierDefinition]:
+    """The carriers a team can actually connect and track containers through, by name.
+
+    Registered is not the same as usable: seven of the ten definitions are stubs whose
+    client raises rather than fetching. Settings offers this list, so a team is never
+    invited to paste an API key into an adapter that cannot call anything — see
+    :attr:`CarrierDefinition.is_connectable`.
+    """
+    return sorted((d for d in _get_registry().values() if d.is_connectable), key=lambda d: d.name)
+
+
 def resolve_carrier_code(value: str) -> str | None:
     """Map a free-text carrier value to a registered provider code, or None.
 
@@ -330,6 +390,33 @@ def resolve_carrier_code(value: str) -> str | None:
         if normalised in {candidate.replace("-", " ") for candidate in candidates}:
             return definition.provider_code
     return None
+
+
+def resolve_carrier_code_from_scac(scac: str) -> str | None:
+    """Map a SCAC to a registered provider code, or None when no carrier claims it.
+
+    The translation aggregators need. Traqo's lookup answers ``ONEY`` and Vizion's ACI
+    answers ``ONEY``; both mean the registry's ``one``, and neither should have to hold
+    its own copy of that fact — a second table would eventually disagree with this one
+    about a carrier whose SCAC changed.
+
+    None is a real answer, not a failure: it means a provider named a carrier Container
+    SCM has no adapter for. The carrier is still identified *by its SCAC* and the caller
+    can say so; what it cannot do is pretend the box belongs to a registered carrier.
+    """
+    code = (scac or "").strip().upper()
+    if not code:
+        return None
+    for definition in _get_registry().values():
+        if code in definition.scac_codes:
+            return definition.provider_code
+    return None
+
+
+def carrier_scac(provider_code: str) -> str:
+    """Return the canonical SCAC for a registered carrier, or "" when it has none."""
+    definition = get_carrier_definition(provider_code)
+    return definition.scac_codes[0] if definition.scac_codes else ""
 
 
 def suggest_carrier_for_owner_code(owner_code: str) -> str | None:

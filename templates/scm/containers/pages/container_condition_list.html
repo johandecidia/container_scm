@@ -1,0 +1,50 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  The team's container conditions — master data, edited here and nowhere else.
+
+  Under Settings rather than beside Containers because this is the vocabulary, not
+  the fleet. Nothing in the system behaves differently because of what a container
+  is graded as; renaming a row changes what everybody reads and nothing else, which
+  is exactly why it is safe to leave in a team's own hands.
+{% endcomment %}
+
+{% block app %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold">{% translate "Settings" %}</h1>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% blocktranslate trimmed with team=request.default_team.name %}
+        Team settings for {{ team }}. Only administrators can open this area.
+      {% endblocktranslate %}
+    </p>
+  </div>
+
+  {% include "scm/team_settings/components/settings_tabs.html" with active="containers" %}
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-lg font-semibold">{% translate "Container Conditions" %}</h2>
+      <p class="text-sm text-base-content/60 mt-1">
+        {% translate "The grades your team describes containers in. Rename them freely — the name is what operators read, the code is internal." %}
+      </p>
+    </div>
+    <button
+      class="btn btn-primary btn-sm"
+      hx-get="{% url 'containers:condition_create' %}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+    >
+      <i class="fa fa-plus w-4 h-4"></i>
+      {% translate "Add Condition" %}
+    </button>
+  </div>
+
+  <section class="app-card">
+    <div id="condition-table">
+      {% include "scm/containers/partials/container_condition_table.html" %}
+    </div>
+  </section>
+
+  <div id="modal-container"></div>
+{% endblock %}

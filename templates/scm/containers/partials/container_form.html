@@ -1,13 +1,27 @@
 {% load i18n %}
 
+{% comment %}
+  Edit an existing container.
+
+  Opened from two places — the row action on the Containers list and the Actions
+  menu in the Container Workspace — so the post targets #modal-container, the one
+  element both pages have. Targeting the list's table instead made Save a no-op on
+  the detail page: HTMX cannot resolve a missing target and never sends the request.
+
+  Errors come back as this same modal and replace it in place. On success the
+  response asks HTMX to reload the page, like the movement modal next to it: an
+  edit moves the workspace header, the Overview panel and the list row together,
+  and swapping one of them would leave the others describing the container as it was.
+{% endcomment %}
+
 <dialog id="container-modal" class="modal modal-open">
   <div class="modal-box max-w-2xl">
     <button type="button" class="btn btn-sm btn-ghost absolute left-2 top-2" aria-label="{% translate 'Close modal' %}" onclick="document.getElementById('modal-container').innerHTML=''">✕</button>
     <form method="post"
+      action="{{ form_action }}"
       hx-post="{{ form_action }}"
-      hx-target="#container-table"
-      hx-swap="outerHTML"
-      hx-on::after-request="if(event.detail.successful) document.getElementById('modal-container').innerHTML=''"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
     >
       {% csrf_token %}
       <h3 class="font-bold text-lg mb-4">{{ modal_title }}</h3>

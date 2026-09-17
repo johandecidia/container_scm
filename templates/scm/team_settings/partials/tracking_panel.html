@@ -1,0 +1,164 @@
+{% load i18n %}
+
+{% comment %}
+  The team's direct carrier integrations. One card per carrier the product can
+  actually call — the registry decides which those are, so a carrier whose adapter
+  is a stub never appears here offering to take an API key.
+
+  Secrets are not in this template and never arrive in its context: a configured
+  credential renders as a fixed placeholder, not as part of the stored value. The
+  only credential action is replacement, through the modal form.
+
+  The root id is the HTMX target for the test, the toggle and a saved credential.
+{% endcomment %}
+
+<div id="settings-tracking">
+  {% if notice %}
+    <div role="alert" class="alert alert-{{ notice_level|default:'info' }} alert-soft mb-4 items-start">
+      <i class="fa fa-circle-info mt-0.5"></i>
+      <span class="text-sm">{{ notice }}</span>
+    </div>
+  {% endif %}
+
+  {% comment %}
+    The team's default provider: who is asked when no direct carrier integration can
+    answer for a container. Shown rather than editable because Traqo is the only
+    provider the scheduled sync can drive on its own today — a selector with one
+    option would be a choice that is not a choice. The value is stored, so changing
+    it when there is a second aggregator is a value change rather than a migration.
+  {% endcomment %}
+  <section class="app-card mb-6">
+    <h2 class="text-lg font-semibold">{% translate "Default tracking provider" %}</h2>
+    <p class="text-sm mt-1">
+      <span class="font-medium">{{ default_provider_name }}</span>
+    </p>
+    <p class="text-xs text-base-content/60 mt-1">
+      {% translate "Used when no direct carrier integration can answer for a container. A container can be set to a specific provider on its workspace." %}
+    </p>
+  </section>
+
+  <section class="app-card mb-6">
+    <h2 class="text-lg font-semibold">{% translate "Direct carrier integrations" %}</h2>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% translate "Carriers this team can call directly. A carrier is only offered as a tracking source for a container once it is active and holds credentials." %}
+    </p>
+  </section>
+
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    {% for row in carrier_rows %}
+      <section class="app-card">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h3 class="font-semibold">{{ row.name }}</h3>
+            <p class="text-xs text-base-content/50 font-mono">{{ row.provider_code }}</p>
+          </div>
+          {% if row.is_active %}
+            <span class="badge badge-sm badge-success badge-soft shrink-0">{% translate "Active" %}</span>
+          {% elif row.is_connected %}
+            <span class="badge badge-sm badge-ghost shrink-0">{% translate "Inactive" %}</span>
+          {% else %}
+            <span class="badge badge-sm badge-ghost shrink-0">{% translate "Not connected" %}</span>
+          {% endif %}
+        </div>
+
+        <dl class="mt-4 space-y-2 text-sm">
+          <div class="flex items-baseline justify-between gap-2">
+            <dt class="text-xs text-base-content/60">{% translate "Credentials" %}</dt>
+            <dd class="text-right">
+              {% if row.has_credentials %}
+                <span class="font-mono">{{ row.masked_credentials }}</span>
+                <span class="text-xs text-base-content/50 ml-1">{% translate "stored" %}</span>
+              {% else %}
+                <span class="text-base-content/50">{% translate "None stored" %}</span>
+              {% endif %}
+            </dd>
+          </div>
+          <div class="flex items-baseline justify-between gap-2">
+            <dt class="text-xs text-base-content/60">{% translate "Last success" %}</dt>
+            <dd>{{ row.last_success_at|date:"d M Y H:i"|default:"—" }}</dd>
+          </div>
+          <div class="flex items-baseline justify-between gap-2">
+            <dt class="text-xs text-base-content/60">{% translate "Last tested" %}</dt>
+            <dd>{{ row.last_tested_at|date:"d M Y H:i"|default:"—" }}</dd>
+          </div>
+        </dl>
+
+        {% comment %}
+          The last error is shown even when a later call succeeded, with its own
+          timestamp, so "it worked at 09:00 and failed at 11:00" is legible. Hiding
+          a stale error is how an intermittent credential problem stays invisible.
+        {% endcomment %}
+        {% if row.last_error_message %}
+          <div role="alert" class="alert alert-error alert-soft mt-3 items-start">
+            <i class="fa fa-triangle-exclamation mt-0.5"></i>
+            <div class="text-xs">
+              <p class="font-medium">
+                {% blocktranslate trimmed with at=row.last_error_at|date:"d M Y H:i" %}
+                  Last error {{ at }}
+                {% endblocktranslate %}
+              </p>
+              <p class="mt-0.5 break-words">{{ row.last_error_message|truncatechars:300 }}</p>
+            </div>
+          </div>
+        {% endif %}
+
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <button
+            class="btn btn-sm {% if row.has_credentials %}btn-outline{% else %}btn-primary{% endif %}"
+            hx-get="{% url 'team_settings:carrier_credentials' row.provider_code %}"
+            hx-target="#modal-container"
+            hx-swap="innerHTML"
+          >
+            <i class="fa fa-key"></i>
+            {% if row.has_credentials %}{% translate "Replace credentials" %}{% else %}{% translate "Connect" %}{% endif %}
+          </button>
+
+          {% if row.is_connected %}
+            {% comment %}
+              The test needs a reference the account can see, so the button is only
+              offered once one is configured. Saying why is more use than a button
+              that always answers "not configured".
+            {% endcomment %}
+            {% if row.can_test %}
+              <form
+                hx-post="{% url 'team_settings:carrier_test_connection' row.provider_code %}"
+                hx-target="#settings-tracking"
+                hx-swap="outerHTML"
+                hx-disabled-elt="find button"
+              >
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline btn-sm">
+                  <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+                  <i class="fa fa-plug-circle-check htmx-request-hide"></i>
+                  <span class="htmx-request-hide">{% translate "Test connection" %}</span>
+                  <span class="htmx-request-show">{% translate "Testing…" %}</span>
+                </button>
+              </form>
+            {% else %}
+              <span class="text-xs text-base-content/50">
+                {% translate "Add a test reference to enable the connection test." %}
+              </span>
+            {% endif %}
+
+            <form
+              hx-post="{% url 'team_settings:carrier_toggle' row.provider_code %}"
+              hx-target="#settings-tracking"
+              hx-swap="outerHTML"
+            >
+              {% csrf_token %}
+              <button type="submit" class="btn btn-ghost btn-sm">
+                {% if row.is_active %}{% translate "Deactivate" %}{% else %}{% translate "Activate" %}{% endif %}
+              </button>
+            </form>
+          {% endif %}
+        </div>
+      </section>
+    {% empty %}
+      <section class="app-card">
+        <p class="text-sm text-base-content/60">
+          {% translate "No direct carrier integrations are available in this installation." %}
+        </p>
+      </section>
+    {% endfor %}
+  </div>
+</div>

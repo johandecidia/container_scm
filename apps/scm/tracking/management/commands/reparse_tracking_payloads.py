@@ -1,25 +1,32 @@
-"""Re-run stored carrier responses through the current parser and ingestion.
+"""Re-run stored provider responses through the current parser and ingestion.
 
-Every carrier response is kept as a :class:`TrackingRawPayload`, which means a parser
+Every provider response is kept as a :class:`TrackingRawPayload`, which means a parser
 improvement is not only for events that arrive from now on: the payloads we already
 have can be read again with the better parser and the existing events filled in.
-That is what this command is for. It makes no carrier calls.
+That is what this command is for. It makes no provider calls, so correcting how a
+response is read costs nothing and consumes no quota.
 
 It is safe to run repeatedly. Events are written through the same idempotent path a
 sync uses — :func:`apps.scm.tracking.ingestion.persist_normalised_events` — so an
-event the carrier gave an ID for keeps its fingerprint and is updated in place rather
+event the provider gave an ID for keeps its fingerprint and is updated in place rather
 than duplicated.
 
-The one thing to know before running it: an event whose carrier response carried *no*
-event ID is fingerprinted from its identifying fields, and those fields now include
-location and vessel where they used to be blank. Such an event gets a new fingerprint
-and is therefore re-created rather than updated, leaving the old, emptier row behind.
-``--prune-superseded`` deletes those, and the command refuses to leave them silently:
-without the flag it counts them and says so.
+The one thing to know before running it: an event whose response carried *no* event ID
+is fingerprinted from its identifying fields, so a correction to any of those fields —
+a filled-in location, a timestamp read in the right timezone — produces a new
+fingerprint. Such an event is re-created rather than updated, leaving the old row
+behind. ``--prune-superseded`` deletes those, and the command refuses to leave them
+silently: without the flag it counts them and says so.
+
+Non-carrier providers work here too. Traqo's responses are stored by the same
+mechanism, and a stored one is the only way to re-read a container without spending a
+Traqo shipment slot, so the provider is resolved through
+:mod:`apps.scm.tracking.sources` when the carrier registry does not know it.
 
 Usage:
     python manage.py reparse_tracking_payloads --provider maersk --container TRDU9258963
     python manage.py reparse_tracking_payloads --provider maersk --dry-run
+    python manage.py reparse_tracking_payloads --provider traqo --container CPWU2588297
 """
 
 from django.core.management.base import BaseCommand, CommandError
@@ -29,11 +36,12 @@ from apps.scm.integrations.carriers.factory import build_carrier_parser
 from apps.scm.integrations.carriers.registry import UnknownCarrierError
 from apps.scm.tracking.ingestion import persist_normalised_events
 from apps.scm.tracking.models import TrackingEvent, TrackingRawPayload
+from apps.scm.tracking.sources import get_non_carrier_source
 from apps.teams.models import Team
 
 
 class Command(BaseCommand):
-    help = "Re-parse stored carrier payloads and update the events derived from them."
+    help = "Re-parse stored provider payloads and update the events derived from them."
 
     def add_arguments(self, parser):
         parser.add_argument("--provider", required=True, help="Tracking provider code, e.g. maersk")
@@ -43,18 +51,14 @@ class Command(BaseCommand):
         parser.add_argument(
             "--prune-superseded",
             action="store_true",
-            help="Delete events replaced by a re-parse (only affects carrier events with no event ID)",
+            help="Delete events replaced by a re-parse (only affects events the provider gave no event ID)",
         )
 
     def handle(self, *args, **options):
         provider_code = options["provider"].strip().lower()
         dry_run = options["dry_run"]
 
-        try:
-            parser = build_carrier_parser(provider_code)
-        except UnknownCarrierError as exc:
-            raise CommandError(str(exc)) from exc
-
+        read_payload = self._reader(provider_code)
         payloads = self._payloads(provider_code, options)
         if not payloads:
             self.stdout.write(self.style.WARNING("No stored payloads match those filters."))
@@ -64,10 +68,13 @@ class Command(BaseCommand):
 
         totals = {"created": 0, "updated": 0, "failed": 0, "events": 0, "unreadable": 0}
         touched_subscription_ids = set()
+        reread_payload_ids = set()
+        written_fingerprints = set()
 
         for payload in payloads:
+            reference = payload.subscription.tracking_reference if payload.subscription else ""
             try:
-                events = parser.parse_tracking_events(payload.payload_json)
+                events = read_payload(payload.payload_json, reference)
             except Exception as exc:  # noqa: BLE001 — one bad payload must not stop the backfill
                 totals["unreadable"] += 1
                 self.stderr.write(self.style.WARNING(f"  payload {payload.pk}: could not parse — {exc}"))
@@ -90,16 +97,41 @@ class Command(BaseCommand):
             )
             for key in ("created", "updated", "failed"):
                 totals[key] += result[key]
+            written_fingerprints.update(result["fingerprints"])
+            reread_payload_ids.add(payload.pk)
             if subscription is not None:
                 touched_subscription_ids.add(subscription.pk)
 
         self._report(totals, dry_run=dry_run)
         if not dry_run:
-            self._handle_superseded(provider_code, options, touched_subscription_ids)
+            self._handle_superseded(
+                provider_code,
+                options,
+                subscription_ids=touched_subscription_ids,
+                reread_payload_ids=reread_payload_ids,
+                written_fingerprints=written_fingerprints,
+            )
 
     # ------------------------------------------------------------------
     # Selection
     # ------------------------------------------------------------------
+
+    def _reader(self, provider_code: str):
+        """Return ``(payload_json, reference) -> events`` for this provider.
+
+        Carriers come from the registry. A provider the registry does not know may still
+        be a legitimate non-carrier source with a mapper of its own; only a code that is
+        neither is an error.
+        """
+        try:
+            parser = build_carrier_parser(provider_code)
+        except UnknownCarrierError as exc:
+            source = get_non_carrier_source(provider_code)
+            if source is None:
+                raise CommandError(str(exc)) from exc
+            self.stdout.write(f"'{provider_code}' is {source.name}, not a carrier — reading it with its own mapper.")
+            return source.read_payload
+        return lambda payload_json, _reference: parser.parse_tracking_events(payload_json)
 
     def _payloads(self, provider_code: str, options) -> list[TrackingRawPayload]:
         """Return the payloads to re-read, oldest first.
@@ -167,23 +199,37 @@ class Command(BaseCommand):
     # Superseded events
     # ------------------------------------------------------------------
 
-    def _handle_superseded(self, provider_code: str, options, subscription_ids: set) -> None:
+    def _handle_superseded(
+        self,
+        provider_code: str,
+        options,
+        *,
+        subscription_ids: set,
+        reread_payload_ids: set,
+        written_fingerprints: set,
+    ) -> None:
         """Report — and optionally remove — rows a re-parse replaced rather than updated.
 
-        Only events with no carrier event ID can end up here, because only their
-        fingerprint depends on the fields the parser just started filling in. They are
-        recognised by having been created by an earlier ingestion and not re-linked to
-        any payload this run touched.
+        Only events with no provider event ID can end up here, because only their
+        fingerprint depends on the fields the parser just read differently. An event
+        qualifies when this run did **not** write its fingerprint and it came from a
+        payload this run re-read — the payload that should have produced it did not, so
+        the corrected row now stands in its place. Events with no payload link at all
+        predate payload linking and are treated the same way, as before.
+
+        The payload condition is what keeps the deletion honest: an event derived from
+        an archived payload, whose body retention has dropped and which therefore could
+        not be regenerated, is never a candidate.
         """
         if not subscription_ids:
             return
 
         superseded = TrackingEvent.objects.filter(
+            Q(raw_payload__isnull=True) | Q(raw_payload_id__in=reread_payload_ids),
             provider__code=provider_code,
             subscription_id__in=subscription_ids,
             source_event_id="",
-            raw_payload__isnull=True,
-        )
+        ).exclude(event_fingerprint__in=written_fingerprints)
         count = superseded.count()
         if not count:
             return

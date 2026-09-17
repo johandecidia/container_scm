@@ -1,0 +1,19 @@
+{% load i18n %}
+
+{% comment %}
+  One issue, as a badge.
+
+  Usage: {% include "scm/visibility/components/issue_badge.html" with issue=issue %}
+  Optional: size ("sm" by default)
+
+  Coloured by band, not by severity — the platform has no severity. A band says
+  where the finding came from: a carrier event (error), a date that moved
+  (warning), or the absence of data (neutral). See work_queues.issues.IssueBand.
+{% endcomment %}
+
+<span class="badge badge-{{ size|default:'sm' }} whitespace-nowrap
+  {% if issue.band == 'exception' %}badge-error badge-soft
+  {% elif issue.band == 'delay' %}badge-warning badge-soft
+  {% else %}badge-ghost{% endif %}">
+  {{ issue.label }}
+</span>

@@ -1,0 +1,86 @@
+{% load i18n %}
+
+{% comment %}
+  Usage: {% include "scm/visibility/components/map_coverage.html" with coverage=operational_map.coverage %}
+
+  How much of the fleet the map can actually show, and why not the rest.
+
+  This exists because a sparse map is ambiguous. Four markers can mean a quiet
+  week or eight hundred containers standing at locations nobody has recorded
+  coordinates for, and the map itself cannot tell the difference. Without this
+  line, the reader assumes the first.
+
+  Missing coordinates are reported as data quality, not as an exception. LOC-1
+  deliberately did not invent latitudes for places it could not verify, so a
+  location without them is a normal state of the master data — and the fix is a
+  location form, which is what the link goes to.
+
+  The named locations stay. "Oceanterminalen and 2 others" is a job somebody can do
+  this afternoon, and losing the names to a generic link would put a click between
+  the reader and the one fact that makes them act. The link is added beside them for
+  the rest of the picture — the ambiguous and unresolved evidence this line cannot
+  show without becoming a page of its own.
+{% endcomment %}
+
+<p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60">
+  <span>
+    <span class="text-success">●</span>
+    {% blocktranslate trimmed count count=coverage.physical_containers %}
+      {{ count }} container with a physical location
+    {% plural %}
+      {{ count }} containers with a physical location
+    {% endblocktranslate %}
+  </span>
+  <span>
+    <span class="text-info">◇</span>
+    {% blocktranslate trimmed count count=coverage.tracking_containers %}
+      {{ count }} placed by tracking
+    {% plural %}
+      {{ count }} placed by tracking
+    {% endblocktranslate %}
+  </span>
+
+  {% if coverage.unplottable_containers %}
+    <span class="text-base-content/50">
+      {% blocktranslate trimmed count count=coverage.unplottable_containers %}
+        {{ count }} with no plottable position
+      {% plural %}
+        {{ count }} with no plottable position
+      {% endblocktranslate %}
+    </span>
+  {% endif %}
+
+  {% if coverage.locations_missing_coordinates %}
+    {% comment %}
+      Named rather than merely counted, up to a handful: "7 locations missing
+      coordinates" is a number to ignore, and "Oceanterminalen and 2 others" is a
+      job somebody can do this afternoon.
+    {% endcomment %}
+    <span class="text-warning">
+      <i class="fa fa-location-crosshairs"></i>
+      {% blocktranslate trimmed count count=coverage.locations_missing_coordinates_count %}
+        {{ count }} location has no coordinates yet
+      {% plural %}
+        {{ count }} locations have no coordinates yet
+      {% endblocktranslate %}
+      —
+      {% for location in coverage.locations_missing_coordinates|slice:":3" %}
+        <a href="{% url 'containers:location_detail' location.pk %}" class="link">{{ location.name }}</a>{% if not forloop.last %}, {% endif %}
+      {% endfor %}
+      {% if coverage.locations_missing_coordinates_count > 3 %}
+        {% blocktranslate trimmed count count=coverage.locations_missing_coordinates_count|add:"-3" %}
+          and {{ count }} other
+        {% plural %}
+          and {{ count }} others
+        {% endblocktranslate %}
+      {% endif %}
+    </span>
+  {% endif %}
+
+  {% if coverage.has_gaps %}
+    <a href="{% url 'visibility:location_quality' %}" class="link link-hover font-medium">
+      <i class="fa fa-wrench"></i>
+      {% translate "Fix location coverage" %}
+    </a>
+  {% endif %}
+</p>

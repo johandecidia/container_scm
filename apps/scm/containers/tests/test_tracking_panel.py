@@ -168,7 +168,7 @@ class TrackingPanelOnDetailPageTest(TrackingPanelTestBase):
         response = self._detail()
         self.assertContains(response, "Not tracked")
         self.assertContains(response, "No tracking events yet")
-        self.assertContains(response, "Refresh tracking to check the carrier")
+        self.assertContains(response, "Refresh tracking to check the carriers")
 
 
 class RefreshRequestHandlingTest(TrackingPanelTestBase):
@@ -220,10 +220,11 @@ class RefreshResultStatesTest(TrackingPanelTestBase):
 
     team_slug = "panel-states"
 
-    def test_no_carrier_asks_for_one_to_be_assigned(self):
+    def test_nothing_to_ask_asks_for_a_carrier_to_be_connected(self):
+        """The user is told to connect an integration, never to identify the carrier."""
         response = self._refresh()
-        self.assertContains(response, "Carrier could not be determined")
-        self.assertContains(response, "shipment or tracking setup")
+        self.assertContains(response, "No carrier integration is connected")
+        self.assertNotContains(response, "Carrier could not be determined")
 
     def test_a_known_carrier_without_an_integration_reports_configuration(self):
         shipment = Shipment.objects.create(team=self.team, shipment_number="SHP-P1", carrier="Maersk")
@@ -234,9 +235,9 @@ class RefreshResultStatesTest(TrackingPanelTestBase):
     def test_a_successful_refresh_summarises_what_arrived(self):
         integration = _maersk_integration(self.team)
         response = self._refresh(FakeSession([FakeResponse(200, PAYLOAD)]), integration=integration)
-        self.assertContains(response, "Tracking updated")
-        self.assertContains(response, "1 events received")
-        self.assertContains(response, "1 new")
+        # The carrier was discovered by this refresh, so the panel names it.
+        self.assertContains(response, "Tracking found via Maersk")
+        self.assertContains(response, "1 tracking events retrieved")
         self.assertEqual(TrackingEvent.objects.filter(team=self.team).count(), 1)
 
     def test_a_successful_refresh_shows_the_event_in_the_panel(self):

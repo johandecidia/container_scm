@@ -1,0 +1,77 @@
+{
+  "success": true,
+  "sandbox": true,
+  "note": "Sandbox response \u2014 fixed demo data. Sign up and use a real API key for live tracking.",
+  "data": {
+    "reference_number": "MRSU6859427",
+    "origin": "Mundra, India",
+    "sealine": "MAEU",
+    "number_of_containers": 1,
+    "eta": "2026-05-17 00:00:00",
+    "last_updated_at": "2026-03-26 13:08:44.789895",
+    "is_active": 1,
+    "closed_at": null,
+    "shipment_type": "Container",
+    "destination": "Caucedo, Dominican Republic",
+    "sealine_name": "Maersk",
+    "total_days": 86,
+    "remaining_days": 51,
+    "created_at": "2026-03-26 13:08:44.411404",
+    "is_delayed": 0,
+    "latitude": "-35",
+    "longitude": "18",
+    "status": "IN_TRANSIT",
+    "shipment_public_url": "https://traqo.ai/ocean/share-shipment?shipment_uid=ef67bb8b4c1f8564282c88efb2fbffbe",
+    "events_table": [
+      {
+        "idx": 1,
+        "location": "Mundra",
+        "country": "India",
+        "description": "Gate in full",
+        "timestamp": "2026-03-01 00:00:00",
+        "event_type": "EQUIPMENT",
+        "event_code": "GTIN",
+        "transport_type": "TRUCK",
+        "is_actual": 1,
+        "status": "CGI",
+        "status_description": "Container arrival at first POL (Gate in)"
+      },
+      {
+        "idx": 2,
+        "location": "Mundra",
+        "country": "India",
+        "description": "Loaded",
+        "timestamp": "2026-03-03 00:00:00",
+        "event_type": "EQUIPMENT",
+        "event_code": "LOAD",
+        "transport_type": "VESSEL",
+        "is_actual": 1,
+        "status": "CLL",
+        "status_description": "Container loaded at first POL"
+      },
+      {
+        "idx": 3,
+        "location": "Caucedo",
+        "country": "Dominican Republic",
+        "description": "Arrived",
+        "timestamp": "2026-05-17 00:00:00",
+        "event_type": "TRANSPORT",
+        "event_code": "ARRI",
+        "transport_type": "VESSEL",
+        "is_actual": 0,
+        "status": "VAD",
+        "status_description": "Vessel arrival at final POD"
+      }
+    ],
+    "vessels_table": [
+      {
+        "idx": 1,
+        "vessel_id": 1,
+        "vessel": "ASTRID MAERSK",
+        "imo": "9948750",
+        "mmsi": "219608000",
+        "is_current": 1
+      }
+    ]
+  }
+}

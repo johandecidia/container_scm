@@ -1,0 +1,23 @@
+{% load i18n %}
+
+{% comment %}
+  What has happened to this container's record — not to the physical box, which is
+  the Journey tab's subject.
+
+  Every row is derived from a record that exists for its own reasons: movements,
+  sync runs, association rows, ETA history, and the container's own timestamps.
+  See apps/scm/containers/activity.py.
+
+  The note is part of the feature, not an apology. There is no field-level audit
+  trail in the schema, so "Container record updated" can name the time and the
+  person and nothing more. Saying so is what stops this view from reading as a
+  complete history when it is not one.
+{% endcomment %}
+
+{% translate "Nothing has been recorded against this container yet." as empty_message %}
+{% blocktranslate trimmed asvar activity_note %}
+  Derived from movements, tracking runs, links and record timestamps. Edits are
+  dated but not itemised — which field changed is not recorded yet.
+{% endblocktranslate %}
+
+{% include "scm/components/activity_list.html" with activity=activity empty_message=empty_message note=activity_note %}

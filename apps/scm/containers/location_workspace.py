@@ -1,0 +1,415 @@
+"""Everything the location workspace needs, gathered once.
+
+A location answers three questions: what is physically here, what is expected here,
+and what has moved in or out. This module answers the first and the third, and is
+deliberately explicit about why it cannot yet answer the second.
+
+**Inventory is ``Container.current_location`` and nothing else.** There is no stored
+count, no dwell counter and no expected-arrival column. What is here is what points
+here, counted on read, so moving a box changes the answer immediately.
+
+**Movements are the physical record.** ``ContainerMovement`` rows into and out of
+this location are what "activity" means here. They are kept apart from carrier
+journey events on purpose: a gate move we recorded and a discharge a carrier
+reported are different kinds of claim, made by different parties.
+
+**Expected arrivals are canonical or they are nothing.** They come from
+``Shipment.destination_location`` — the canonical location LOC-1 introduced — and
+from no text comparison at all. A shipment routed to "Gothenburg" as free text does
+not appear here: it appears once somebody has said which place in Gothenburg it is
+going to. That is the whole point. Matching on names would let a depot named
+"Oceanterminalen" claim every shipment bound for a different terminal in the same
+city, and the resulting number would look precise while being wrong.
+
+A location's own subtree counts, because containment is a relation MCR recorded
+rather than inferred: a shipment bound for Oceanterminalen *is* arriving at the
+Göteborg port that contains it, so the port's tab includes it and the terminal's
+tab does not include the port's other traffic.
+
+**Structure is shown, never inferred.** :class:`LocationHierarchy` renders the parent
+this place was recorded inside and the places recorded inside it — the same
+``parent_location`` the resolver narrows with and the arrivals queue expands, read
+through :mod:`apps.scm.containers.location_hierarchy` so there is one idea of what
+contains what. The panel exists because that relation is now load-bearing: it is what
+decides whether ``SEGOT`` means the port or is ambiguous between three places, and an
+operator cannot maintain something they cannot see.
+
+:class:`ExpectedArrivals` keeps its ``is_available`` field. It is now True for every
+location, but a location whose team has nothing routed to it canonically still has
+to say "nothing is expected here" rather than "we cannot tell you" — and those
+remain different sentences.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import timedelta
+
+from django.db.models import Count, DateTimeField, F, OuterRef, Subquery
+from django.db.models.functions import Coalesce
+from django.utils import timezone
+
+from apps.teams.models import Team
+
+from .choices import ContainerStatus
+from .models import Container, ContainerLocation, ContainerMovement, LocationAlias
+
+# One screen of recent physical movement. A display cap, not a claim about how much
+# has happened here.
+_MOVEMENT_LIMIT = 25
+_OVERVIEW_MOVEMENT_LIMIT = 5
+
+# How far ahead a location's Expected tab looks, as an arrivals-queue window. Wider
+# than the operational queue's week because yard planning is a monthly question.
+EXPECTED_ARRIVALS_WINDOW = "30"
+
+
+@dataclass(frozen=True)
+class StatusCount:
+    """How many containers at this location are in one business status."""
+
+    status: str
+    label: str
+    count: int
+
+
+@dataclass(frozen=True)
+class LocationHierarchy:
+    """Where this place sits in the network MCR recorded, one level either way.
+
+    ``ancestors`` is the path down to it, outermost first, so a breadcrumb reads
+    ``Göteborg › Oceanterminalen › MCR Yard``. ``children`` is what is immediately
+    inside it, each carrying its own inventory count from the same annotation the
+    Locations list uses.
+
+    Bounded on purpose: the immediate children and the path up. A whole subtree on a
+    location page would be a tree view, and the way to see what is inside a terminal
+    is to open the terminal.
+
+    Nothing here is derived from names, coordinates or codes — it is the containment
+    an operator recorded, and the panel says so.
+    """
+
+    location: ContainerLocation
+    ancestors: list[ContainerLocation] = field(default_factory=list)
+    children: list[ContainerLocation] = field(default_factory=list)
+
+    @property
+    def parent(self) -> ContainerLocation | None:
+        """The place immediately above, or None when this is a root."""
+        return self.ancestors[-1] if self.ancestors else None
+
+    @property
+    def has_parent(self) -> bool:
+        return bool(self.ancestors)
+
+    @property
+    def path(self) -> list[ContainerLocation]:
+        """The ancestors and this location, outermost first."""
+        return [*self.ancestors, self.location]
+
+    @property
+    def has_children(self) -> bool:
+        return bool(self.children)
+
+    @property
+    def child_count(self) -> int:
+        return len(self.children)
+
+    @property
+    def is_root(self) -> bool:
+        return not self.ancestors
+
+    @property
+    def is_leaf(self) -> bool:
+        return not self.children
+
+    @property
+    def has_inactive_parent(self) -> bool:
+        """True when the place above this one has been deactivated.
+
+        Worth saying out loud rather than hiding: the containment still holds — a
+        retired port does not move its terminals — but new evidence will no longer
+        resolve to the parent, so a reader wondering why the port stopped claiming
+        anything has the answer on the page.
+        """
+        parent = self.parent
+        return parent is not None and not parent.is_active
+
+    @property
+    def shares_unlocode_with_parent(self) -> bool:
+        """True when this place and its parent carry the same UN/LOCODE.
+
+        The normal, legitimate case for a port and its terminals — and the one where
+        the recorded containment is doing real work, because it is what stops the
+        code being ambiguous between them.
+        """
+        parent = self.parent
+        return bool(parent is not None and self.location.unlocode and parent.unlocode == self.location.unlocode)
+
+
+@dataclass(frozen=True)
+class ExpectedArrivals:
+    """What is on its way here, from canonical destinations only.
+
+    ``objects`` are :class:`~apps.scm.visibility.read_models.VisibilityObject` rows —
+    the same read model the fleet-wide Arrivals queue renders, so a shipment
+    described one way there is described the same way here.
+
+    ``reason`` is kept for the case where the answer is unavailable rather than
+    empty. It is unused today and must stay that way unless something genuinely
+    cannot be answered: filling it in to explain an empty list would turn "nothing
+    is coming" into "we do not know", which is a different and worse claim.
+    """
+
+    is_available: bool = True
+    reason: str = ""
+    objects: list = field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return len(self.objects)
+
+    @property
+    def container_count(self) -> int:
+        return sum(obj.container_count for obj in self.objects)
+
+
+@dataclass
+class LocationWorkspace:
+    """Read model for the location detail view.
+
+    Built once by :func:`get_location_workspace`. The inventory queryset is left
+    unevaluated so the view can filter and paginate it; everything else is resolved.
+    """
+
+    location: ContainerLocation
+    inventory: object = None
+    container_count: int = 0
+    status_counts: list[StatusCount] = field(default_factory=list)
+    recent_movements: list = field(default_factory=list)
+    expected: ExpectedArrivals = field(default_factory=ExpectedArrivals)
+    aliases: list = field(default_factory=list)
+    hierarchy: LocationHierarchy | None = None
+
+    # -- identity -----------------------------------------------------------
+
+    @property
+    def place(self) -> str:
+        """City and country in one line, empty when neither is recorded."""
+        return ", ".join(part for part in (self.location.city, self.location.country) if part)
+
+    @property
+    def type_label(self) -> str:
+        return self.location.get_location_type_display()
+
+    @property
+    def is_active(self) -> bool:
+        return self.location.is_active
+
+    @property
+    def parent(self) -> ContainerLocation | None:
+        """The place immediately above, from the hierarchy this workspace loaded.
+
+        Read through ``hierarchy`` rather than off ``location.parent_location`` so the
+        header, the breadcrumb and the hierarchy panel are one query rather than
+        three views of the same foreign key.
+        """
+        return self.hierarchy.parent if self.hierarchy is not None else self.location.parent_location
+
+    @property
+    def unlocode(self) -> str:
+        return self.location.unlocode
+
+    @property
+    def has_coordinates(self) -> bool:
+        return self.location.latitude is not None and self.location.longitude is not None
+
+    # -- external identity --------------------------------------------------
+
+    @property
+    def alias_count(self) -> int:
+        return len(self.aliases)
+
+    @property
+    def has_aliases(self) -> bool:
+        return bool(self.aliases)
+
+    # -- inventory ----------------------------------------------------------
+
+    @property
+    def is_empty(self) -> bool:
+        return self.container_count == 0
+
+    @property
+    def occupied_status_counts(self) -> list[StatusCount]:
+        """Only the statuses actually present. An absent status is not a zero row."""
+        return [row for row in self.status_counts if row.count]
+
+    # -- movement -----------------------------------------------------------
+
+    @property
+    def has_movement_history(self) -> bool:
+        return bool(self.recent_movements)
+
+    @property
+    def moved_in_last_week(self) -> int:
+        """Arrivals recorded here in the last seven days, from the loaded movements.
+
+        Counted off the capped recent list rather than with another query: it is a
+        sense of how busy the place is, and the cap is stated in the template.
+        """
+        cutoff = timezone.now() - timedelta(days=7)
+        return sum(
+            1
+            for movement in self.recent_movements
+            if movement.to_location_id == self.location.pk and movement.occurred_at >= cutoff
+        )
+
+
+def get_location_hierarchy(team: Team, location: ContainerLocation) -> LocationHierarchy:
+    """Where *location* sits in the recorded hierarchy: the path up, and one level down.
+
+    One query for the children, and one per level of the path above — one or two for
+    the structures the domain has, bounded by
+    :data:`apps.scm.containers.location_hierarchy.MAX_DEPTH` whatever the data says.
+    Nothing here costs a query *per child*, which is the N+1 a port with forty
+    terminals would otherwise pay: the counts are annotated.
+    """
+    from .location_hierarchy import ancestor_chain, children_with_counts
+
+    return LocationHierarchy(
+        location=location,
+        ancestors=ancestor_chain(team, location),
+        children=list(children_with_counts(team, location)),
+    )
+
+
+def get_location_workspace(team: Team, location: ContainerLocation) -> LocationWorkspace:
+    """Gather everything the location workspace renders, team-scoped throughout.
+
+    Six queries plus whatever the view does with the inventory queryset: the count,
+    the status breakdown, the recent movements, the aliases, the hierarchy's children
+    and its path upward, and the inventory itself. Nothing scales with the number of
+    containers at the location, or with the number of places inside it.
+    """
+    inventory = get_location_inventory(team=team, location=location)
+
+    counts = {
+        row["status"]: row["total"]
+        for row in Container.objects.filter(team=team, current_location=location)
+        .values("status")
+        .annotate(total=Count("pk"))
+    }
+    status_counts = [
+        StatusCount(status=value, label=str(label), count=counts.get(value, 0))
+        for value, label in ContainerStatus.choices
+    ]
+
+    return LocationWorkspace(
+        location=location,
+        inventory=inventory,
+        container_count=sum(counts.values()),
+        status_counts=status_counts,
+        recent_movements=get_location_movements(team=team, location=location),
+        expected=get_expected_arrivals(team=team, location=location),
+        aliases=list(LocationAlias.objects.filter(team=team, location=location).order_by("source", "external_name")),
+        hierarchy=get_location_hierarchy(team=team, location=location),
+    )
+
+
+def count_containers_at_location(team: Team, location: ContainerLocation) -> int:
+    """How many containers point here. One query, and the only definition of the number.
+
+    Shared with the location's map marker, which shows this count and nothing else:
+    two implementations would eventually let the Inventory tab and the marker beside
+    it disagree about how full a depot is.
+    """
+    return Container.objects.filter(team=team, current_location=location).count()
+
+
+def get_location_inventory(team: Team, location: ContainerLocation, *, sort: str | None = None, **filters):
+    """The containers physically at this location, most recently arrived first.
+
+    Reuses the container list's own filtering so the columns, the search behaviour
+    and the tracking annotations are the ones the rest of the product already has —
+    there is no second idea here of what filtering a container list means. Passing
+    ``sort`` hands the ordering back to that shared list; without one, the default
+    here is arrival order, which is the question a depot asks.
+
+    ``at_location_since`` is when the box got here. It prefers the most recent
+    recorded movement into this location and falls back to the container's own
+    ``last_location_update``, because a container whose location was set at creation
+    has a movement but no update stamp, and one set by an importer may have the
+    stamp and no movement. Both are real records of the same fact; neither is
+    invented. A container with neither renders no date at all rather than a guess.
+    """
+    from .selectors import filter_containers
+
+    arrival = (
+        ContainerMovement.objects.filter(
+            team=team,
+            container=OuterRef("pk"),
+            to_location=location,
+        )
+        .order_by("-occurred_at", "-created_at")
+        .values("occurred_at")[:1]
+    )
+    queryset = filter_containers(team=team, location_id=str(location.pk), sort=sort, **filters).annotate(
+        at_location_since=Coalesce(Subquery(arrival, output_field=DateTimeField()), "last_location_update"),
+    )
+    if sort:
+        return queryset
+    # NULLS LAST: a container with no recorded arrival time is not the most recent
+    # thing to arrive, and sorting it to the top would say that it was.
+    return queryset.order_by(F("at_location_since").desc(nulls_last=True), "-created_at")
+
+
+def get_location_movements(team: Team, location: ContainerLocation, limit: int = _MOVEMENT_LIMIT) -> list:
+    """Physical movements into and out of this location, newest first.
+
+    Both directions, because a location's history is what came and what went. The
+    row itself says which: a movement whose ``to_location`` is this one arrived, and
+    one whose ``from_location`` is this one left.
+
+    The query itself lives in ``movements``, beside the rest of the physical state
+    model, so a location's activity and a container's history cannot come to mean
+    different things.
+    """
+    from .movements import location_activity
+
+    return location_activity(team=team, location=location, limit=limit)
+
+
+def get_location_overview_movements(workspace: LocationWorkspace) -> list:
+    """The handful of movements the Overview tab shows, off the already-loaded list."""
+    return workspace.recent_movements[:_OVERVIEW_MOVEMENT_LIMIT]
+
+
+def get_expected_arrivals(team: Team, location: ContainerLocation) -> ExpectedArrivals:
+    """What is canonically routed to this location or somewhere inside it.
+
+    Composed from the fleet-wide arrivals queue rather than from a query of its own.
+    That queue already decides what "arriving" means — which shipment statuses
+    count, which standalone containers stand on their own, how the ETA is chosen —
+    and a second implementation here would eventually disagree with the Arrivals
+    page about whether a given box is coming.
+
+    The window is wider than the queue's own default: a depot planning its yard
+    cares about the month ahead, where the operational queue is about the week. The
+    template states the range it is showing.
+
+    Subtree expansion is the queue's own, not repeated here — choosing Göteborg on
+    the Arrivals page and opening Göteborg's Expected tab must include exactly the
+    same shipments.
+
+    The import is deferred because the arrivals queue reads the container workspace,
+    which lives in this app — at module scope the two would import each other.
+    """
+    from apps.scm.visibility.work_queues import ArrivalQueueFilters, get_arrival_queue
+
+    queue = get_arrival_queue(
+        team,
+        ArrivalQueueFilters(window=EXPECTED_ARRIVALS_WINDOW, destination_location=str(location.pk)),
+    )
+    return ExpectedArrivals(is_available=True, objects=queue.objects)

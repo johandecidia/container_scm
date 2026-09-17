@@ -77,7 +77,7 @@ def shipment_detail(request, pk):
 def shipment_create(request):
     team = request.default_team
     if request.method == "POST":
-        form = ShipmentForm(request.POST)
+        form = ShipmentForm(request.POST, team=team)
         if form.is_valid():
             shipment = create_shipment(team=team, user=request.user, data=form.cleaned_data)
             if request.htmx:
@@ -103,7 +103,7 @@ def shipment_create(request):
                 {"form": form, "modal_title": _("New Shipment"), "form_action": request.path, "team_slug": team.slug},
             )
     else:
-        form = ShipmentForm()
+        form = ShipmentForm(team=team)
 
     context = {
         "form": form,
@@ -119,7 +119,7 @@ def shipment_update(request, pk):
     team = request.default_team
     shipment = get_object_or_404(Shipment, pk=pk, team=team)
     if request.method == "POST":
-        form = ShipmentForm(request.POST, instance=shipment)
+        form = ShipmentForm(request.POST, instance=shipment, team=team)
         if form.is_valid():
             shipment = update_shipment(shipment=shipment, user=request.user, data=form.cleaned_data)
             if request.htmx:
@@ -142,7 +142,7 @@ def shipment_update(request, pk):
                 },
             )
     else:
-        form = ShipmentForm(instance=shipment)
+        form = ShipmentForm(instance=shipment, team=team)
 
     context = {
         "form": form,

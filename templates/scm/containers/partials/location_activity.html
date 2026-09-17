@@ -1,0 +1,37 @@
+{% load i18n %}
+
+{% comment %}
+  The physical movements recorded into and out of this location.
+
+  This is our own record of where boxes went, kept deliberately apart from the
+  carrier journey events on a container's own page. A gate move somebody recorded
+  and a discharge a carrier reported are different claims by different parties, and
+  merging them into one list would make it impossible to tell which is which.
+
+  Every entry names its source and badges what kind of claim it is, so an operator's
+  gate move, an importer's row and a movement interpreted from a carrier event are
+  three visibly different things rather than three lines that look alike.
+{% endcomment %}
+
+<section class="scm-panel">
+  {% include "scm/components/section_header.html" with title=_("Movement history") count=workspace.recent_movements|length %}
+
+  {% if workspace.has_movement_history %}
+    <ol class="divide-y divide-base-200">
+      {% for movement in workspace.recent_movements %}
+        {% include "scm/containers/partials/location_movement_row.html" with movement=movement location=location %}
+      {% endfor %}
+    </ol>
+    <p class="text-xs text-base-content/40 mt-4 pt-4 border-t border-base-300">
+      {% blocktranslate trimmed %}
+        The most recent recorded movements. A box that passed through without anyone
+        gating it in or out leaves no entry here — this is what was recorded, not
+        everything that happened.
+      {% endblocktranslate %}
+    </p>
+  {% else %}
+    {% translate "No movements recorded" as empty_title %}
+    {% translate "Movements appear here when a container is gated in or out, received or transferred at this place." as empty_message %}
+    {% include "scm/components/empty_state.html" with icon="fa-dolly" title=empty_title message=empty_message %}
+  {% endif %}
+</section>

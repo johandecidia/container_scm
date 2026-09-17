@@ -6,6 +6,14 @@
   Both kinds carry the same information because both know it: a container tracked
   without a shipment still has a status, a vessel, an ETA and a position. The only
   difference is which links exist.
+
+  The carrier and the data source are printed as two facts, in that order, and
+  neither stands in for the other. "ONE · via Traqo Ocean" is the shape a container
+  tracked through an aggregator actually has; naming Traqo as the carrier — which is
+  what a single name here used to do — describes an aggregator as though it moved
+  boxes. A watch whose carrier nobody has established reads as unknown rather than
+  borrowing the aggregator's name, which is the whole point of
+  TrackingProvenance.carrier_name.
 {% endcomment %}
 
 <li class="py-3">
@@ -43,7 +51,16 @@
       </p>
 
       <p class="text-xs text-base-content/50 mt-0.5">
-        {% if object.carrier_name %}{{ object.carrier_name }}{% endif %}
+        {% if object.carrier_name %}
+          {{ object.carrier_name }}
+        {% elif object.is_actively_tracked %}
+          <span class="italic">{% translate "Carrier unknown" %}</span>
+        {% endif %}
+        {% if object.tracking_provider_label %}
+          · {% blocktranslate trimmed with provider=object.tracking_provider_label %}
+              via {{ provider }}
+            {% endblocktranslate %}
+        {% endif %}
         {% if object.vessel_name %}
           · {{ object.vessel_name }}{% if object.voyage_number %} {{ object.voyage_number }}{% endif %}
         {% endif %}

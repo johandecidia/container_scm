@@ -1,0 +1,27 @@
+{
+  "message": "Reference created successfully.",
+  "reference": {
+    "id": "e8991c95-5db2-4c0c-8a02-119611f769df",
+    "container_id": "BBCU3273070",
+    "bill_of_lading": null,
+    "booking_number": null,
+    "carrier_code": null,
+    "carrier_scac": null,
+    "carrier_id": null,
+    "carrier": null,
+    "callback_url": null,
+    "organization_id": "3670867f-3634-4dd2-9b27-3531b5affe64",
+    "parent_reference_id": null,
+    "latest_update_id": null,
+    "active": true,
+    "auto_carrier": true,
+    "auto_unsubscribed": false,
+    "deactivate_reason": null,
+    "last_update_status": null,
+    "last_update_attempted_at": null,
+    "retry_count": 0,
+    "created_at": "2026-08-29T09:00:00.000Z",
+    "updated_at": null,
+    "tags": []
+  }
+}

@@ -627,6 +627,13 @@ SCM_PDF_FASTAPI_TIMEOUT_SECONDS = env.int("SCM_PDF_FASTAPI_TIMEOUT_SECONDS", def
 # without extra configuration. Set an explicit, stable key in production so stored
 # credentials survive a SECRET_KEY rotation. Never commit a real key.
 SCM_INTEGRATION_ENCRYPTION_KEY = env.str("SCM_INTEGRATION_ENCRYPTION_KEY", default="")
+# Refuse the SECRET_KEY-derived fallback above. Off by default so development and the
+# test suite need no key, and meant to be on in production: credentials stored under
+# the fallback become undecryptable the moment SECRET_KEY is rotated, and that failure
+# arrives long after the deploy that caused it. With this set, a missing dedicated key
+# is an ImproperlyConfigured at the first credential read instead.
+# See apps/scm/integrations/credentials.py.
+SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY = env.bool("SCM_INTEGRATION_REQUIRE_ENCRYPTION_KEY", default=False)
 
 # SCM carrier tracking
 # Cap on how many subscriptions one dispatcher tick queues, so a backlog cannot
@@ -638,6 +645,67 @@ SCM_TRACKING_DISPATCH_LIMIT = env.int("SCM_TRACKING_DISPATCH_LIMIT", default=500
 # DELETE_DAYS is set to a non-zero value. 0 disables that stage.
 SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_RETENTION_DAYS", default=90)
 SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS = env.int("SCM_TRACKING_RAW_PAYLOAD_DELETE_DAYS", default=0)
+
+# SCM canonical locations
+# How far apart a carrier's reported coordinates and a canonical location may be and
+# still be treated as the same place. Deliberately small: terminals inside one port
+# sit a couple of kilometres apart, and coordinates are the resolver's last fallback,
+# not its identity system. Widening this does not make the resolver guess — it makes
+# it report AMBIGUOUS more often, which is the intended failure.
+# See apps/scm/containers/location_resolver.py.
+SCM_LOCATION_COORDINATE_RADIUS_KM = env.float("SCM_LOCATION_COORDINATE_RADIUS_KM", default=5.0)
+
+# SCM arrival lifecycle
+# How close to its ETA an inbound container has to be before the arrival lifecycle
+# calls it ARRIVING rather than EXPECTED. Two days by default: far enough ahead to
+# be worth staffing a gate for, short enough that "arriving" still means something —
+# a week would mark almost everything in the arrivals queue as imminent.
+#
+# It only ever moves the boundary between two states that both mean "not here yet".
+# Widening or narrowing it cannot make anything read as arrived: that takes an
+# accepted physical movement. See apps/scm/visibility/arrival_lifecycle.py.
+SCM_ARRIVAL_WINDOW_HOURS = env.int("SCM_ARRIVAL_WINDOW_HOURS", default=48)
+
+# SCM Traqo Ocean (external ocean tracking aggregator, evaluated alongside the direct
+# carrier integrations). Unlike a carrier, a Traqo account is one subscription for the
+# whole installation rather than an agreement each team holds, so its credential lives
+# here instead of in a per-team Integration record.
+#
+# TRAQO_ENABLED gates live calls only. The Traqo sandbox is fixed demo data behind no
+# credential, so it is always reachable — that is what the traqo_test command uses.
+# Never commit a real key.
+TRAQO_ENABLED = env.bool("TRAQO_ENABLED", default=False)
+TRAQO_BASE_URL = env.str("TRAQO_BASE_URL", default="https://traqocontainer.com/api/v1")
+TRAQO_API_KEY = env.str("TRAQO_API_KEY", default="")
+
+# SCM Vizion (container visibility aggregator, evaluated for Auto Carrier Identification
+# on containers whose carrier is unknown). Installation-wide credential for the same
+# reason Traqo's is.
+#
+# VIZION_ENABLED gates *both* environments, unlike TRAQO_ENABLED. Vizion's demo is
+# metered against the same account key rather than being free fixed data, so there is no
+# always-reachable sandbox and defaulting to one would spend somebody's quota.
+# Never commit a real key.
+VIZION_ENABLED = env.bool("VIZION_ENABLED", default=False)
+VIZION_BASE_URL = env.str("VIZION_BASE_URL", default="https://prod.vizionapi.com")
+VIZION_DEMO_BASE_URL = env.str("VIZION_DEMO_BASE_URL", default="https://demo.vizionapi.com")
+VIZION_API_KEY = env.str("VIZION_API_KEY", default="")
+
+# The suite may never reach an aggregator. A developer's .env holds working Traqo and
+# Vizion credentials, and both aggregators sit in carrier resolution's chain — so a test
+# that exercises the chain without injecting its provider calls would, on that machine,
+# spend a Traqo shipment slot or buy a Vizion reference per run. The carrier adapters are
+# already safe by construction (no per-team Integration, no call — see
+# apps/scm/integrations/tests/test_carrier_no_live_api.py); the aggregators read their
+# credential from settings, so this is where the same guarantee has to be made.
+#
+# Tests that need an aggregator "configured" say so with @override_settings, which wins
+# over this, and every one of them injects the call or a fake session.
+if "test" in sys.argv:
+    TRAQO_ENABLED = False
+    TRAQO_API_KEY = ""
+    VIZION_ENABLED = False
+    VIZION_API_KEY = ""
 
 # SCM Business Central
 # Pauses the scheduled Business Central dispatcher without removing the schedule or

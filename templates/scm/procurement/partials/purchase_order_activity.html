@@ -1,0 +1,23 @@
+{% load i18n %}
+
+{% comment %}
+  What has happened to this order's record.
+
+  PurchaseOrderEvent is read first, but nothing in the application writes one today
+  — the model and its service exist and no import, sync or view calls them. So for
+  real data this timeline is built from records that exist for other reasons: the
+  order's own timestamps, its sync clock and the supplier deliveries raised against
+  it. See apps/scm/procurement/activity.py.
+
+  The note says so. A derived timeline that stays quiet about its gaps reads as a
+  complete history when it is not one.
+{% endcomment %}
+
+{% translate "Nothing has been recorded against this purchase order yet." as empty_message %}
+{% blocktranslate trimmed asvar activity_note %}
+  Derived from the order's timeline events, its supplier deliveries and its source
+  timestamps. Changes made in the source system are dated but not itemised — which
+  field changed is not recorded here.
+{% endblocktranslate %}
+
+{% include "scm/components/activity_list.html" with activity=activity empty_message=empty_message note=activity_note %}

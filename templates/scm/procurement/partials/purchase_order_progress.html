@@ -1,0 +1,62 @@
+{% load i18n %}
+
+{% comment %}
+  Order progress, as six numbers and one bar.
+
+  The numbers come from the existing fulfillment engine and one aggregate over the
+  supplier delivery lines. Nothing is stored: change a delivery line and these
+  change on the next read.
+
+  "Assigned" is quantity booked onto a supplier delivery, whether or not that
+  delivery names a container yet. It is a planning act and is kept apart from
+  "Shipped", which is a physical one — collapsing them would make an order that is
+  merely planned look like an order that has left.
+
+  The bar is three stacked segments over the ordered quantity — received, arrived,
+  shipped — widest last so the shorter ones stay visible. No chart library: it is
+  three divs.
+
+  Grid, not a table, so it reflows to two columns on a phone instead of scrolling.
+{% endcomment %}
+
+{% if workspace.has_progress %}
+  <div class="mt-5">
+    {% include "scm/components/section_header.html" with title=_("Order progress") %}
+
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div>
+        <p class="text-xs uppercase tracking-wide text-base-content/50">{% translate "Ordered" %}</p>
+        <p class="text-xl font-semibold tabular-nums">{{ workspace.ordered_qty|floatformat:"-2" }}</p>
+      </div>
+      <div title="{% translate 'Booked onto a supplier delivery.' %}">
+        <p class="text-xs uppercase tracking-wide text-base-content/50">{% translate "Assigned" %}</p>
+        <p class="text-xl font-semibold tabular-nums">{{ workspace.assigned_qty|floatformat:"-2" }}</p>
+      </div>
+      <div>
+        <p class="text-xs uppercase tracking-wide text-base-content/50">{% translate "Shipped" %}</p>
+        <p class="text-xl font-semibold tabular-nums">{{ workspace.shipped_qty|floatformat:"-2" }}</p>
+      </div>
+      <div>
+        <p class="text-xs uppercase tracking-wide text-base-content/50">{% translate "Arrived" %}</p>
+        <p class="text-xl font-semibold tabular-nums">{{ workspace.arrived_qty|floatformat:"-2" }}</p>
+      </div>
+      <div>
+        <p class="text-xs uppercase tracking-wide text-base-content/50">{% translate "Received" %}</p>
+        <p class="text-xl font-semibold tabular-nums">{{ workspace.received_qty|floatformat:"-2" }}</p>
+      </div>
+      <div>
+        <p class="text-xs uppercase tracking-wide text-base-content/50">{% translate "Remaining" %}</p>
+        <p class="text-xl font-semibold tabular-nums {% if workspace.remaining_qty %}text-warning{% endif %}">
+          {{ workspace.remaining_qty|floatformat:"-2" }}
+        </p>
+      </div>
+    </div>
+
+    <div class="relative mt-4 h-2 w-full rounded-full bg-base-300 overflow-hidden" role="img"
+         aria-label="{% blocktranslate trimmed with shipped=workspace.shipped_qty|floatformat:'-2' ordered=workspace.ordered_qty|floatformat:'-2' %}{{ shipped }} of {{ ordered }} shipped{% endblocktranslate %}">
+      <div class="absolute inset-y-0 left-0 bg-info/50" style="width: {{ workspace.shipped_percent|floatformat:'0' }}%"></div>
+      <div class="absolute inset-y-0 left-0 bg-success/60" style="width: {{ workspace.arrived_percent|floatformat:'0' }}%"></div>
+      <div class="absolute inset-y-0 left-0 bg-success" style="width: {{ workspace.received_percent|floatformat:'0' }}%"></div>
+    </div>
+  </div>
+{% endif %}

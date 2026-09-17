@@ -16,18 +16,27 @@ from django.utils import timezone
 
 from apps.scm.containers.models import Container
 from apps.scm.shipments.models import Shipment, ShipmentContainer
-from apps.scm.tracking.models import TrackingEvent
-from apps.scm.visibility.geojson import overview_feature_collection
+from apps.scm.visibility.geojson import map_feature_collection
+from apps.scm.visibility.map_positions import PositionClass, get_operational_map
 from apps.scm.visibility.read_models import Health, ObjectKind
 from apps.scm.visibility.selectors import (
+    VIEW_ALL,
     VisibilityFilters,
+    VisibilityView,
     get_visibility_overview,
     list_visibility_objects,
     parse_visibility_filters,
 )
 from apps.teams.models import Team
 
-from .factories import equipment_type, ingest_maersk_events, make_container, make_user_and_team
+from .factories import (
+    equipment_type,
+    ingest_maersk_events,
+    make_container,
+    make_location,
+    make_user_and_team,
+    resolve_tracking_to,
+)
 
 
 def _container(team, number: str) -> Container:
@@ -80,24 +89,82 @@ class OverviewGroupingTest(TestCase):
         objects = list_visibility_objects(self.team)
         self.assertEqual(len(objects), 2)
 
-    def test_containers_reported_at_the_same_place_share_one_map_point(self):
+    def test_containers_at_the_same_canonical_place_share_one_marker(self):
         """Three identical dots on one terminal tell nobody anything."""
-        features = overview_feature_collection(list_visibility_objects(self.team))["features"]
-        shipment_points = [f for f in features if f["properties"]["object_type"] == ObjectKind.SHIPMENT]
-        self.assertEqual(len(shipment_points), 1)
-        self.assertEqual(shipment_points[0]["properties"]["container_count"], 3)
+        terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        for container in self.on_shipment:
+            resolve_tracking_to(self.team, container, terminal)
 
-    def test_containers_that_have_gone_separate_ways_get_separate_points(self):
-        moved = self.on_shipment[0]
-        TrackingEvent.objects.filter(team=self.team, container=moved).update(location_unlocode="NLRTM")
-        features = overview_feature_collection(list_visibility_objects(self.team))["features"]
-        shipment_points = [f for f in features if f["properties"]["object_type"] == ObjectKind.SHIPMENT]
-        self.assertEqual(len(shipment_points), 2)
+        features = self._canonical_features()
+
+        self.assertEqual(len(features), 1)
+        self.assertEqual(features[0]["properties"]["container_count"], 3)
+        self.assertEqual(features[0]["properties"]["location_id"], terminal.pk)
+
+    def test_containers_at_different_canonical_places_get_separate_markers(self):
+        terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        rotterdam = make_location(self.team, "Rotterdam", unlocode="NLRTM", latitude="51.949760", longitude="4.144830")
+        resolve_tracking_to(self.team, self.on_shipment[0], rotterdam)
+        for container in self.on_shipment[1:]:
+            resolve_tracking_to(self.team, container, terminal)
+
+        counts = {
+            f["properties"]["location_id"]: f["properties"]["container_count"] for f in self._canonical_features()
+        }
+
+        self.assertEqual(counts, {terminal.pk: 2, rotterdam.pk: 1})
+
+    def test_a_marker_never_merges_two_position_classes_at_one_place(self):
+        """Physically here and merely reported here are two different claims.
+
+        Collapsing them would produce one marker of three at Oceanterminalen, and
+        the operator would have no way of telling which of the boxes anybody has
+        actually seen.
+        """
+        from .factories import place_container_at
+
+        terminal = make_location(
+            self.team, "Oceanterminalen", unlocode="SEGOT", latitude="57.696629", longitude="11.858448"
+        )
+        for container in self.on_shipment:
+            resolve_tracking_to(self.team, container, terminal)
+        place_container_at(self.team, self.on_shipment[0], terminal)
+
+        by_class = {
+            f["properties"]["position_class"]: f["properties"]["container_count"] for f in self._canonical_features()
+        }
+
+        self.assertEqual(by_class, {PositionClass.PHYSICAL: 1, PositionClass.TRACKING: 2})
+
+    def _map_features(self):
+        team_objects = list_visibility_objects(self.team)
+        return map_feature_collection(get_operational_map(self.team, team_objects))["features"]
+
+    def _canonical_features(self):
+        """Only the markers standing on one of MCR's own locations.
+
+        The grouping rules below are about canonical places, and the fixture's
+        standalone container is reported at a place that never resolved — a real
+        state, drawn as the carrier's word, and not something a test about grouping
+        by location should have to account for.
+        """
+        return [f for f in self._map_features() if f["properties"]["is_canonical"]]
 
     def test_statistics_count_shipments_and_containers_separately(self):
+        """Three boxes on one vessel plus one standalone: one shipment, four boxes.
+
+        The container number is distinct containers under a live watch — see
+        VisibilityOverview.tracking_container_count — so the three folded into a
+        shipment are still counted individually, which is what an operator means by
+        "how many containers are we tracking".
+        """
         overview = get_visibility_overview(self.team)
         self.assertEqual(overview.active_shipments, 1)
-        self.assertEqual(overview.tracked_containers, 4)
+        self.assertEqual(overview.tracking_container_count, 4)
 
     def test_a_draft_shipment_is_not_on_the_board(self):
         Shipment.objects.create(team=self.team, shipment_number="SHP-DRAFT", status=Shipment.Status.DRAFT)
@@ -144,12 +211,12 @@ class OverviewFilterTest(TestCase):
     def test_the_eta_window_filter_uses_the_current_eta(self):
         self.assertEqual(self._labels(eta_window="7"), {"SHP-SOON"})
 
-    def test_delayed_only_uses_the_existing_delay_engine(self):
+    def test_the_delayed_view_uses_the_existing_delay_engine(self):
         """SHP-LATE's ETA moved ten days; that is the delay engine's own verdict."""
-        self.assertEqual(self._labels(delayed_only=True), {"SHP-LATE"})
+        self.assertEqual(self._labels(view=VisibilityView.DELAYED), {"SHP-LATE"})
 
     def test_a_delayed_object_reports_delayed_health(self):
-        overview = get_visibility_overview(self.team, VisibilityFilters(delayed_only=True))
+        overview = get_visibility_overview(self.team, VisibilityFilters(view=VisibilityView.DELAYED))
         self.assertEqual(overview.objects[0].health, Health.DELAYED)
 
     def test_an_undelayed_object_with_an_eta_is_on_time(self):
@@ -225,14 +292,38 @@ def _count_queries(team) -> int:
 class FilterParsingTest(TestCase):
     def test_query_parameters_map_onto_the_filter_object(self):
         filters = parse_visibility_filters(
-            {"status": "in_transit", "carrier": "Maersk", "eta": "7", "delayed": "1", "search": " box "}
+            {"view": "delayed", "status": "in_transit", "carrier": "Maersk", "eta": "7", "search": " box "}
         )
+        self.assertEqual(filters.view, VisibilityView.DELAYED)
         self.assertEqual(filters.status, "in_transit")
         self.assertEqual(filters.carrier, "Maersk")
         self.assertEqual(filters.eta_window, "7")
-        self.assertTrue(filters.delayed_only)
-        self.assertFalse(filters.exceptions_only)
         self.assertEqual(filters.search, "box")
 
-    def test_an_empty_query_string_is_not_an_active_filter(self):
-        self.assertFalse(parse_visibility_filters({}).is_active)
+    def test_an_empty_query_string_asks_for_the_tracking_view(self):
+        filters = parse_visibility_filters({})
+        self.assertEqual(filters.view, VisibilityView.TRACKING)
+        self.assertFalse(filters.is_active)
+
+    def test_an_unrecognised_view_falls_back_to_tracking_rather_than_erroring(self):
+        self.assertEqual(parse_visibility_filters({"view": "everything"}).view, VisibilityView.TRACKING)
+
+    def test_a_legacy_exceptions_flag_still_selects_the_exceptions_view(self):
+        """Links written before the views existed carried the filter as a flag."""
+        self.assertEqual(parse_visibility_filters({"exceptions": "1"}).view, VisibilityView.EXCEPTIONS)
+
+    def test_a_legacy_delayed_flag_still_selects_the_delayed_view(self):
+        self.assertEqual(parse_visibility_filters({"delayed": "1"}).view, VisibilityView.DELAYED)
+
+    def test_an_explicit_view_wins_over_a_legacy_flag(self):
+        params = {"view": "tracking", "delayed": "1"}
+        self.assertEqual(parse_visibility_filters(params).view, VisibilityView.TRACKING)
+
+    def test_the_filter_object_defaults_to_narrowing_nothing(self):
+        """The dataclass is filter state; the URL is where Tracking is the default.
+
+        Callers that compose these reads rather than serving a request — the location
+        quality queue, the work queues — must be able to say "no filters" and mean it.
+        """
+        self.assertEqual(VisibilityFilters().view, VIEW_ALL)
+        self.assertFalse(VisibilityFilters().is_active)

@@ -62,6 +62,14 @@
         {{ form.bill_of_lading_number }}
       </div>
 
+      {% comment %}
+        Routing, in two rows that are not duplicates of each other.
+
+        The ports are what was booked — the words on the paperwork. The locations are
+        which of MCR's own places those are, and they are what the arrivals queue and
+        a depot's Expected tab read. Setting a location does not change the port text,
+        and a carrier refresh does not change the location: both records survive.
+      {% endcomment %}
       <div class="grid grid-cols-2 gap-3 mb-3">
         <div class="form-control">
           <label class="label" for="{{ form.origin_port.id_for_label }}">
@@ -76,6 +84,30 @@
           {{ form.destination_port }}
         </div>
       </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-1">
+        <div class="form-control">
+          <label class="label" for="{{ form.origin_location.id_for_label }}">
+            <span class="label-text">{{ form.origin_location.label }}</span>
+          </label>
+          {{ form.origin_location }}
+          {% if form.origin_location.errors %}
+            <p class="text-error text-sm mt-1">{{ form.origin_location.errors.0 }}</p>
+          {% endif %}
+        </div>
+        <div class="form-control">
+          <label class="label" for="{{ form.destination_location.id_for_label }}">
+            <span class="label-text">{{ form.destination_location.label }}</span>
+          </label>
+          {{ form.destination_location }}
+          {% if form.destination_location.errors %}
+            <p class="text-error text-sm mt-1">{{ form.destination_location.errors.0 }}</p>
+          {% endif %}
+        </div>
+      </div>
+      <p class="text-xs text-base-content/50 mb-3">
+        {% translate "Which of your own locations these are. Carrier updates never change them." %}
+      </p>
 
       <div class="grid grid-cols-2 gap-3 mb-3">
         <div class="form-control">

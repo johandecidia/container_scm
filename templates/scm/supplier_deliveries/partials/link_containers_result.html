@@ -1,0 +1,59 @@
+{% load i18n %}
+
+{% comment %}
+  What the link step actually did. Ends the intake modal when it was opened from a
+  purchase order, in place of the plain import summary.
+{% endcomment %}
+
+<div class="alert alert-success mb-4">
+  <span>
+    {% blocktranslate trimmed count counter=lines|length with reference=delivery.delivery_reference %}
+      {{ counter }} container linked to delivery {{ reference }}.
+    {% plural %}
+      {{ counter }} containers linked to delivery {{ reference }}.
+    {% endblocktranslate %}
+  </span>
+</div>
+
+{% if created_delivery %}
+  <p class="text-sm text-base-content/60 mb-3">
+    {% blocktranslate trimmed with reference=delivery.delivery_reference po_number=purchase_order.po_number %}
+      Delivery {{ reference }} was created on purchase order {{ po_number }}.
+    {% endblocktranslate %}
+  </p>
+{% endif %}
+
+{% if skipped_count %}
+  <p class="text-sm text-base-content/60 mb-3">
+    {% blocktranslate trimmed count counter=skipped_count %}
+      {{ counter }} container was already booked on this delivery and was left unchanged.
+    {% plural %}
+      {{ counter }} containers were already booked on this delivery and were left unchanged.
+    {% endblocktranslate %}
+  </p>
+{% endif %}
+
+{% if lines %}
+  <div class="max-h-56 overflow-y-auto border border-base-300 rounded-box mb-4">
+    <table class="table table-sm">
+      <tbody>
+        {% for line in lines %}
+          <tr>
+            <td class="font-mono">{{ line.container.container_id }}</td>
+            <td class="text-sm text-base-content/60">{{ line.purchase_order_line.line_no }} — {{ line.article }}</td>
+            <td class="text-right tabular-nums text-sm">{{ line.delivery_qty }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+
+<div class="modal-action">
+  <a class="btn btn-ghost" href="{% url 'supplier_deliveries:detail' delivery.pk %}">
+    {% translate "Open delivery" %}
+  </a>
+  <a class="btn btn-primary" href="{% url 'procurement:purchase_order_detail' purchase_order.pk %}">
+    {% translate "Back to purchase order" %}
+  </a>
+</div>

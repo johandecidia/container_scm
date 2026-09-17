@@ -1,0 +1,167 @@
+{% load i18n %}
+
+{% comment %}
+  The members panel: the member table, the invite form and the pending invitations,
+  in one element so every write returns all three and they cannot disagree.
+
+  The root id is the HTMX target — each form below posts with
+  `hx-target="#settings-members" hx-swap="outerHTML"`.
+
+  The final administrator's row carries no Remove button and no role selector, and
+  the server refuses both regardless: hiding them is a courtesy, not the control.
+  See `apps.teams.roles.is_final_admin`.
+{% endcomment %}
+
+<div id="settings-members">
+  {% if notice %}
+    <div role="alert" class="alert alert-info alert-soft mb-4">
+      <i class="fa fa-circle-info"></i>
+      <span class="text-sm">{{ notice }}</span>
+    </div>
+  {% endif %}
+
+  <section class="app-card mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">{% translate "Members" %}</h2>
+      <span class="text-xs text-base-content/60">
+        {% blocktranslate trimmed count counter=admin_count %}
+          {{ counter }} administrator
+        {% plural %}
+          {{ counter }} administrators
+        {% endblocktranslate %}
+      </span>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th>{% translate "Member" %}</th>
+            <th>{% translate "Role" %}</th>
+            <th class="text-right">{% translate "Actions" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in member_rows %}
+            <tr>
+              <td>
+                <div class="font-medium">
+                  {{ row.membership.user.get_display_name }}
+                  {% if row.is_self %}
+                    <span class="text-xs text-base-content/50">({% translate "you" %})</span>
+                  {% endif %}
+                </div>
+                <div class="text-xs text-base-content/60">{{ row.membership.user.email }}</div>
+              </td>
+              <td>
+                {% if row.is_final_admin %}
+                  <span class="badge badge-sm badge-neutral">{{ row.membership.get_role_display }}</span>
+                  <div class="text-xs text-base-content/50 mt-1">{% translate "Only administrator" %}</div>
+                {% else %}
+                  <form
+                    hx-post="{% url 'team_settings:member_role_update' row.membership.pk %}"
+                    hx-target="#settings-members"
+                    hx-swap="outerHTML"
+                  >
+                    {% csrf_token %}
+                    <select name="role" class="select select-bordered select-sm" onchange="this.form.requestSubmit()">
+                      {% for value, label in role_choices %}
+                        <option value="{{ value }}" {% if value == row.membership.role %}selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </form>
+                {% endif %}
+              </td>
+              <td class="text-right">
+                {% if not row.is_final_admin %}
+                  <form
+                    hx-post="{% url 'team_settings:member_remove' row.membership.pk %}"
+                    hx-target="#settings-members"
+                    hx-swap="outerHTML"
+                    hx-confirm="{% blocktranslate trimmed with member=row.membership.user.get_display_name %}Remove {{ member }} from this team?{% endblocktranslate %}"
+                  >
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-ghost btn-xs text-error">
+                      <i class="fa fa-user-minus"></i>
+                      {% translate "Remove" %}
+                    </button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="app-card">
+    <h2 class="text-lg font-semibold mb-4">{% translate "Invite a member" %}</h2>
+
+    <form
+      hx-post="{% url 'team_settings:invitation_send' %}"
+      hx-target="#settings-members"
+      hx-swap="outerHTML"
+      class="flex flex-col gap-3 sm:flex-row sm:items-start"
+    >
+      {% csrf_token %}
+      <div class="grow">
+        {{ invitation_form.email }}
+        {% if invitation_form.email.errors %}
+          <p class="text-xs text-error mt-1">{{ invitation_form.email.errors.0 }}</p>
+        {% endif %}
+      </div>
+      <div>
+        {{ invitation_form.role }}
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm shrink-0">
+        <i class="fa fa-envelope"></i>
+        {% translate "Send invitation" %}
+      </button>
+    </form>
+    {% if invitation_form.non_field_errors %}
+      <p class="text-xs text-error mt-2">{{ invitation_form.non_field_errors.0 }}</p>
+    {% endif %}
+
+    {% if pending_invitations %}
+      <div class="mt-6 pt-4 border-t border-base-300">
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">
+          {% translate "Pending invitations" %}
+        </h3>
+        <ul class="divide-y divide-base-300">
+          {% for invitation in pending_invitations %}
+            <li class="flex flex-wrap items-center justify-between gap-2 py-2">
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">{{ invitation.email }}</div>
+                <div class="text-xs text-base-content/60">
+                  {{ invitation.get_role_display }} ·
+                  {% blocktranslate trimmed with sent=invitation.created_at|date:"d M Y" %}
+                    sent {{ sent }}
+                  {% endblocktranslate %}
+                </div>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <form
+                  hx-post="{% url 'team_settings:invitation_resend' invitation.id %}"
+                  hx-target="#settings-members"
+                  hx-swap="outerHTML"
+                >
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-ghost btn-xs">{% translate "Resend" %}</button>
+                </form>
+                <form
+                  hx-post="{% url 'team_settings:invitation_cancel' invitation.id %}"
+                  hx-target="#settings-members"
+                  hx-swap="outerHTML"
+                >
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-ghost btn-xs text-error">{% translate "Cancel" %}</button>
+                </form>
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </section>
+</div>

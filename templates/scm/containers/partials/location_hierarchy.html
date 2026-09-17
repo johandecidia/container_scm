@@ -1,0 +1,110 @@
+{% load i18n %}
+
+{% comment %}
+  Where this place sits in the network: the path down to it, and what is inside it.
+
+  Shown because containment is load-bearing master data, not decoration. It is what
+  decides whether a carrier's "SEGOT" means the port or is ambiguous between three
+  places, and what makes a port's Expected tab include its terminals' arrivals. An
+  operator cannot maintain a relation they cannot see.
+
+  One level down only. The whole subtree would be a tree view, and the way to see
+  what is inside a terminal is to open the terminal — every child here is a link.
+
+  Nothing on this panel is inferred. Similar names, nearby coordinates and a shared
+  UN/LOCODE are not containment; this is the parent somebody recorded, and the footer
+  says as much.
+{% endcomment %}
+
+{% with hierarchy=workspace.hierarchy %}
+  <section class="scm-panel" id="hierarchy">
+    {% include "scm/components/section_header.html" with title=_("Hierarchy") subtitle=_("The containment MCR recorded — never inferred from names or coordinates") %}
+
+    {# ---------------------------------------------------------------- #}
+    {# The path down to this place, outermost first.                    #}
+    {# ---------------------------------------------------------------- #}
+    <div class="text-sm flex flex-wrap items-center gap-x-1 gap-y-1">
+      {% for step in hierarchy.path %}
+        {% if step.pk == location.pk %}
+          <span class="font-medium">{{ step.name }}</span>
+        {% else %}
+          <a href="{% url 'containers:location_detail' step.pk %}" class="link link-hover">{{ step.name }}</a>
+        {% endif %}
+        {% if not forloop.last %}<span class="text-base-content/30">›</span>{% endif %}
+      {% endfor %}
+    </div>
+
+    <p class="text-xs text-base-content/50 mt-2">
+      {% if hierarchy.has_parent %}
+        {% blocktranslate trimmed with parent=hierarchy.parent.name %}
+          Inside {{ parent }}.
+        {% endblocktranslate %}
+        {% if hierarchy.shares_unlocode_with_parent %}
+          {% comment %}
+            The case the relation exists for: without it these two would be an
+            unresolvable tie for their own shared code.
+          {% endcomment %}
+          {% blocktranslate trimmed with code=location.unlocode %}
+            Both carry {{ code }}, so that code resolves to the outer place rather
+            than being ambiguous between them.
+          {% endblocktranslate %}
+        {% endif %}
+      {% else %}
+        {% translate "No parent recorded. This place stands on its own." %}
+      {% endif %}
+    </p>
+
+    {% if hierarchy.has_inactive_parent %}
+      <p class="text-xs text-warning mt-2">
+        {% blocktranslate trimmed with parent=hierarchy.parent.name %}
+          {{ parent }} is deactivated. This place is still inside it, but new evidence
+          will not resolve to it.
+        {% endblocktranslate %}
+      </p>
+    {% endif %}
+
+    {# ---------------------------------------------------------------- #}
+    {# What is immediately inside this place.                          #}
+    {# ---------------------------------------------------------------- #}
+    <div class="mt-4 pt-4 border-t border-base-300">
+      <h3 class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-2">
+        {% translate "Inside this location" %}
+        {% if hierarchy.has_children %}<span class="badge badge-ghost badge-sm ml-1">{{ hierarchy.child_count }}</span>{% endif %}
+      </h3>
+
+      {% if hierarchy.has_children %}
+        <ul class="divide-y divide-base-200">
+          {% for child in hierarchy.children %}
+            <li class="py-2 flex flex-wrap items-baseline justify-between gap-2 text-sm">
+              <span class="min-w-0">
+                <a href="{% url 'containers:location_detail' child.pk %}" class="link link-hover font-medium">{{ child.name }}</a>
+                <span class="text-xs text-base-content/50 ml-1">{{ child.get_location_type_display }}</span>
+                {% if child.unlocode %}
+                  <span class="text-xs font-mono text-base-content/50 ml-1">{{ child.unlocode }}</span>
+                {% endif %}
+                {% if not child.is_active %}
+                  <span class="badge badge-ghost badge-xs ml-1">{% translate "Inactive" %}</span>
+                {% endif %}
+              </span>
+              <span class="text-xs text-base-content/60 tabular-nums whitespace-nowrap">
+                {% blocktranslate trimmed count count=child.container_count %}
+                  {{ count }} container
+                {% plural %}
+                  {{ count }} containers
+                {% endblocktranslate %}
+              </span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-base-content/60 py-1">
+          {% translate "No locations are recorded inside this one." %}
+        </p>
+      {% endif %}
+    </div>
+
+    <p class="text-xs text-base-content/40 mt-3 pt-3 border-t border-base-300">
+      {% translate "Set the parent through Edit location. A place cannot be inside itself or inside something it contains." %}
+    </p>
+  </section>
+{% endwith %}

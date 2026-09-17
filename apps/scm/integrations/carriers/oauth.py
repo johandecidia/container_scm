@@ -162,3 +162,71 @@ class ApiKeyAuth:
 
     def auth_headers(self) -> dict:
         return {self.header_name: self._api_key}
+
+
+class ClientIdSecretHeaderAuth:
+    """Sends a client id and client secret as two static headers.
+
+    The gateway style rather than the grant style. Carriers behind an IBM API Connect
+    gateway — Hapag-Lloyd's Track & Trace among them — issue a client id and secret
+    from their developer portal and expect *both* on every request
+    (``X-IBM-Client-Id`` / ``X-IBM-Client-Secret``); there is no token endpoint and
+    nothing to exchange.
+
+    That is neither :class:`ApiKeyAuth`, which can only send one header, nor
+    :class:`ClientCredentialsAuth`, which spends a round trip acquiring a token the
+    gateway would not accept. Both header names are configuration because the prefix
+    varies by gateway deployment, and the secret is a credential rather than a token:
+    it is never logged and there is nothing to refresh.
+    """
+
+    def __init__(
+        self,
+        *,
+        client_id_header_name: str,
+        client_secret_header_name: str,
+        client_id: str,
+        client_secret: str,
+        provider_code: str = "",
+    ) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("client_id_header_name", client_id_header_name),
+                ("client_secret_header_name", client_secret_header_name),
+            )
+            if not value
+        ]
+        if missing:
+            raise CarrierConfigurationError(
+                f"{', '.join(missing)} is required for client id/secret header authentication.",
+                provider_code=provider_code,
+            )
+        if not client_id or not client_secret:
+            raise CarrierConfigurationError(
+                "client_id and client_secret credentials are required for client id/secret header authentication.",
+                provider_code=provider_code,
+            )
+
+        self.client_id_header_name = client_id_header_name
+        self.client_secret_header_name = client_secret_header_name
+        self.client_id = client_id
+        self._client_secret = client_secret
+        self.provider_code = provider_code
+
+    def get_access_token(self) -> str:
+        """The client id — the non-secret half, for callers that want an identifier.
+
+        Deliberately not the secret: nothing about this style has an access token, and
+        returning the secret here would put it wherever a token is considered safe.
+        """
+        return self.client_id
+
+    def invalidate_token(self) -> None:
+        """No-op: a portal-issued client secret cannot be refreshed in-band."""
+
+    def auth_headers(self) -> dict:
+        return {
+            self.client_id_header_name: self.client_id,
+            self.client_secret_header_name: self._client_secret,
+        }

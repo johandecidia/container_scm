@@ -3,8 +3,8 @@
 from django.core.exceptions import ObjectDoesNotExist
 from django.test import TestCase
 
-from apps.scm.containers.choices import ContainerCondition, ContainerStatus
-from apps.scm.containers.models import Container, EquipmentType
+from apps.scm.containers.choices import ContainerStatus
+from apps.scm.containers.models import Container, ContainerCondition, EquipmentType
 from apps.scm.containers.selectors import (
     filter_containers,
     get_active_equipment_types,
@@ -14,6 +14,11 @@ from apps.scm.containers.selectors import (
 )
 from apps.scm.containers.utils import calculate_check_digit
 from apps.teams.models import Team
+
+
+def _condition(team, code="NEW") -> ContainerCondition:
+    """One of the team's own conditions, seeded when the team was created."""
+    return ContainerCondition.objects.get(team=team, code=code)
 
 
 def _et(iso_code="20GP", length_ft=20, category="GP") -> EquipmentType:
@@ -95,7 +100,7 @@ class FilterContainersTest(TestCase):
             owner="CSQ",
             serial="305418",
             status=ContainerStatus.AVAILABLE,
-            condition=ContainerCondition.NEW,
+            condition=_condition(cls.team, "NEW"),
             location_text="Rotterdam",
             manufacturer="CIMC",
         )
@@ -107,7 +112,7 @@ class FilterContainersTest(TestCase):
             check_digit=calculate_check_digit("MSC", "U", "999999"),
             equipment_type=et_40hc,
             status=ContainerStatus.IN_TRANSIT,
-            condition=ContainerCondition.GOOD,
+            condition=_condition(cls.team, "CW"),
             location_text="Hamburg",
             manufacturer="Singamas",
         )
@@ -121,7 +126,8 @@ class FilterContainersTest(TestCase):
         self.assertIn(self.c1, qs)
 
     def test_filter_by_condition(self):
-        qs = filter_containers(self.team, condition=ContainerCondition.NEW)
+        # Filtered by code, which is what the query string carries.
+        qs = filter_containers(self.team, condition="NEW")
         self.assertEqual(qs.count(), 1)
         self.assertIn(self.c1, qs)
 
@@ -142,6 +148,31 @@ class FilterContainersTest(TestCase):
     def test_search_by_manufacturer(self):
         qs = filter_containers(self.team, search="Singamas")
         self.assertIn(self.c2, qs)
+
+    def test_search_finds_a_container_by_its_whole_number(self):
+        """The number printed on the box has to find the box.
+
+        It is stored as four columns and composed on read, so `icontains` over those
+        columns matches nothing for the number typed whole — which is exactly how
+        somebody with a container in front of them types it.
+        """
+        qs = filter_containers(self.team, search=self.c1.container_id)
+        self.assertEqual(list(qs), [self.c1])
+
+    def test_search_tolerates_a_number_typed_with_spaces(self):
+        number = self.c1.container_id
+        spaced = f"{number[:4]} {number[4:10]} {number[10]}"
+        self.assertEqual(list(filter_containers(self.team, search=spaced)), [self.c1])
+
+    def test_search_by_a_partial_number_narrows_to_that_prefix(self):
+        qs = filter_containers(self.team, search=self.c1.container_id[:8])
+        self.assertEqual(list(qs), [self.c1])
+
+    def test_search_by_a_whole_number_with_a_wrong_check_digit_matches_nothing(self):
+        """The number as typed is what was asked for — it is not silently corrected."""
+        number = self.c1.container_id
+        wrong = f"{number[:10]}{(int(number[10]) + 1) % 10}"
+        self.assertEqual(filter_containers(self.team, search=wrong).count(), 0)
 
     def test_sort_newest_default(self):
         # Just verify it doesn't error

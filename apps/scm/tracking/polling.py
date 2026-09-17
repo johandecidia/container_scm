@@ -60,25 +60,18 @@ def _min_interval(integration_config: dict | None) -> int:
 def _has_arrived(subscription: TrackingSubscription) -> bool:
     """True when the carrier has reported this reference as arrived.
 
-    The shipment's own milestone is the cheaper and more authoritative answer where
-    there is a shipment. A container tracked on its own has no shipment to carry
-    that milestone, so its events are asked directly — otherwise a standalone
-    container would keep polling at the in-transit rate for the rest of its life.
+    Deferred to the selector so the polling cadence and the ETA intake cannot disagree
+    about whether a journey is over — otherwise a standalone container could keep
+    polling at the in-transit rate for the rest of its life while its ETA was
+    considered answered, or the reverse.
     """
-    from apps.scm.tracking.models import TrackingEvent
+    from apps.scm.tracking.selectors import has_journey_arrived
 
-    shipment = subscription.shipment
-    if shipment is not None:
-        return shipment.actual_arrival_at is not None
-
-    if subscription.container_id is None:
-        return False
-    return TrackingEvent.objects.filter(
-        team_id=subscription.team_id,
-        container_id=subscription.container_id,
-        event_time_type=TrackingEvent.EventTimeType.ACTUAL,
-        event_type__in=(TrackingEvent.EventType.VESSEL_ARRIVED, TrackingEvent.EventType.DISCHARGED),
-    ).exists()
+    return has_journey_arrived(
+        subscription.team,
+        shipment=subscription.shipment,
+        container=subscription.container,
+    )
 
 
 def base_interval_minutes(subscription: TrackingSubscription) -> int:

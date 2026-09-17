@@ -74,9 +74,9 @@ class ParseContainerIdTest(SimpleTestCase):
             parse_container_id("NOTANID")
 
     def test_wrong_category_raises(self):
-        # A is not a valid category identifier (only U, J, Z)
+        # X is not a valid category identifier (only U, A, J, Z)
         with self.assertRaises(ValidationError):
-            parse_container_id("CSQA3054188")
+            parse_container_id("CSQX3054188")
 
     def test_too_short_raises(self):
         with self.assertRaises(ValidationError):
