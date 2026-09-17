@@ -44,6 +44,7 @@ services:
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
       DATABASE_URL: postgresql://postgres:postgres@db:5432/container_scm
+      #DATABASE_URL: postgresql://neondb_owner:npg_qwLI9l5tzBSo@ep-jolly-grass-al3tk47k-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       REDIS_URL: redis://redis:6379
     depends_on:
       db:
@@ -83,6 +84,7 @@ services:
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
       DATABASE_URL: postgresql://postgres:postgres@db:5432/container_scm
+      #DATABASE_URL: postgresql://neondb_owner:npg_qwLI9l5tzBSo@ep-jolly-grass-al3tk47k-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       REDIS_URL: redis://redis:6379
     depends_on:
       db:
