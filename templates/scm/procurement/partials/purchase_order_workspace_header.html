@@ -65,26 +65,34 @@
     </div>
 
     {% comment %}
-      One action, so one button rather than a menu hiding it behind two clicks.
       Adding containers books numbers onto this order through the shared intake
-      modal, and it is the only write this page has: there is no purchase order edit
-      view and no import-now endpoint, so neither is offered. Delete stays on the
-      list where it already lives — a Business Central order is master-owned
-      elsewhere, and the workspace is not the place to widen that.
+      modal, and it is the action this page is opened for. Edit sits beside it and
+      only for an SCM-owned order: Business Central is master for what it sources, so
+      an edit button on one of those would be a button that always fails, and the BC
+      badge above already says why it is missing.
 
-      A menu appears here the moment there is a second real action to put in it. An
-      Actions dropdown is not a reason to invent one.
+      Delete stays on the list where it already lives. Attaching containers to
+      individual order lines happens on Overview, on the line it concerns, rather
+      than as a page-level action that would have to ask which line first.
     {% endcomment %}
-    <button
-      type="button"
-      class="btn btn-primary btn-sm shrink-0"
-      hx-get="{% url 'containers:create' %}?purchase_order={{ purchase_order.pk }}"
-      hx-target="#modal-container"
-      hx-swap="innerHTML"
-    >
-      <i class="fa fa-plus text-xs"></i>
-      {% translate "Add containers" %}
-    </button>
+    <div class="flex items-center gap-2 shrink-0">
+      {% if not workspace.is_read_only %}
+        <a href="{% url 'procurement:purchase_order_update' purchase_order_id=purchase_order.pk %}" class="btn btn-ghost btn-sm">
+          <i class="fa fa-pen text-xs"></i>
+          {% translate "Edit" %}
+        </a>
+      {% endif %}
+      <button
+        type="button"
+        class="btn btn-primary btn-sm"
+        hx-get="{% url 'containers:create' %}?purchase_order={{ purchase_order.pk }}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-plus text-xs"></i>
+        {% translate "Add containers" %}
+      </button>
+    </div>
   </div>
 
   {% include "scm/procurement/partials/purchase_order_progress.html" %}

@@ -1,0 +1,95 @@
+{% load i18n %}
+
+{% comment %}
+  The containers on one order line, as two labelled groups.
+
+  "Acquired containers" and "Loaded in" are two different facts and are never merged
+  into one list. A box on the first group *is* what the line bought — twenty 45ft
+  boxes against a CONT45G1 line. A box in the second group *carries* what the line
+  bought — 300 of its doors. An operator who cannot tell which is which cannot act on
+  either, so the headings stay even when only one group has rows.
+
+  Reads `summary.links`, built by the workspace in one pair of queries for the whole
+  order. Nothing here queries or decides; the quantity is printed as recorded, and a
+  load with no quantity prints no quantity rather than a zero.
+
+  Expects: summary (from line_summaries), read_only.
+{% endcomment %}
+
+{% with links=summary.links %}
+  <div class="flex flex-col gap-2 text-xs">
+    {# ---- Acquired: the boxes this line bought. ---------------------- #}
+    <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <span class="uppercase tracking-wide text-base-content/40 shrink-0">{% translate "Acquired containers" %}</span>
+      {% for acquisition in links.acquired %}
+        <span class="badge badge-sm badge-outline gap-1 font-mono">
+          <a href="{% url 'containers:detail' container_id=acquisition.container.pk %}" class="link link-hover">
+            {{ acquisition.container.container_id }}
+          </a>
+          {% if not read_only %}
+            <button
+              type="button"
+              class="opacity-50 hover:opacity-100"
+              title="{% translate 'Unlink this container from the order line' %}"
+              aria-label="{% blocktranslate trimmed with number=acquisition.container.container_id %}Unlink {{ number }}{% endblocktranslate %}"
+              hx-post="{% url 'procurement:acquisition_unlink' acquisition_id=acquisition.pk %}"
+            >✕</button>
+          {% endif %}
+        </span>
+      {% empty %}
+        <span class="text-base-content/30">{% translate "none" %}</span>
+      {% endfor %}
+      {% if not read_only %}
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          hx-get="{% url 'procurement:line_link_acquired_container' line_id=summary.line.pk %}"
+          hx-target="#modal-container"
+          hx-swap="innerHTML"
+        >
+          <i class="fa fa-link text-[0.65rem]"></i>
+          {% translate "Link acquired container" %}
+        </button>
+      {% endif %}
+    </div>
+
+    {# ---- Loaded in: the boxes carrying this line's goods. ----------- #}
+    <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <span class="uppercase tracking-wide text-base-content/40 shrink-0">{% translate "Loaded in" %}</span>
+      {% for load in links.loads %}
+        <span class="badge badge-sm badge-ghost gap-1 font-mono">
+          <a href="{% url 'containers:detail' container_id=load.container.pk %}" class="link link-hover">
+            {{ load.container.container_id }}
+          </a>
+          {% if load.quantity is not None %}
+            <span class="tabular-nums font-sans text-base-content/60">{{ load.quantity|floatformat:"-2" }}</span>
+          {% endif %}
+          {% if not read_only %}
+            <button
+              type="button"
+              class="opacity-50 hover:opacity-100"
+              title="{% translate 'Remove this container from the order line’s load' %}"
+              aria-label="{% blocktranslate trimmed with number=load.container.container_id %}Remove load in {{ number }}{% endblocktranslate %}"
+              hx-post="{% url 'procurement:container_load_remove' load_id=load.pk %}"
+              hx-confirm="{% blocktranslate trimmed with number=load.container.container_id %}Remove this line's load in {{ number }}? Any recorded quantity goes with it.{% endblocktranslate %}"
+            >✕</button>
+          {% endif %}
+        </span>
+      {% empty %}
+        <span class="text-base-content/30">{% translate "none" %}</span>
+      {% endfor %}
+      {% if not read_only %}
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          hx-get="{% url 'procurement:line_add_container_load' line_id=summary.line.pk %}"
+          hx-target="#modal-container"
+          hx-swap="innerHTML"
+        >
+          <i class="fa fa-boxes-stacked text-[0.65rem]"></i>
+          {% translate "Add to container / load" %}
+        </button>
+      {% endif %}
+    </div>
+  </div>
+{% endwith %}

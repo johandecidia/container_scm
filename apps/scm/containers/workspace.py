@@ -49,6 +49,7 @@ from .models import Container
 
 if TYPE_CHECKING:
     from apps.scm.containers.models import ContainerMovement
+    from apps.scm.procurement.container_links import ContainerProcurement
     from apps.scm.tracking.gaps import TrackingGap
     from apps.scm.tracking.journey import ContainerJourney, DerivedCurrentLocation, JourneyPoint, JourneySource
     from apps.scm.tracking.models import TrackingEvent
@@ -67,8 +68,8 @@ class ContainerWorkspace:
     Also built in bulk by :func:`get_container_workspaces` for the visibility
     overview, which needs the same tracking derivations for many containers at
     once. A bulk-built workspace has ``tracking_only`` set: its tracking fields are
-    complete, and its movements, purchase orders and supplier deliveries are empty
-    because they were never loaded, not because there are none.
+    complete, and its movements, procurement links, purchase orders and supplier
+    deliveries are empty because they were never loaded, not because there are none.
     """
 
     container: Container
@@ -85,6 +86,13 @@ class ContainerWorkspace:
     # its location predates the movement history and nothing has moved it since.
     # A bulk-built workspace leaves it None because it never loaded it.
     state_movement: ContainerMovement | None = None
+
+    # The two procurement facts about this box: the purchase order line that
+    # acquired it, and the purchased lines whose goods travel in it. Built by
+    # `apps.scm.procurement.container_links.get_container_procurement`, which owns
+    # both. A bulk-built workspace leaves it None rather than reporting "no
+    # procurement" for data it never fetched.
+    procurement: ContainerProcurement | None = None
 
     # Tracking
     latest_tracking_event: TrackingEvent | None = None
@@ -611,6 +619,7 @@ def _not_configured_message(subscription) -> str:
 
 def get_container_workspace(team: Team, container: Container) -> ContainerWorkspace:
     """Gather all workspace data for a container detail view, team-scoped throughout."""
+    from apps.scm.procurement.container_links import get_container_procurement
     from apps.scm.shipments.models import ShipmentContainer
     from apps.scm.supplier_deliveries.models import SupplierDeliveryLine
     from apps.scm.tracking.journey import get_container_journey
@@ -679,6 +688,7 @@ def get_container_workspace(team: Team, container: Container) -> ContainerWorksp
         tracking_subscriptions=tracking_subscriptions,
         movements=movements,
         state_movement=get_current_state_movement(team=team, container=container),
+        procurement=get_container_procurement(team, container),
         purchase_order_lines=purchase_order_lines,
         supplier_delivery_lines=delivery_lines,
         latest_tracking_event=latest_event,
@@ -733,9 +743,10 @@ def _first_event_with_a_vessel(events):
 def get_container_workspaces(team: Team, containers) -> dict[int, ContainerWorkspace]:
     """Return tracking-only workspaces for many containers, keyed by container id.
 
-    Every returned workspace has ``tracking_only=True``: movements, purchase orders
-    and supplier deliveries are deliberately not loaded. Reading them from one of
-    these workspaces would report "none" for data that was simply never fetched.
+    Every returned workspace has ``tracking_only=True``: movements, procurement
+    links, purchase orders and supplier deliveries are deliberately not loaded.
+    Reading them from one of these workspaces would report "none" for data that was
+    simply never fetched.
     """
     from apps.scm.shipments.models import ShipmentContainer
     from apps.scm.tracking.models import TrackingEvent, TrackingSubscription
