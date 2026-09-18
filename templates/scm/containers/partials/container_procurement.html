@@ -1,0 +1,79 @@
+{% load i18n %}
+
+{% comment %}
+  Procurement: the two things purchase orders say about this physical box.
+
+  "Acquired through" is where the box came from — the order line that bought it, so
+  a 45ft equipment line reads as the line that produced this ISO number. "Contents"
+  is what it is carrying — the purchased lines whose goods are loaded in it, with the
+  quantity where somebody recorded one.
+
+  Two different claims, kept under two headings and never merged. A flat list of
+  purchase orders against a container cannot distinguish "this box is the purchase"
+  from "this box holds the purchase", and an operator who cannot tell them apart
+  cannot act on either.
+
+  Built by `apps.scm.procurement.container_links.get_container_procurement` and held
+  on the workspace, so nothing is decided here. Absent entirely for a box with no
+  procurement link: an unlinked container should read as a shorter page, not as a
+  panel with two empty headings. A bulk-built workspace has no procurement at all
+  (see ContainerWorkspace) and is treated the same way rather than reported as none.
+{% endcomment %}
+
+{% with procurement=workspace.procurement %}
+  {% if procurement and procurement.has_any %}
+    <section class="scm-panel">
+      {% include "scm/components/section_header.html" with title=_("Procurement") %}
+
+      {% if procurement.acquisition %}
+        {% with line=procurement.acquisition.purchase_order_line %}
+          <div class="mb-4">
+            <p class="text-xs uppercase tracking-wide text-base-content/50 mb-1">{% translate "Acquired through" %}</p>
+            <p class="text-sm">
+              <a href="{% url 'procurement:purchase_order_detail' purchase_order_id=line.purchase_order.pk %}" class="link link-hover font-medium">
+                {{ line.purchase_order.po_number }}
+              </a>
+              <span class="text-base-content/30 mx-1">/</span>
+              {% blocktranslate trimmed with number=line.line_no %}Line {{ number }}{% endblocktranslate %}
+              <span class="text-base-content/30 mx-1">/</span>
+              <span class="font-mono text-xs">{{ line.item_no }}</span>
+            </p>
+            {% if line.description %}
+              <p class="text-xs text-base-content/60 mt-0.5">{{ line.description }}</p>
+            {% endif %}
+          </div>
+        {% endwith %}
+      {% endif %}
+
+      {% if procurement.loads %}
+        <div>
+          <p class="text-xs uppercase tracking-wide text-base-content/50 mb-1">{% translate "Contents" %}</p>
+          <ul class="divide-y divide-base-200">
+            {% for load in procurement.loads %}
+              {% with line=load.purchase_order_line %}
+                <li class="py-1.5 flex items-baseline justify-between gap-3 text-sm">
+                  <span class="min-w-0">
+                    <a href="{% url 'procurement:purchase_order_detail' purchase_order_id=line.purchase_order.pk %}" class="link link-hover font-medium">
+                      {{ line.purchase_order.po_number }}
+                    </a>
+                    <span class="text-base-content/30 mx-1">/</span>
+                    {% blocktranslate trimmed with number=line.line_no %}Line {{ number }}{% endblocktranslate %}
+                    <span class="text-base-content/30 mx-1">/</span>
+                    {{ line.description|default:line.item_no }}
+                  </span>
+                  {% comment %}
+                    A load with no recorded quantity prints nothing rather than a
+                    zero: nobody has counted it, which is not the same as none.
+                  {% endcomment %}
+                  {% if load.quantity is not None %}
+                    <span class="tabular-nums text-base-content/70 shrink-0">{{ load.quantity|floatformat:"-2" }}</span>
+                  {% endif %}
+                </li>
+              {% endwith %}
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endwith %}

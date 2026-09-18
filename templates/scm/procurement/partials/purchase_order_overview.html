@@ -95,12 +95,39 @@
   </div>
 
   {# ------------------------------------------------------------------ #}
-  {# Order lines. Which article was ordered, and how much of it is       #}
-  {# booked — the relationship the Containers tab then resolves to       #}
-  {# specific boxes.                                                     #}
+  {# Order lines. Which article was ordered, how much of it is booked,   #}
+  {# and which physical containers the line is attached to.              #}
+  {#                                                                     #}
+  {# Every line carries a second row naming its containers, split into   #}
+  {# the two relationships that are never the same thing: boxes the line #}
+  {# acquired, and boxes its goods are loaded in. On the line rather     #}
+  {# than in a section of its own, because the question is always asked  #}
+  {# about a particular ordered article.                                 #}
+  {#                                                                     #}
+  {# Editing is offered only for an SCM-owned order. Business Central is  #}
+  {# master for what it sources: an edit there is a change the next sync  #}
+  {# reverts, so the buttons are absent rather than present-and-refused. #}
   {# ------------------------------------------------------------------ #}
+  {% with read_only=workspace.is_read_only %}
   <section class="scm-panel">
-    {% include "scm/components/section_header.html" with title=_("Order lines") count=line_summaries|length %}
+    <div class="flex items-baseline justify-between gap-3 mb-3">
+      <div class="flex items-baseline gap-2">
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">{% translate "Order lines" %}</h2>
+        <span class="badge badge-xs badge-ghost font-medium">{{ line_summaries|length }}</span>
+      </div>
+      {% if not read_only %}
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs"
+          hx-get="{% url 'procurement:purchase_order_line_create' purchase_order_id=purchase_order.pk %}"
+          hx-target="#modal-container"
+          hx-swap="innerHTML"
+        >
+          <i class="fa fa-plus text-[0.65rem]"></i>
+          {% translate "Add line" %}
+        </button>
+      {% endif %}
+    </div>
 
     {% if line_summaries %}
       {% comment %}
@@ -122,6 +149,7 @@
               <th class="text-right">{% translate "Unit price" %}</th>
               <th class="text-right">{% translate "Amount" %}</th>
               <th>{% translate "Expected" %}</th>
+              {% if not read_only %}<th class="text-right">{% translate "Actions" %}</th>{% endif %}
             </tr>
           </thead>
           <tbody>
@@ -156,6 +184,40 @@
                   <td class="text-right tabular-nums">{{ line.unit_price|floatformat:2|default:"—" }}</td>
                   <td class="text-right tabular-nums">{{ line.line_amount|floatformat:2|default:"—" }}</td>
                   <td class="text-xs text-base-content/60">{{ line.expected_receipt_date|default:"—" }}</td>
+                  {% if not read_only %}
+                    <td class="text-right whitespace-nowrap">
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs"
+                        title="{% translate 'Edit order line' %}"
+                        hx-get="{% url 'procurement:purchase_order_line_update' line_id=line.pk %}"
+                        hx-target="#modal-container"
+                        hx-swap="innerHTML"
+                      >
+                        <i class="fa fa-pen"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs text-error"
+                        title="{% translate 'Delete order line' %}"
+                        hx-delete="{% url 'procurement:purchase_order_line_delete' line_id=line.pk %}"
+                        hx-confirm="{% blocktranslate trimmed with number=line.line_no %}Delete line {{ number }}? Its container links and delivery lines go with it. This cannot be undone.{% endblocktranslate %}"
+                      >
+                        <i class="fa fa-trash"></i>
+                      </button>
+                    </td>
+                  {% endif %}
+                </tr>
+                {% comment %}
+                  The line's containers, as a continuation of the row it belongs to.
+                  Quiet background and no borders above it, so the two rows read as
+                  one line rather than as two entries in the table.
+                {% endcomment %}
+                <tr class="border-b border-base-200">
+                  <td></td>
+                  <td colspan="{% if read_only %}9{% else %}10{% endif %}" class="align-top pt-0">
+                    {% include "scm/procurement/partials/purchase_order_line_containers.html" %}
+                  </td>
                 </tr>
               {% endwith %}
             {% endfor %}
@@ -168,6 +230,7 @@
                 </td>
                 <td class="text-right tabular-nums">{{ workspace.total_order_amount|floatformat:2 }}</td>
                 <td></td>
+                {% if not read_only %}<td></td>{% endif %}
               </tr>
             </tfoot>
           {% endif %}
@@ -180,6 +243,7 @@
       <p class="text-sm text-base-content/60 py-2">{% translate "No lines on this purchase order." %}</p>
     {% endif %}
   </section>
+  {% endwith %}
 
   {# ------------------------------------------------------------------ #}
   {# Order details. Source metadata and the document status — secondary  #}
