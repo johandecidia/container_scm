@@ -1,8 +1,16 @@
 {% extends "scm/base.html" %}
 {% load i18n %}
 
+{% comment %}
+  One form for both creating and editing a hand-entered purchase order. The fields
+  are the same ones either way, and a second layout for them would be a second thing
+  to keep in step; the view supplies the title. Only ever reached for an SCM-owned
+  order — the edit view refuses a Business Central one, and the workspace does not
+  draw the button that leads here for it.
+{% endcomment %}
+
 {% block app %}
-  {% include "scm/components/page_header.html" with title=_("Lägg till Purchase Order") back_url="javascript:history.back()" back_label=_("Tillbaka") %}
+  {% include "scm/components/page_header.html" with title=form_title|default:_("Lägg till Purchase Order") back_url="javascript:history.back()" back_label=_("Tillbaka") %}
 
   <section class="app-card max-w-2xl">
     <form method="post" novalidate>

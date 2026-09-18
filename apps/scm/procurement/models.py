@@ -1,11 +1,20 @@
 """Purchase order models for procurement visibility.
 
-Business Central is master for Purchase Orders. This app reads and displays logistic status only.
+Business Central is master for BC-sourced Purchase Orders; SCM reads and displays
+logistic status for those. Manually entered orders are SCM's own — see
+``PurchaseOrderSource``.
+
+The two container links at the bottom of this module are what let SCM answer the
+only two procurement questions a physical box raises. See their docstrings.
 """
 
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from apps.scm.containers.models import Container
 from apps.teams.models import BaseTeamModel
 
 
@@ -146,6 +155,145 @@ class PurchaseOrderLine(BaseTeamModel):
 
     def __str__(self) -> str:
         return f"{self.purchase_order.po_number} / {self.line_no} — {self.item_no}"
+
+
+def _validate_container_link(link) -> None:
+    """Both ends of a procurement↔container link must belong to the link's own team.
+
+    Declared on the models rather than only in the link services, because ``save``
+    calls ``full_clean`` and so this holds for every writer — a service, a form, the
+    admin, a shell session, the Business Central import that will use the same
+    services later. Nothing in either foreign key prevents pointing at another
+    tenant's row.
+    """
+    if link.team_id is None:
+        return
+    errors = {}
+    if link.purchase_order_line_id is not None and link.purchase_order_line.team_id != link.team_id:
+        errors["purchase_order_line"] = _("That purchase order line belongs to another team.")
+    if link.container_id is not None and link.container.team_id != link.team_id:
+        errors["container"] = _("That container belongs to another team.")
+    if errors:
+        raise ValidationError(errors)
+
+
+class ContainerAcquisition(BaseTeamModel):
+    """The container *is* the purchase: this box was acquired through this PO line.
+
+    Answers "which purchase order line acquired this physical container?" — the
+    case where the ordered article is equipment, so a line reading ``CONT45G1 × 20``
+    becomes twenty boxes with their own ISO numbers. One line acquires many
+    containers; a container has at most one procurement origin, which is what the
+    one-to-one enforces. Re-linking the same pair is a no-op rather than an error;
+    moving a box to another line means unlinking it first.
+
+    Deliberately *not* :class:`~apps.scm.supplier_deliveries.models.SupplierDeliveryLine`,
+    which books quantity onto a dated, referenced delivery batch. This is a fact
+    about where a box came from, and it is true with no delivery in sight.
+
+    Nothing about the purchase is copied here — no supplier, article or price. Those
+    are read through ``purchase_order_line`` so there is one place they can be wrong.
+    """
+
+    purchase_order_line = models.ForeignKey(
+        PurchaseOrderLine,
+        on_delete=models.CASCADE,
+        related_name="acquired_containers",
+        verbose_name=_("Purchase Order Line"),
+    )
+    container = models.OneToOneField(
+        Container,
+        on_delete=models.CASCADE,
+        related_name="acquisition",
+        verbose_name=_("Container"),
+    )
+
+    class Meta:
+        verbose_name = _("Acquired Container")
+        verbose_name_plural = _("Acquired Containers")
+        # Read from both directions, so no join is baked into the default ordering;
+        # the read functions in container_links.py order for the view they serve.
+        ordering = ["id"]
+        indexes = [
+            models.Index(fields=["team", "purchase_order_line"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.container.container_id} ← {self.purchase_order_line.line_no}"
+
+    def clean(self) -> None:
+        super().clean()
+        _validate_container_link(self)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+
+class ContainerLoad(BaseTeamModel):
+    """The container *carries* the purchase: goods from this PO line are loaded in it.
+
+    Answers "which purchased goods are transported in this physical container?" —
+    the doors and spare parts case. Several PO lines can share one box, and one PO
+    line can be spread over several boxes, so the pair is what is unique rather than
+    either end of it.
+
+    ``quantity`` is optional on purpose. Knowing that a line's goods are in a box is
+    useful before anybody has counted how much of it went in, and a nullable column
+    says "not recorded" where a zero would say "none".
+
+    Same restraint as :class:`ContainerAcquisition`: article, supplier and price stay
+    on the purchase order line.
+    """
+
+    purchase_order_line = models.ForeignKey(
+        PurchaseOrderLine,
+        on_delete=models.CASCADE,
+        related_name="container_loads",
+        verbose_name=_("Purchase Order Line"),
+    )
+    container = models.ForeignKey(
+        Container,
+        on_delete=models.CASCADE,
+        related_name="loads",
+        verbose_name=_("Container"),
+    )
+    quantity = models.DecimalField(
+        _("Quantity"),
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text=_("How much of the line went into this container. Leave blank when it is not known."),
+    )
+
+    class Meta:
+        verbose_name = _("Container Load")
+        verbose_name_plural = _("Container Loads")
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["purchase_order_line", "container"],
+                name="unique_container_load_per_po_line",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["team", "purchase_order_line"]),
+            models.Index(fields=["team", "container"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.purchase_order_line.line_no} → {self.container.container_id}"
+
+    def clean(self) -> None:
+        super().clean()
+        _validate_container_link(self)
+        if self.quantity is not None and self.quantity < Decimal("0"):
+            raise ValidationError({"quantity": _("A loaded quantity cannot be negative.")})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
 
 class PurchaseOrderEventType(models.TextChoices):

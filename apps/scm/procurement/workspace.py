@@ -543,16 +543,27 @@ def _delivery_rows(team: Team, purchase_order, delivery_lines, delivery_model) -
 
 
 def get_purchase_order_line_summaries(workspace: PurchaseOrderWorkspace) -> list[dict]:
-    """Per ordered line: how much of it is booked onto deliveries.
+    """Per ordered line: how much of it is booked onto deliveries, and its containers.
 
     The relationship section 10 of the brief asks to keep — which boxes belong to
     which purchased line — read from the delivery lines the workspace already
     loaded plus one aggregate. Business Central article codes describe equipment
     type, so this is what tells somebody that the CONT22G1 line is the one still
     missing containers.
+
+    ``links`` carries the two direct procurement relationships, kept apart: the
+    containers this line *acquired* and the containers its goods are *loaded in*.
+    They are two different facts about a box — see
+    :mod:`apps.scm.procurement.container_links` — and the row renders them as two
+    labelled groups rather than one list, because an operator who cannot tell them
+    apart cannot act on either. Three queries for the whole order, whatever the
+    number of lines.
     """
     from apps.scm.supplier_deliveries.models import SupplierDeliveryLine
 
+    from .container_links import get_container_links_by_line, get_line_container_links
+
+    links_by_line = get_container_links_by_line(workspace.purchase_order)
     booked = {
         row["purchase_order_line_id"]: row["total"] or _ZERO
         for row in SupplierDeliveryLine.objects.filter(
@@ -566,6 +577,7 @@ def get_purchase_order_line_summaries(workspace: PurchaseOrderWorkspace) -> list
             "line": line,
             "booked_qty": booked.get(line.pk, _ZERO),
             "unbooked_qty": max(line.ordered_qty - booked.get(line.pk, _ZERO), _ZERO),
+            "links": get_line_container_links(links_by_line, line.pk),
         }
         for line in workspace.lines
     ]

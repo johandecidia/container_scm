@@ -112,6 +112,14 @@
 
       {% include "scm/containers/partials/container_map_positions.html" %}
 
+      {% comment %}
+        Procurement before business context: "where did this box come from and what
+        is in it" is the commercial question asked first, and the business context
+        panel below it is the equipment record and the recorded position. Absent
+        entirely for a container with no procurement link — see the partial.
+      {% endcomment %}
+      {% include "scm/containers/partials/container_procurement.html" %}
+
       {% include "scm/containers/partials/container_business_context.html" %}
     </div>
 
