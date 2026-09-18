@@ -15,11 +15,21 @@ Every figure is read from the PO lines, the supplier deliveries and the containe
 those deliveries name, so a new delivery line changes the answer immediately and
 there is nothing to reconcile.
 
-**The article survives the join.** A container reaches a purchase order through
-``Container → SupplierDeliveryLine → PurchaseOrderLine``, and that middle row
-carries the ordered article. Keeping it on the container row is what lets somebody
-see which boxes belong to which purchased line, rather than a flat list of numbers
-that has lost the reason they are here.
+**One population of containers, reached three ways.** A container belongs to a
+purchase order through any of ``SupplierDeliveryLine`` (booked onto a dated delivery
+batch), ``ContainerAcquisition`` (the box *is* what the line bought) or
+``ContainerLoad`` (the line's goods travel in the box). :attr:`
+PurchaseOrderWorkspace.container_rows` is the one deduplicated list of the distinct
+physical containers those paths reach, keyed by container id — not three lists, and
+not one list per path, because ``container_count``, the Containers tab and the
+completeness gaps all have to be talking about the same set of boxes. A box reached
+by two paths is one row that names both.
+
+**The article survives the join, and so does the path.** Each row keeps the ordered
+articles it is here for and *how* it got here, so somebody can see which boxes belong
+to which purchased line and why. Delivery references stay specific to the delivery
+path: a box that was linked directly to a line has no delivery, and presenting one
+would invent a batch nobody booked.
 
 **Completeness, not exceptions.** :attr:`PurchaseOrderWorkspace.gaps` reports what
 is objectively missing — units nobody has booked, delivery lines with no container
@@ -35,11 +45,13 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, cast
 
+from django.db import models
 from django.db.models import Sum
 from django.utils.translation import gettext_lazy as _
 
 from apps.teams.models import Team
 
+from .container_links import LineContainerLinks, get_container_links_by_line
 from .models import PurchaseOrder, PurchaseOrderLogisticsStatus
 
 if TYPE_CHECKING:
@@ -52,23 +64,67 @@ if TYPE_CHECKING:
 _ZERO = Decimal("0")
 
 
+class ContainerPath(models.TextChoices):
+    """How a container came to belong to a purchase order.
+
+    Three supported relationships, and a row records every one that reached it. The
+    labels are what the Containers tab shows: a box that was bought on a line and a
+    box that a line's goods were loaded into are both on the order, and an operator
+    who cannot tell which is looking at cannot act on either.
+    """
+
+    DELIVERY = "delivery", _("Supplier delivery")
+    ACQUISITION = "acquisition", _("Acquired")
+    LOAD = "load", _("Loaded")
+
+
 @dataclass(frozen=True)
 class ContainerRow:
-    """One container booked against this purchase order, with its transport state.
+    """One physical container on this purchase order, with its transport state.
 
-    ``articles`` is a list because one box can carry more than one ordered line. The
-    tracking answers all come from the bulk-built container workspace, so a purchase
-    order with eighty containers costs the same number of queries as one with two.
+    One row per container, whichever of the three relationships brought it here and
+    however many of them did — see :class:`ContainerPath`. ``articles`` is a list
+    because one box can carry more than one ordered line, and ``paths`` is a list for
+    the same reason: a box can be what a line bought *and* the box another line's
+    goods were loaded into.
+
+    ``delivery_references`` stays empty for a box that never went onto a supplier
+    delivery. The tracking answers all come from the bulk-built container workspace,
+    so a purchase order with eighty containers costs the same number of queries as
+    one with two.
     """
 
     container: Container
     workspace: ContainerWorkspace | None = None
     articles: list[str] = field(default_factory=list)
     delivery_references: list[str] = field(default_factory=list)
+    paths: list[str] = field(default_factory=list)
 
     @property
     def article_label(self) -> str:
         return " · ".join(self.articles)
+
+    @property
+    def path_labels(self) -> list[str]:
+        return [str(ContainerPath(path).label) for path in self.paths]
+
+    @property
+    def path_label(self) -> str:
+        return " · ".join(self.path_labels)
+
+    @property
+    def via_supplier_delivery(self) -> bool:
+        return ContainerPath.DELIVERY in self.paths
+
+    @property
+    def is_acquired(self) -> bool:
+        """True when a line on this order bought this box, rather than filled it."""
+        return ContainerPath.ACQUISITION in self.paths
+
+    @property
+    def carries_load(self) -> bool:
+        """True when goods from a line on this order are loaded in this box."""
+        return ContainerPath.LOAD in self.paths
 
     @property
     def shipment(self):
@@ -174,6 +230,13 @@ class PurchaseOrderWorkspace:
     container_rows: list[ContainerRow] = field(default_factory=list)
     delivery_rows: list[DeliveryRow] = field(default_factory=list)
     fulfillment: dict[str, Decimal] = field(default_factory=dict)
+
+    # The order's direct container links, keyed by purchase order line id. Loaded once
+    # and read twice: the container rows are built from it alongside the delivery
+    # lines, and the per-line summaries render it as two labelled groups. Two readers,
+    # one pair of queries — a second load would be the same rows again and could
+    # disagree with these ones about what is linked.
+    links_by_line: dict[int, LineContainerLinks] = field(default_factory=dict)
 
     # Quantity booked onto supplier delivery lines, whether or not those lines name
     # a container yet. Distinct from shipped: assigning stock to a delivery is a
@@ -432,9 +495,10 @@ def get_purchase_order_workspace(team: Team, purchase_order: PurchaseOrder) -> P
     """Gather everything the purchase order workspace renders, team-scoped throughout.
 
     The container rows are the expensive part and the reason this function exists:
-    they are built from one delivery-line query plus one bulk container-workspace
-    build, so the tracking, shipment and ETA of every container on the order cost a
-    fixed number of queries rather than a query each.
+    they are built from one delivery-line query plus the order's two container-link
+    queries plus one bulk container-workspace build, so the tracking, shipment and
+    ETA of every container on the order cost a fixed number of queries rather than a
+    query each.
     """
     from apps.scm.containers.workspace import get_container_workspaces
     from apps.scm.supplier_deliveries.models import SupplierDelivery, SupplierDeliveryLine
@@ -445,6 +509,7 @@ def get_purchase_order_workspace(team: Team, purchase_order: PurchaseOrder) -> P
     lines = list(get_purchase_order_lines(purchase_order=purchase_order))
     events = list(get_purchase_order_events(purchase_order=purchase_order))
     fulfillment = calculate_purchase_order_fulfillment(purchase_order=purchase_order)
+    links_by_line = get_container_links_by_line(purchase_order)
 
     # Every delivery line on this order, once. It is the join that carries both the
     # article and the container, so the container rows and the delivery rows are
@@ -466,34 +531,63 @@ def get_purchase_order_workspace(team: Team, purchase_order: PurchaseOrder) -> P
         purchase_order=purchase_order,
         lines=lines,
         events=events,
-        container_rows=_container_rows(team, delivery_lines, get_container_workspaces),
+        container_rows=_container_rows(team, delivery_lines, links_by_line, get_container_workspaces),
         delivery_rows=_delivery_rows(team, purchase_order, delivery_lines, SupplierDelivery),
         fulfillment=fulfillment,
         assigned_qty=assigned_qty,
         unassigned_container_qty=unassigned_container_qty,
+        links_by_line=links_by_line,
     )
 
 
-def _container_rows(team: Team, delivery_lines, build_workspaces) -> list[ContainerRow]:
-    """Turn this order's delivery lines into one row per distinct container.
+def _append_once(bucket: dict[int, list[str]], container_id: int, value: str) -> None:
+    """Add ``value`` to one container's list, skipping blanks and repeats."""
+    values = bucket.setdefault(container_id, [])
+    if value and value not in values:
+        values.append(value)
 
-    A container that appears on several delivery lines — two ordered articles in one
-    box — is one row naming both articles, not two rows naming the same box.
+
+def _container_rows(team: Team, delivery_lines, links_by_line, build_workspaces) -> list[ContainerRow]:
+    """One row per distinct physical container on this order, however it got here.
+
+    The three supported relationships are folded into a single population keyed by
+    container id: delivery lines, acquisitions and loads. A box reached by more than
+    one of them — booked onto a delivery *and* bought on a line, or bought on one
+    line and filled from another — is one row that names every article and every
+    path, not one row per relationship. ``container_count``, the Containers tab and
+    the completeness gaps all read this list, so a box counted twice here would be a
+    box counted twice everywhere.
+
+    Delivery references come only from delivery lines. A direct link has no delivery
+    batch behind it, and borrowing one would tell the operator a supplier shipment
+    happened that nobody booked.
     """
     containers: dict[int, Container] = {}
     articles: dict[int, list[str]] = {}
     references: dict[int, list[str]] = {}
+    paths: dict[int, list[str]] = {}
 
     for line in delivery_lines:
         if line.container_id is None:
             continue
         containers.setdefault(line.container_id, line.container)
-        article = line.article or (line.purchase_order_line.item_no if line.purchase_order_line_id else "")
-        if article and article not in articles.setdefault(line.container_id, []):
-            articles[line.container_id].append(article)
-        reference = line.delivery.delivery_reference
-        if reference and reference not in references.setdefault(line.container_id, []):
-            references[line.container_id].append(reference)
+        _append_once(paths, line.container_id, ContainerPath.DELIVERY)
+        _append_once(
+            articles,
+            line.container_id,
+            line.article or (line.purchase_order_line.item_no if line.purchase_order_line_id else ""),
+        )
+        _append_once(references, line.container_id, line.delivery.delivery_reference)
+
+    for links in links_by_line.values():
+        for acquisition in links.acquired:
+            containers.setdefault(acquisition.container_id, acquisition.container)
+            _append_once(paths, acquisition.container_id, ContainerPath.ACQUISITION)
+            _append_once(articles, acquisition.container_id, acquisition.purchase_order_line.item_no)
+        for load in links.loads:
+            containers.setdefault(load.container_id, load.container)
+            _append_once(paths, load.container_id, ContainerPath.LOAD)
+            _append_once(articles, load.container_id, load.purchase_order_line.item_no)
 
     if not containers:
         return []
@@ -506,6 +600,7 @@ def _container_rows(team: Team, delivery_lines, build_workspaces) -> list[Contai
             workspace=workspaces.get(container.pk),
             articles=articles.get(container.pk, []),
             delivery_references=references.get(container.pk, []),
+            paths=paths.get(container.pk, []),
         )
         for container in ordered
     ]
@@ -556,14 +651,15 @@ def get_purchase_order_line_summaries(workspace: PurchaseOrderWorkspace) -> list
     They are two different facts about a box — see
     :mod:`apps.scm.procurement.container_links` — and the row renders them as two
     labelled groups rather than one list, because an operator who cannot tell them
-    apart cannot act on either. Three queries for the whole order, whatever the
-    number of lines.
+    apart cannot act on either. They are read off ``workspace.links_by_line``, which
+    the workspace already loaded to build its container rows, so this adds one
+    aggregate query for the whole order whatever the number of lines.
     """
     from apps.scm.supplier_deliveries.models import SupplierDeliveryLine
 
-    from .container_links import get_container_links_by_line, get_line_container_links
+    from .container_links import get_line_container_links
 
-    links_by_line = get_container_links_by_line(workspace.purchase_order)
+    links_by_line = workspace.links_by_line
     booked = {
         row["purchase_order_line_id"]: row["total"] or _ZERO
         for row in SupplierDeliveryLine.objects.filter(

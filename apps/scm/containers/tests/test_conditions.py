@@ -397,10 +397,26 @@ class ContainerConditionMigrationTest(TransactionTestCase):
         executor.loader.build_graph()
         return executor.loader.project_state([(self.APP, target)]).apps
 
+    def _restore_all_migrations(self) -> None:
+        """Re-apply every app's migrations, not only this one's.
+
+        Rolling ``scm_containers`` back to 0009 unapplies whatever depends on its
+        later migrations too — ``scm_procurement.0006`` is built on 0012, so it comes
+        off with it. Naming a target in this app only walks this app forward, which
+        left the rest of the suite sharing a database whose ``Container`` table was
+        missing later columns and whose container-link tables were missing entirely.
+        Migrating to every leaf, looked up rather than pinned, is what actually puts
+        the schema back, and adding a migration cannot quietly reopen the hole.
+        """
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        executor.loader.build_graph()
+
     def setUp(self):
         # Whatever happens, leave the database on the latest migration: the rest of
         # the suite shares it.
-        self.addCleanup(self._migrate, self.AFTER)
+        self.addCleanup(self._restore_all_migrations)
 
     def test_existing_condition_strings_become_rows_and_nothing_loses_its_grade(self):
         apps = self._migrate(self.BEFORE)

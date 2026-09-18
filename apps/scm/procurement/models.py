@@ -156,6 +156,35 @@ class PurchaseOrderLine(BaseTeamModel):
     def __str__(self) -> str:
         return f"{self.purchase_order.po_number} / {self.line_no} — {self.item_no}"
 
+    def clean(self) -> None:
+        super().clean()
+        self._validate_team_matches_order()
+
+    def _validate_team_matches_order(self) -> None:
+        """A line belongs to the same team as the order it is a line of.
+
+        Two nullable-free foreign keys, and nothing in either one ties them together:
+        a line stamped with one team's id under another team's order is readable by
+        the first team and rendered on the second team's workspace. That is a tenancy
+        hole rather than a typo, so it is refused on the model and not only in the
+        write service.
+
+        Called from ``save`` directly rather than through ``full_clean``, unlike the
+        container links below. The Business Central sync and the document importer
+        both upsert lines whose ``line_no`` or ``item_no`` the source left empty, and
+        those columns are not ``blank=True``: a blanket ``full_clean`` here would
+        start rejecting rows that SCM is only mirroring. This one invariant holds for
+        every writer; the rest of the field validation stays where it was.
+        """
+        if self.team_id is None or self.purchase_order_id is None:
+            return
+        if self.purchase_order.team_id != self.team_id:
+            raise ValidationError({"purchase_order": _("That purchase order belongs to another team.")})
+
+    def save(self, *args, **kwargs):
+        self._validate_team_matches_order()
+        return super().save(*args, **kwargs)
+
 
 def _validate_container_link(link) -> None:
     """Both ends of a procurement↔container link must belong to the link's own team.
