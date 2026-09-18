@@ -10,10 +10,20 @@ them indistinguishable. The two models this module writes —
 schema level, so nothing downstream has to guess.
 
 Every write goes through a function here rather than through the ORM directly. The
-rules — team integrity, one procurement origin per box, re-linking as a no-op — are
-the same whether a person clicks the button or the Business Central import replays a
-feed, and the import is the next caller. A second implementation of "is this box
+rules — team integrity, Business Central's read-only wall, one procurement origin per
+box, re-linking as a no-op — hold for every caller: a person clicking the button, a
+shell session, a direct POST to the endpoint. A second implementation of "is this box
 already acquired?" is the failure this module exists to prevent.
+
+These are SCM's *manual* link writes, and they refuse a purchase order Business
+Central owns. The rule is not restated here: it is
+:func:`~apps.scm.procurement.manual.refuse_business_central`, the same function the
+hand-entered order and line writes call, reading the same
+``PurchaseOrder.is_business_central``. The views refuse a BC order too, but only so
+the operator sees a sentence instead of a 403 page; this layer is what actually holds
+the invariant. When the Business Central import lands it will replay BC-owned links
+through its own sync writer — the entry points here are the ones a human reaches, and
+letting the import share them would mean the wall had a door in it.
 
 The reads are deliberately here too, beside the writes they mirror: one function per
 direction, each returning a small frozen read model the workspaces hold. The
@@ -32,6 +42,7 @@ from django.utils.translation import gettext_lazy as _
 from apps.scm.containers.models import Container
 from apps.teams.models import Team
 
+from .manual import refuse_business_central
 from .models import ContainerAcquisition, ContainerLoad, PurchaseOrder, PurchaseOrderLine
 
 # Containers are listed in ISO-number order wherever a list of them is shown, so the
@@ -52,6 +63,17 @@ def _assert_team(team: Team, *records) -> None:
             raise ValidationError(_("That record belongs to another team."))
 
 
+def _assert_writable(purchase_order_line: PurchaseOrderLine) -> None:
+    """Refuse a link on an order Business Central owns.
+
+    Delegates to the one definition of that wall so there is no second answer to
+    "may SCM write this?". Every mutation below goes through here, including the
+    two deletes: unlinking a BC box is as much a change to BC's record as linking
+    one, and the next sync would put it back.
+    """
+    refuse_business_central(purchase_order_line.purchase_order)
+
+
 # ---------------------------------------------------------------------------
 # Acquisition — "this PO line acquired this box"
 # ---------------------------------------------------------------------------
@@ -69,31 +91,45 @@ def link_acquired_container(
     existing row untouched, so replaying an import or double-clicking a button
     cannot produce a duplicate.
 
+    The lookup and the write happen inside one transaction that first takes a row
+    lock on the container, because "does this box already have an origin?" and "give
+    it this one" are one decision and checking before writing is only idempotent if
+    nothing can slip between the two. The container is the right row to lock: it is
+    the end the one-to-one makes exclusive, so every caller racing for the same box
+    queues behind the same lock and the loser re-reads the winner's answer instead of
+    hitting the unique constraint and surfacing an ``IntegrityError`` as a 500. The
+    constraint stays, as the database's own last word.
+
     Raises:
+        PermissionDenied: if Business Central owns the order.
         ValidationError: if either end belongs to another team, or if the container
             already has a *different* procurement origin. A box came from one place;
             silently moving it to a second line would erase the first answer.
     """
     _assert_team(team, purchase_order_line, container)
-
-    existing = (
-        ContainerAcquisition.objects.filter(container=container)
-        .select_related("purchase_order_line", "purchase_order_line__purchase_order")
-        .first()
-    )
-    if existing is not None:
-        if existing.purchase_order_line_id == purchase_order_line.pk:
-            return existing
-        raise ValidationError(
-            _("%(container)s was already acquired through %(order)s line %(line)s. Unlink it there first.")
-            % {
-                "container": container.container_id,
-                "order": existing.purchase_order_line.purchase_order.po_number,
-                "line": existing.purchase_order_line.line_no,
-            }
-        )
+    _assert_writable(purchase_order_line)
 
     with transaction.atomic():
+        if not Container.objects.select_for_update().filter(pk=container.pk).exists():
+            raise ValidationError(_("That container no longer exists."))
+
+        existing = (
+            ContainerAcquisition.objects.filter(container=container)
+            .select_related("purchase_order_line", "purchase_order_line__purchase_order")
+            .first()
+        )
+        if existing is not None:
+            if existing.purchase_order_line_id == purchase_order_line.pk:
+                return existing
+            raise ValidationError(
+                _("%(container)s was already acquired through %(order)s line %(line)s. Unlink it there first.")
+                % {
+                    "container": container.container_id,
+                    "order": existing.purchase_order_line.purchase_order.po_number,
+                    "line": existing.purchase_order_line.line_no,
+                }
+            )
+
         return ContainerAcquisition.objects.create(
             team=team,
             purchase_order_line=purchase_order_line,
@@ -102,8 +138,14 @@ def link_acquired_container(
 
 
 def unlink_acquired_container(*, team: Team, acquisition: ContainerAcquisition) -> None:
-    """Drop an acquisition link. The container and the purchase order line both survive."""
+    """Drop an acquisition link. The container and the purchase order line both survive.
+
+    Raises:
+        PermissionDenied: if Business Central owns the order.
+        ValidationError: if the link belongs to another team.
+    """
     _assert_team(team, acquisition)
+    _assert_writable(acquisition.purchase_order_line)
     with transaction.atomic():
         acquisition.delete()
 
@@ -129,10 +171,12 @@ def set_container_load(
     recorded quantity is cleared back to "not known".
 
     Raises:
+        PermissionDenied: if Business Central owns the order.
         ValidationError: if either end belongs to another team, or the quantity is
             negative.
     """
     _assert_team(team, purchase_order_line, container)
+    _assert_writable(purchase_order_line)
 
     with transaction.atomic():
         load, _created = ContainerLoad.objects.update_or_create(
@@ -144,8 +188,14 @@ def set_container_load(
 
 
 def remove_container_load(*, team: Team, load: ContainerLoad) -> None:
-    """Drop a load link. The container and the purchase order line both survive."""
+    """Drop a load link. The container and the purchase order line both survive.
+
+    Raises:
+        PermissionDenied: if Business Central owns the order.
+        ValidationError: if the link belongs to another team.
+    """
     _assert_team(team, load)
+    _assert_writable(load.purchase_order_line)
     with transaction.atomic():
         load.delete()
 
@@ -222,19 +272,31 @@ def get_container_links_by_line(purchase_order: PurchaseOrder) -> dict[int, Line
     per-line rendering costs nothing per row. Lines with no links are absent from
     the mapping; :func:`get_line_container_links` is what callers use to read it, and
     returns an empty read model for those.
+
+    Team-scoped on the links themselves as well as through the order, for the same
+    reason :func:`get_container_procurement` is: a link row that somehow named
+    another team must not surface on anybody's workspace. The purchase order line
+    travels with each link because the purchase order workspace reads the ordered
+    article off it when it builds the container rows.
     """
     acquired: dict[int, list[ContainerAcquisition]] = {}
     for acquisition in (
-        ContainerAcquisition.objects.filter(purchase_order_line__purchase_order=purchase_order)
-        .select_related("container", "container__equipment_type")
+        ContainerAcquisition.objects.filter(
+            team_id=purchase_order.team_id,
+            purchase_order_line__purchase_order=purchase_order,
+        )
+        .select_related("container", "container__equipment_type", "purchase_order_line")
         .order_by(*_CONTAINER_ORDER)
     ):
         acquired.setdefault(acquisition.purchase_order_line_id, []).append(acquisition)
 
     loads: dict[int, list[ContainerLoad]] = {}
     for load in (
-        ContainerLoad.objects.filter(purchase_order_line__purchase_order=purchase_order)
-        .select_related("container", "container__equipment_type")
+        ContainerLoad.objects.filter(
+            team_id=purchase_order.team_id,
+            purchase_order_line__purchase_order=purchase_order,
+        )
+        .select_related("container", "container__equipment_type", "purchase_order_line")
         .order_by(*_CONTAINER_ORDER)
     ):
         loads.setdefault(load.purchase_order_line_id, []).append(load)

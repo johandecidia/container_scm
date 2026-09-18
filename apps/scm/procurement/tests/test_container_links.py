@@ -5,10 +5,12 @@ was bought* or *what the bought goods travel in*, and the two must stay
 distinguishable. The tests are grouped by the question they protect.
 """
 
+import threading
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import IntegrityError, connection, transaction
+from django.test import TestCase, TransactionTestCase
 
 from apps.scm.containers.models import Container, EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
@@ -354,6 +356,200 @@ class TeamIsolationTest(TestCase):
         with self.assertRaises(ValidationError):
             remove_container_load(team=self.team, load=load)
         self.assertTrue(ContainerLoad.objects.filter(pk=load.pk).exists())
+
+
+class BusinessCentralReadOnlyTest(TestCase):
+    """A BC-owned order's container links are read-only, whoever is asking.
+
+    The workspace hides the buttons, but that is chrome. These tests go straight at
+    the service layer, which is where the invariant has to hold: a shell session, a
+    management command or a hand-rolled POST reaches the same functions, and the
+    next sync would revert whatever they wrote anyway.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="BC links", slug="bc-links")
+        cls.bc_order = _purchase_order(cls.team, "BC-1", source=PurchaseOrderSource.BUSINESS_CENTRAL)
+        cls.bc_line = _line(cls.bc_order)
+        cls.other_bc_line = _line(cls.bc_order, line_no="20000", item_no="DOORS")
+        cls.manual_order = _purchase_order(cls.team, "MAN-1", source=PurchaseOrderSource.MANUAL)
+        cls.manual_line = _line(cls.manual_order)
+
+    def _existing_acquisition(self, container):
+        """A link as the source system would have left it, made without the service."""
+        return ContainerAcquisition.objects.create(
+            team=self.team, purchase_order_line=self.bc_line, container=container
+        )
+
+    def _existing_load(self, container, quantity=Decimal("300")):
+        return ContainerLoad.objects.create(
+            team=self.team, purchase_order_line=self.bc_line, container=container, quantity=quantity
+        )
+
+    # -- acquisition --------------------------------------------------------
+
+    def test_refuses_to_acquire_a_container_through_a_bc_line(self):
+        container = _container(self.team, serial="200001")
+
+        with self.assertRaises(PermissionDenied):
+            link_acquired_container(team=self.team, purchase_order_line=self.bc_line, container=container)
+
+        self.assertFalse(ContainerAcquisition.objects.exists())
+
+    def test_refuses_to_relink_an_existing_bc_acquisition(self):
+        """Even the idempotent path is refused: it is still a write to BC's record."""
+        acquisition = self._existing_acquisition(_container(self.team, serial="200002"))
+
+        with self.assertRaises(PermissionDenied):
+            link_acquired_container(team=self.team, purchase_order_line=self.bc_line, container=acquisition.container)
+
+    def test_refuses_to_move_a_bc_acquisition_to_another_bc_line(self):
+        acquisition = self._existing_acquisition(_container(self.team, serial="200003"))
+
+        with self.assertRaises(PermissionDenied):
+            link_acquired_container(
+                team=self.team, purchase_order_line=self.other_bc_line, container=acquisition.container
+            )
+
+        acquisition.refresh_from_db()
+        self.assertEqual(acquisition.purchase_order_line, self.bc_line)
+
+    def test_refuses_to_unlink_a_bc_acquisition(self):
+        acquisition = self._existing_acquisition(_container(self.team, serial="200004"))
+
+        with self.assertRaises(PermissionDenied):
+            unlink_acquired_container(team=self.team, acquisition=acquisition)
+
+        self.assertTrue(ContainerAcquisition.objects.filter(pk=acquisition.pk).exists())
+
+    # -- load ---------------------------------------------------------------
+
+    def test_refuses_to_create_a_load_on_a_bc_line(self):
+        container = _container(self.team, serial="200005")
+
+        with self.assertRaises(PermissionDenied):
+            set_container_load(
+                team=self.team, purchase_order_line=self.bc_line, container=container, quantity=Decimal("10")
+            )
+
+        self.assertFalse(ContainerLoad.objects.exists())
+
+    def test_refuses_to_update_an_existing_bc_load(self):
+        load = self._existing_load(_container(self.team, serial="200006"))
+
+        with self.assertRaises(PermissionDenied):
+            set_container_load(
+                team=self.team,
+                purchase_order_line=self.bc_line,
+                container=load.container,
+                quantity=Decimal("999"),
+            )
+
+        load.refresh_from_db()
+        self.assertEqual(load.quantity, Decimal("300"))
+
+    def test_refuses_to_remove_a_bc_load(self):
+        load = self._existing_load(_container(self.team, serial="200007"))
+
+        with self.assertRaises(PermissionDenied):
+            remove_container_load(team=self.team, load=load)
+
+        self.assertTrue(ContainerLoad.objects.filter(pk=load.pk).exists())
+
+    # -- the wall is about ownership, not about links -----------------------
+
+    def test_an_scm_owned_order_is_still_writable(self):
+        """The refusal is BC ownership, not a blanket freeze on linking."""
+        container = _container(self.team, serial="200008")
+
+        acquisition = link_acquired_container(team=self.team, purchase_order_line=self.manual_line, container=container)
+
+        self.assertEqual(acquisition.purchase_order_line, self.manual_line)
+
+    def test_the_refusal_reads_the_same_ownership_flag_the_workspace_does(self):
+        """One definition of read-only: flipping the source makes the order writable."""
+        container = _container(self.team, serial="200009")
+        self.bc_order.source_system = PurchaseOrderSource.MANUAL
+        self.bc_order.save(update_fields=["source_system"])
+        line = PurchaseOrderLine.objects.select_related("purchase_order").get(pk=self.bc_line.pk)
+
+        link_acquired_container(team=self.team, purchase_order_line=line, container=container)
+
+        self.assertEqual(ContainerAcquisition.objects.get().container, container)
+
+
+class AcquisitionConcurrencyTest(TransactionTestCase):
+    """Two requests racing for the same box, which is what the row lock is for.
+
+    ``TransactionTestCase`` rather than ``TestCase``: the point is what two real
+    connections do to each other, and a test wrapped in one transaction would never
+    let them see each other's rows.
+    """
+
+    def setUp(self):
+        self.team = Team.objects.create(name="Race", slug="race-team")
+        self.order = _purchase_order(self.team, "PO-RACE")
+        self.first_line = _line(self.order, line_no="10000")
+        self.second_line = _line(self.order, line_no="20000", item_no="CONT22G1")
+        self.container = _container(self.team, serial="555555")
+
+    def _race(self, lines: list[PurchaseOrderLine]) -> list:
+        """Call the service from one thread per line, released together."""
+        barrier = threading.Barrier(len(lines))
+        results: list = [None] * len(lines)
+
+        def attempt(index: int, line: PurchaseOrderLine) -> None:
+            try:
+                barrier.wait(timeout=10)
+                results[index] = link_acquired_container(
+                    team=self.team, purchase_order_line=line, container=self.container
+                )
+            except Exception as error:  # noqa: BLE001 — the result under test
+                results[index] = error
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=attempt, args=(index, line)) for index, line in enumerate(lines)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        return results
+
+    def test_the_same_pair_twice_at_once_yields_one_acquisition(self):
+        """Idempotent under a race too: the loser reads the winner's row, not a 500."""
+        results = self._race([self.first_line, self.first_line])
+
+        self.assertEqual(ContainerAcquisition.objects.count(), 1)
+        self.assertNotIsInstance(results[0], Exception, msg=f"first attempt raised {results[0]!r}")
+        self.assertNotIsInstance(results[1], Exception, msg=f"second attempt raised {results[1]!r}")
+        self.assertEqual(results[0].pk, results[1].pk)
+
+    def test_two_lines_racing_for_one_box_give_one_winner_and_a_domain_error(self):
+        """The loser gets the sentence an operator can act on, not an IntegrityError."""
+        results = self._race([self.first_line, self.second_line])
+
+        self.assertEqual(ContainerAcquisition.objects.count(), 1)
+        winners = [result for result in results if isinstance(result, ContainerAcquisition)]
+        losers = [result for result in results if isinstance(result, Exception)]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(len(losers), 1)
+        self.assertIsInstance(losers[0], ValidationError)
+        self.assertEqual(ContainerAcquisition.objects.get().pk, winners[0].pk)
+
+    def test_the_database_constraint_is_still_the_last_word(self):
+        """The lock is not a reason to drop the uniqueness that backs it up."""
+        link_acquired_container(team=self.team, purchase_order_line=self.first_line, container=self.container)
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            # bulk_create skips save() and so skips full_clean(); only the database
+            # is left to say no.
+            ContainerAcquisition.objects.bulk_create(
+                [ContainerAcquisition(team=self.team, purchase_order_line=self.second_line, container=self.container)]
+            )
+
+        self.assertEqual(ContainerAcquisition.objects.count(), 1)
 
 
 class ReadModelTest(TestCase):

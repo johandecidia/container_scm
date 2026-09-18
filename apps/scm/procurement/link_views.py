@@ -10,10 +10,18 @@ All four respond to a successful write with ``HX-Refresh``, as the container
 workspace's own modals do. A link changes the line's containers, the Containers tab
 and the Completeness panel at once, and swapping one of them would leave the other
 two describing the order as it was.
+
+All four also turn away a purchase order Business Central owns, before the form is
+built and again if the service refuses on the way through. The early check is for the
+operator — a sentence beats a 403 page, and rendering a form for a record SCM may not
+write invites somebody to fill it in and be refused at the end. It is not the
+protection: the service layer refuses regardless of how the request arrived, and the
+``except PermissionDenied`` below is what proves this view never needs to be the one
+that notices.
 """
 
 from django.contrib import messages
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
@@ -29,6 +37,7 @@ from .container_links import (
 )
 from .forms import AcquiredContainerForm, ContainerLoadForm
 from .models import ContainerAcquisition, ContainerLoad, PurchaseOrderLine
+from .views import deny_business_central
 
 LINK_FORM_TEMPLATE = "scm/procurement/partials/purchase_order_link_form.html"
 
@@ -80,6 +89,9 @@ def line_link_acquired_container(request, line_id: int):
     title = _("Link acquired container")
     submit = _("Link container")
 
+    if line.purchase_order.is_business_central:
+        return deny_business_central(request, line.purchase_order_id)
+
     if request.method == "POST":
         form = AcquiredContainerForm(request.POST, team=team)
         if form.is_valid():
@@ -89,6 +101,8 @@ def line_link_acquired_container(request, line_id: int):
                     purchase_order_line=line,
                     container=form.cleaned_data["container"],
                 )
+            except PermissionDenied:
+                return deny_business_central(request, line.purchase_order_id)
             except ValidationError as error:
                 form.add_error(None, error)
             else:
@@ -105,12 +119,15 @@ def acquisition_unlink(request, acquisition_id: int):
     """Drop an acquisition link. The container itself is untouched."""
     team = request.default_team
     acquisition = get_object_or_404(
-        ContainerAcquisition.objects.select_related("purchase_order_line"),
+        ContainerAcquisition.objects.select_related("purchase_order_line__purchase_order"),
         pk=acquisition_id,
         team=team,
     )
     purchase_order_id = acquisition.purchase_order_line.purchase_order_id
-    unlink_acquired_container(team=team, acquisition=acquisition)
+    try:
+        unlink_acquired_container(team=team, acquisition=acquisition)
+    except PermissionDenied:
+        return deny_business_central(request, purchase_order_id)
     return _refresh_or_redirect(request, purchase_order_id, _("Container unlinked."))
 
 
@@ -126,6 +143,9 @@ def line_add_container_load(request, line_id: int):
     title = _("Add to container / load")
     submit = _("Save load")
 
+    if line.purchase_order.is_business_central:
+        return deny_business_central(request, line.purchase_order_id)
+
     if request.method == "POST":
         form = ContainerLoadForm(request.POST, team=team)
         if form.is_valid():
@@ -136,6 +156,8 @@ def line_add_container_load(request, line_id: int):
                     container=form.cleaned_data["container"],
                     quantity=form.cleaned_data.get("quantity"),
                 )
+            except PermissionDenied:
+                return deny_business_central(request, line.purchase_order_id)
             except ValidationError as error:
                 form.add_error(None, error)
             else:
@@ -152,10 +174,13 @@ def container_load_remove(request, load_id: int):
     """Drop a load link. The container itself is untouched."""
     team = request.default_team
     load = get_object_or_404(
-        ContainerLoad.objects.select_related("purchase_order_line"),
+        ContainerLoad.objects.select_related("purchase_order_line__purchase_order"),
         pk=load_id,
         team=team,
     )
     purchase_order_id = load.purchase_order_line.purchase_order_id
-    remove_container_load(team=team, load=load)
+    try:
+        remove_container_load(team=team, load=load)
+    except PermissionDenied:
+        return deny_business_central(request, purchase_order_id)
     return _refresh_or_redirect(request, purchase_order_id, _("Container load removed."))

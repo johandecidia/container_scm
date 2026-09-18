@@ -84,7 +84,7 @@ def purchase_order_update(request, purchase_order_id: int):
     team = request.default_team
     purchase_order = get_object_or_404(get_team_purchase_orders(team=team), pk=purchase_order_id)
     if purchase_order.is_business_central:
-        return _deny_bc(request, purchase_order_id)
+        return deny_business_central(request, purchase_order_id)
 
     form = PurchaseOrderForm(request.POST or None, instance=purchase_order)
     if request.method == "POST" and form.is_valid():
@@ -188,7 +188,14 @@ def _line_form_response(request, *, form, purchase_order, line=None):
     )
 
 
-def _deny_bc(request, purchase_order_id: int):
+def deny_business_central(request, purchase_order_id: int):
+    """How SCM says no to a writer who reached a record Business Central owns.
+
+    Public because ``link_views`` says it the same way. The refusal itself belongs to
+    the service layer — ``manual.refuse_business_central`` — and this is only its
+    presentation: one denial sentence and one response shape, so the header, the line
+    actions, the container links and the delete route cannot phrase it differently.
+    """
     if request.htmx:
         return HttpResponseForbidden(BC_DENIAL)
     messages.error(request, BC_DENIAL)
@@ -210,7 +217,7 @@ def purchase_order_line_create(request, purchase_order_id: int):
     team = request.default_team
     purchase_order = get_object_or_404(get_team_purchase_orders(team=team), pk=purchase_order_id)
     if purchase_order.is_business_central:
-        return _deny_bc(request, purchase_order_id)
+        return deny_business_central(request, purchase_order_id)
 
     if request.method == "POST":
         form = PurchaseOrderLineForm(request.POST)
@@ -227,7 +234,7 @@ def purchase_order_line_update(request, line_id: int):
     team = request.default_team
     line = get_object_or_404(PurchaseOrderLine.objects.select_related("purchase_order"), pk=line_id, team=team)
     if line.purchase_order.is_business_central:
-        return _deny_bc(request, line.purchase_order_id)
+        return deny_business_central(request, line.purchase_order_id)
 
     if request.method == "POST":
         form = PurchaseOrderLineForm(request.POST, instance=line)
@@ -248,5 +255,5 @@ def purchase_order_line_delete(request, line_id: int):
     try:
         delete_purchase_order_line(line=line)
     except PermissionDenied:
-        return _deny_bc(request, purchase_order_id)
+        return deny_business_central(request, purchase_order_id)
     return _line_saved(request, purchase_order_id, _("Order line deleted."))

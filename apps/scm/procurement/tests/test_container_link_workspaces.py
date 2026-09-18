@@ -23,6 +23,8 @@ from apps.scm.procurement.models import (
     PurchaseOrderSource,
 )
 from apps.scm.procurement.selectors import get_purchase_order_line_summaries, get_purchase_order_workspace
+from apps.scm.procurement.workspace import ContainerPath
+from apps.scm.supplier_deliveries.models import SupplierDelivery, SupplierDeliveryLine
 from apps.teams.models import Membership, Team
 from apps.users.models import CustomUser
 
@@ -65,6 +67,236 @@ def _line(order, line_no="10000", item_no="CONT45G1") -> PurchaseOrderLine:
         description=item_no,
         ordered_qty=Decimal("20"),
     )
+
+
+def _delivery(order, reference="IF-1") -> SupplierDelivery:
+    return SupplierDelivery.objects.create(
+        team=order.team,
+        purchase_order=order,
+        delivery_reference=reference,
+        supplier="Acme",
+    )
+
+
+def _delivery_line(delivery, line, container=None, quantity=Decimal("1"), article="") -> SupplierDeliveryLine:
+    return SupplierDeliveryLine.objects.create(
+        team=delivery.team,
+        delivery=delivery,
+        purchase_order_line=line,
+        article=article,
+        delivery_qty=quantity,
+        container=container,
+    )
+
+
+class PurchaseOrderWorkspaceContainerPopulationTest(TestCase):
+    """``container_rows`` is the order's physical containers — all of them, each once.
+
+    A container reaches a purchase order three ways: booked onto a supplier delivery
+    line, acquired on an order line, or loaded with an order line's goods. The rows
+    are one deduplicated population over all three, because ``container_count``, the
+    Containers tab and the completeness gaps all read this list and would otherwise
+    describe three different orders.
+    """
+
+    def setUp(self):
+        self.team = Team.objects.create(name="Population", slug="po-population")
+        self.user = CustomUser.objects.create_user(username="population@example.com", password="pw")
+        Membership.objects.create(team=self.team, user=self.user, role="admin")
+        self.order = _order(self.team, "PO-POP")
+        self.equipment_line = _line(self.order, "10000", "CONT45G1")
+        self.goods_line = _line(self.order, "20000", "DOORS")
+
+    def _rows(self):
+        workspace = get_purchase_order_workspace(team=self.team, purchase_order=self.order)
+        return workspace, {row.container.pk: row for row in workspace.container_rows}
+
+    # -- one path at a time -------------------------------------------------
+
+    def test_an_acquisition_only_container_is_on_the_order(self):
+        container = _container(self.team, "MSC", "300001")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=container)
+
+        workspace, rows = self._rows()
+
+        self.assertIn(container.pk, rows)
+        self.assertEqual(workspace.container_count, 1)
+        self.assertEqual(rows[container.pk].paths, [ContainerPath.ACQUISITION])
+        self.assertTrue(rows[container.pk].is_acquired)
+
+    def test_a_load_only_container_is_on_the_order(self):
+        container = _container(self.team, "TCL", "300002")
+        set_container_load(
+            team=self.team, purchase_order_line=self.goods_line, container=container, quantity=Decimal("300")
+        )
+
+        workspace, rows = self._rows()
+
+        self.assertIn(container.pk, rows)
+        self.assertEqual(workspace.container_count, 1)
+        self.assertEqual(rows[container.pk].paths, [ContainerPath.LOAD])
+        self.assertTrue(rows[container.pk].carries_load)
+
+    def test_a_supplier_delivery_container_is_still_on_the_order(self):
+        """The path that already worked keeps working, delivery reference included."""
+        container = _container(self.team, "HLX", "300003")
+        _delivery_line(_delivery(self.order, "IF-DEL"), self.goods_line, container=container, article="DOORS")
+
+        workspace, rows = self._rows()
+
+        self.assertEqual(workspace.container_count, 1)
+        self.assertEqual(rows[container.pk].paths, [ContainerPath.DELIVERY])
+        self.assertEqual(rows[container.pk].delivery_references, ["IF-DEL"])
+        self.assertEqual(rows[container.pk].articles, ["DOORS"])
+
+    # -- deduplication ------------------------------------------------------
+
+    def test_a_container_reached_every_way_is_one_row_naming_every_way(self):
+        container = _container(self.team, "MSC", "300004")
+        _delivery_line(_delivery(self.order, "IF-ALL"), self.goods_line, container=container, article="DOORS")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=container)
+        set_container_load(team=self.team, purchase_order_line=self.goods_line, container=container)
+
+        workspace, rows = self._rows()
+
+        self.assertEqual(len(workspace.container_rows), 1)
+        self.assertEqual(workspace.container_count, 1)
+        self.assertCountEqual(
+            rows[container.pk].paths,
+            [ContainerPath.DELIVERY, ContainerPath.ACQUISITION, ContainerPath.LOAD],
+        )
+
+    def test_several_relationships_and_articles_do_not_multiply_the_row(self):
+        """Two lines loading one box, one of them twice over two deliveries: one row."""
+        container = _container(self.team, "MSC", "300005")
+        spares_line = _line(self.order, "30000", "SPARES")
+        _delivery_line(_delivery(self.order, "IF-A"), self.goods_line, container=container, article="DOORS")
+        _delivery_line(_delivery(self.order, "IF-B"), spares_line, container=container, article="SPARES")
+        set_container_load(team=self.team, purchase_order_line=self.goods_line, container=container)
+        set_container_load(team=self.team, purchase_order_line=spares_line, container=container)
+
+        workspace, rows = self._rows()
+
+        self.assertEqual(len(workspace.container_rows), 1)
+        self.assertCountEqual(rows[container.pk].articles, ["DOORS", "SPARES"])
+        self.assertCountEqual(rows[container.pk].delivery_references, ["IF-A", "IF-B"])
+        self.assertCountEqual(rows[container.pk].paths, [ContainerPath.DELIVERY, ContainerPath.LOAD])
+
+    def test_each_distinct_box_is_counted_once_across_paths(self):
+        acquired = _container(self.team, "MSC", "300006")
+        loaded = _container(self.team, "TCL", "300007")
+        delivered = _container(self.team, "HLX", "300008")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=acquired)
+        set_container_load(team=self.team, purchase_order_line=self.goods_line, container=loaded)
+        _delivery_line(_delivery(self.order, "IF-MIX"), self.goods_line, container=delivered)
+
+        workspace, _rows = self._rows()
+
+        self.assertEqual(workspace.container_count, 3)
+        self.assertCountEqual(
+            [row.container.pk for row in workspace.container_rows], [acquired.pk, loaded.pk, delivered.pk]
+        )
+
+    # -- a direct link is not a supplier delivery ---------------------------
+
+    def test_a_direct_link_is_not_presented_as_a_supplier_delivery(self):
+        container = _container(self.team, "MSC", "300009")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=container)
+
+        _workspace, rows = self._rows()
+
+        row = rows[container.pk]
+        self.assertEqual(row.delivery_references, [])
+        self.assertFalse(row.via_supplier_delivery)
+        # The article is the line's own item, read through the link rather than
+        # invented from a delivery nobody booked.
+        self.assertEqual(row.articles, ["CONT45G1"])
+
+    def test_a_direct_link_adds_no_delivery_row(self):
+        container = _container(self.team, "MSC", "300010")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=container)
+
+        workspace, _rows = self._rows()
+
+        self.assertEqual(workspace.delivery_rows, [])
+        self.assertEqual(workspace.delivery_count, 0)
+
+    # -- what the rest of the workspace derives from the rows ---------------
+
+    def test_completeness_sees_a_directly_linked_container(self):
+        """`has_started` and the no-shipment gap both read container_rows."""
+        container = _container(self.team, "MSC", "300011")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=container)
+
+        workspace, _rows = self._rows()
+
+        self.assertTrue(workspace.has_started)
+        self.assertEqual([row.container for row in workspace.containers_needing_shipment], [container])
+        self.assertIn("no_shipment", [gap.code for gap in workspace.gaps])
+
+    def test_the_containers_tab_lists_a_directly_linked_box_after_a_full_refresh(self):
+        container = _container(self.team, "MSC", "300012")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=container)
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["team"] = self.team.pk
+        session.save()
+
+        response = self.client.get(
+            reverse("procurement:purchase_order_detail", kwargs={"purchase_order_id": self.order.pk})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, container.container_id)
+        self.assertNotContains(response, "No containers booked yet")
+
+    def test_the_rows_do_not_cost_a_query_per_linked_container(self):
+        """Links are loaded in bulk like delivery lines, so the tab stays flat."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def queries_for(order):
+            with CaptureQueriesContext(connection) as captured:
+                workspace = get_purchase_order_workspace(team=self.team, purchase_order=order)
+                for row in workspace.container_rows:
+                    _ = (row.article_label, row.path_label, row.shipment, row.eta, row.filter_buckets)
+                for summary in get_purchase_order_line_summaries(workspace):
+                    _ = [link.container.container_id for link in summary["links"].acquired]
+                    _ = [link.container.container_id for link in summary["links"].loads]
+            return len(captured)
+
+        one_order = _order(self.team, "PO-Q1")
+        one_line = _line(one_order, "10000", "CONT45G1")
+        link_acquired_container(
+            team=self.team, purchase_order_line=one_line, container=_container(self.team, "MCU", "400001")
+        )
+
+        many_order = _order(self.team, "PO-Q8")
+        many_line = _line(many_order, "10000", "CONT45G1")
+        for index in range(8):
+            link_acquired_container(
+                team=self.team,
+                purchase_order_line=many_line,
+                container=_container(self.team, "MCU", f"{410000 + index:06d}"),
+            )
+
+        self.assertEqual(queries_for(many_order), queries_for(one_order))
+
+    def test_another_teams_link_never_reaches_these_rows(self):
+        other_team = Team.objects.create(name="Population other", slug="po-population-other")
+        other_order = _order(other_team, "OTHER-POP")
+        other_line = _line(other_order, "10000", "CONT45G1")
+        link_acquired_container(
+            team=other_team,
+            purchase_order_line=other_line,
+            container=_container(other_team, "CMA", "399999"),
+        )
+        mine = _container(self.team, "MSC", "300013")
+        link_acquired_container(team=self.team, purchase_order_line=self.equipment_line, container=mine)
+
+        workspace, _rows = self._rows()
+
+        self.assertEqual([row.container.pk for row in workspace.container_rows], [mine.pk])
 
 
 class PurchaseOrderWorkspaceLinksTest(TestCase):
@@ -362,7 +594,7 @@ class LinkViewTest(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_another_teams_load_cannot_be_removed(self):
+    def test_another_teams_load_cannot_be_removed_through_the_view(self):
         other_team = Team.objects.create(name="Link views third", slug="link-views-third")
         foreign_line = _line(_order(other_team, "THIRD"))
         foreign_load = set_container_load(
@@ -375,3 +607,154 @@ class LinkViewTest(TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertTrue(ContainerLoad.objects.filter(pk=foreign_load.pk).exists())
+
+
+class BusinessCentralLinkEndpointTest(TestCase):
+    """The four link routes, hit directly against an order Business Central owns.
+
+    The workspace draws no buttons for a BC order, so these posts are what a person
+    with a URL, a stale page or a script does. None of them may write: the service
+    refuses whatever the view decided, and the view turns the refusal into a sentence
+    rather than a stack trace.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="BC endpoints", slug="bc-link-endpoints")
+        cls.user = CustomUser.objects.create_user(username="bc-endpoints@example.com", password="pw")
+        Membership.objects.create(team=cls.team, user=cls.user, role="admin")
+        cls.order = _order(cls.team, "BC-EP", source=PurchaseOrderSource.BUSINESS_CENTRAL)
+        cls.equipment_line = _line(cls.order, "10000", "CONT45G1")
+        cls.goods_line = _line(cls.order, "20000", "DOORS")
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["team"] = self.team.pk
+        session.save()
+
+    def _acquisition(self, container):
+        """A link as the source system would have left it — made without the service."""
+        return ContainerAcquisition.objects.create(
+            team=self.team, purchase_order_line=self.equipment_line, container=container
+        )
+
+    def _load(self, container, quantity=Decimal("300")):
+        return ContainerLoad.objects.create(
+            team=self.team, purchase_order_line=self.goods_line, container=container, quantity=quantity
+        )
+
+    # -- acquisition --------------------------------------------------------
+
+    def test_the_acquisition_form_is_not_even_rendered_for_a_bc_line(self):
+        response = self.client.get(
+            reverse("procurement:line_link_acquired_container", kwargs={"line_id": self.equipment_line.pk})
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotContains(response, "Link container", status_code=302)
+
+    def test_posting_an_acquisition_to_a_bc_line_writes_nothing(self):
+        container = _container(self.team, "MSC", "500001")
+
+        response = self.client.post(
+            reverse("procurement:line_link_acquired_container", kwargs={"line_id": self.equipment_line.pk}),
+            {"container": container.pk},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(ContainerAcquisition.objects.exists())
+
+    def test_an_htmx_acquisition_post_to_a_bc_line_is_forbidden(self):
+        """htmx does not swap on a 4xx, so the modal stays put with the reason in it."""
+        container = _container(self.team, "MSC", "500002")
+
+        response = self.client.post(
+            reverse("procurement:line_link_acquired_container", kwargs={"line_id": self.equipment_line.pk}),
+            {"container": container.pk},
+            headers={"hx-request": "true"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(ContainerAcquisition.objects.exists())
+
+    def test_unlinking_a_bc_acquisition_through_the_view_is_refused(self):
+        acquisition = self._acquisition(_container(self.team, "MSC", "500003"))
+
+        response = self.client.post(
+            reverse("procurement:acquisition_unlink", kwargs={"acquisition_id": acquisition.pk})
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(ContainerAcquisition.objects.filter(pk=acquisition.pk).exists())
+
+    def test_unlinking_a_bc_acquisition_over_htmx_is_forbidden(self):
+        acquisition = self._acquisition(_container(self.team, "MSC", "500004"))
+
+        response = self.client.delete(
+            reverse("procurement:acquisition_unlink", kwargs={"acquisition_id": acquisition.pk}),
+            headers={"hx-request": "true"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(ContainerAcquisition.objects.filter(pk=acquisition.pk).exists())
+
+    # -- load ---------------------------------------------------------------
+
+    def test_posting_a_load_to_a_bc_line_writes_nothing(self):
+        container = _container(self.team, "TCL", "500005")
+
+        response = self.client.post(
+            reverse("procurement:line_add_container_load", kwargs={"line_id": self.goods_line.pk}),
+            {"container": container.pk, "quantity": "300"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(ContainerLoad.objects.exists())
+
+    def test_posting_a_load_to_a_bc_line_cannot_update_an_existing_one(self):
+        """The upsert path is a write too — the recorded quantity must not move."""
+        load = self._load(_container(self.team, "TCL", "500006"))
+
+        response = self.client.post(
+            reverse("procurement:line_add_container_load", kwargs={"line_id": self.goods_line.pk}),
+            {"container": load.container.pk, "quantity": "999"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        load.refresh_from_db()
+        self.assertEqual(load.quantity, Decimal("300"))
+
+    def test_removing_a_bc_load_through_the_view_is_refused(self):
+        load = self._load(_container(self.team, "TCL", "500007"))
+
+        response = self.client.post(reverse("procurement:container_load_remove", kwargs={"load_id": load.pk}))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(ContainerLoad.objects.filter(pk=load.pk).exists())
+
+    def test_removing_a_bc_load_over_htmx_is_forbidden(self):
+        load = self._load(_container(self.team, "TCL", "500008"))
+
+        response = self.client.delete(
+            reverse("procurement:container_load_remove", kwargs={"load_id": load.pk}),
+            headers={"hx-request": "true"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(ContainerLoad.objects.filter(pk=load.pk).exists())
+
+    # -- the same routes on an SCM-owned order still work -------------------
+
+    def test_an_scm_owned_order_is_unaffected_by_the_wall(self):
+        manual_order = _order(self.team, "MAN-EP", source=PurchaseOrderSource.MANUAL)
+        manual_line = _line(manual_order, "10000", "CONT45G1")
+        container = _container(self.team, "HLX", "500009")
+
+        response = self.client.post(
+            reverse("procurement:line_link_acquired_container", kwargs={"line_id": manual_line.pk}),
+            {"container": container.pk},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(ContainerAcquisition.objects.get().container, container)
