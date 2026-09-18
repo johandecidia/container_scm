@@ -8,7 +8,7 @@ around it.
 
 from decimal import Decimal
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import TestCase
 from django.urls import reverse
 
@@ -128,6 +128,83 @@ class ManualLineServiceTest(TestCase):
 
         self.bc.refresh_from_db()
         self.assertEqual(self.bc.supplier_name, "Supplier")
+
+
+class LineTeamIntegrityTest(TestCase):
+    """A line belongs to the same team as the order it is a line of.
+
+    ``create_purchase_order_line`` takes the team and the order as two separate
+    arguments and nothing in the signature makes them agree. A line stamped with one
+    team's id under another team's order is visible to the first team's queries and
+    rendered on the second team's workspace, which is a tenancy hole rather than a
+    typo — so both the service and the model refuse it.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="Mine", slug="line-team-mine")
+        cls.other = Team.objects.create(name="Theirs", slug="line-team-theirs")
+        cls.my_order = _order(cls.team, PurchaseOrderSource.MANUAL, "MINE-1")
+        cls.their_order = _order(cls.other, PurchaseOrderSource.MANUAL, "THEIRS-1")
+
+    def test_refuses_a_line_on_another_teams_order(self):
+        with self.assertRaises(ValidationError):
+            create_purchase_order_line(
+                team=self.team,
+                purchase_order=self.their_order,
+                line_no="10000",
+                item_no="DOORS",
+                ordered_qty=Decimal("100"),
+            )
+
+        self.assertFalse(PurchaseOrderLine.objects.exists())
+
+    def test_refuses_it_the_other_way_round_too(self):
+        with self.assertRaises(ValidationError):
+            create_purchase_order_line(
+                team=self.other,
+                purchase_order=self.my_order,
+                line_no="10000",
+                item_no="DOORS",
+            )
+
+        self.assertFalse(PurchaseOrderLine.objects.exists())
+
+    def test_the_model_refuses_a_cross_team_line_on_save(self):
+        """Declared on the model, so the admin, a shell session and an importer are covered."""
+        with self.assertRaises(ValidationError):
+            PurchaseOrderLine.objects.create(
+                team=self.team,
+                purchase_order=self.their_order,
+                external_id="smuggled",
+                line_no="10000",
+                item_no="DOORS",
+            )
+
+        self.assertFalse(PurchaseOrderLine.objects.exists())
+
+    def test_the_model_refuses_moving_an_existing_line_to_another_teams_order(self):
+        line = _line(self.my_order)
+
+        line.purchase_order = self.their_order
+        with self.assertRaises(ValidationError):
+            line.save(update_fields=["purchase_order"])
+
+        line.refresh_from_db()
+        self.assertEqual(line.purchase_order, self.my_order)
+
+    def test_a_matching_team_is_still_accepted(self):
+        """The check is about disagreement, not a new hurdle for the normal case."""
+        line = create_purchase_order_line(
+            team=self.team,
+            purchase_order=self.my_order,
+            line_no="10000",
+            item_no="DOORS",
+            ordered_qty=Decimal("100"),
+        )
+
+        self.assertEqual(line.team, self.team)
+        self.assertEqual(line.purchase_order, self.my_order)
 
 
 class ManualLineViewTest(TestCase):

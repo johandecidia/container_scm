@@ -1,13 +1,17 @@
 {% load i18n %}
 
 {% comment %}
-  The containers booked against this order, as an operational list rather than a
-  row of badges.
+  The containers on this order, as an operational list rather than a row of badges.
 
-  Every row carries the article it was booked for, because a container reaches a
-  purchase order through a delivery line and that line names the ordered article.
-  Losing it would flatten away the one thing that says which boxes belong to which
-  purchased line.
+  One row per physical container, whichever of the three relationships put it here:
+  booked onto a supplier delivery, bought on an order line, or filled with an order
+  line's goods. The read model deduplicates them, so a box reached two ways is one
+  row that names both — see `PurchaseOrderWorkspace.container_rows`.
+
+  Every row carries the article it is here for and how it got here. The article says
+  which boxes belong to which purchased line; the relationship says whether the box
+  *is* the purchase or is carrying it, which are different facts and lead to
+  different actions.
 
   Shipment, state and ETA all come from the bulk container-workspace build the read
   model already did — one fixed set of queries for the whole tab, not one per box.
@@ -66,6 +70,7 @@
           <tr>
             <th>{% translate "Container" %}</th>
             <th>{% translate "Article" %}</th>
+            <th>{% translate "Relationship" %}</th>
             <th>{% translate "State" %}</th>
             <th>{% translate "Shipment" %}</th>
             <th>{% translate "ETA" %}</th>
@@ -80,6 +85,13 @@
                 </a>
               </td>
               <td class="font-mono text-xs text-base-content/70">{{ row.article_label|default:"—" }}</td>
+              <td class="text-sm">
+                {% for label in row.path_labels %}
+                  <span class="badge badge-xs badge-ghost font-medium">{{ label }}</span>
+                {% empty %}
+                  <span class="text-base-content/40">—</span>
+                {% endfor %}
+              </td>
               <td class="text-sm">
                 {% if row.current_status %}
                   {{ row.current_status }}
@@ -117,6 +129,9 @@
               {{ row.current_status|default:not_tracked_label }}
               {% if row.shipment %}
                 <span class="text-base-content/30">·</span> {{ row.shipment }}
+              {% endif %}
+              {% if row.path_label %}
+                <span class="text-base-content/30">·</span> {{ row.path_label }}
               {% endif %}
             </p>
           </a>
