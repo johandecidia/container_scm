@@ -41,6 +41,18 @@
     resuming tracking somebody deliberately stopped.
   {% endcomment %}
   <div class="form-control mt-3">
+    {% comment %}
+      The hidden companion is what makes "do not track these" expressible. A clear
+      checkbox posts nothing, and nothing means "this request named no choice — use the
+      team setting", which is the rule every surface follows. Without it, unticking the
+      box on a team that has automatic tracking on would be silently ignored.
+
+      The value is "false" rather than "0" because Django's CheckboxInput reads the
+      strings "true" and "false" and calls bool() on anything else — so "0" would come
+      back as True. A ticked box appends its own value after this one and wins, since a
+      QueryDict yields the last value for a key.
+    {% endcomment %}
+    <input type="hidden" name="start_tracking" value="false">
     <label class="flex items-start gap-3 cursor-pointer" for="{{ form.start_tracking.id_for_label }}">
       {{ form.start_tracking }}
       <span>

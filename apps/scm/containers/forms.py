@@ -100,14 +100,20 @@ class ContainerAttributesForm(forms.Form):
         """The attribute fields alone, so a template can render them as one block."""
         return [self[name] for name in self.ATTRIBUTE_FIELDS]
 
-    def start_tracking_choice(self) -> bool:
+    def start_tracking_choice(self) -> bool | None:
         """Whether this intake asked for its new containers to be tracked.
 
-        Always a definite answer rather than "unset", because the form was rendered with
-        the team's policy already applied: what comes back is the operator's decision,
-        whether or not they touched the box. The "no override" case — where the team
-        default decides — is the one where no form was involved at all.
+        Three answers, not two. ``None`` means the submission named no choice, and the
+        team's setting decides — which keeps one rule across every surface that can
+        start tracking, instead of "absent means the team default" on the import confirm
+        and "absent means no" here.
+
+        A browser always names one: the template renders a hidden ``0`` beside the
+        checkbox precisely so that clearing it is expressible. So ``False`` here is a
+        decision somebody made, and ``None`` is a request that never showed the control.
         """
+        if "start_tracking" not in self.data:
+            return None
         return bool(self.cleaned_data.get("start_tracking"))
 
     def container_attributes(self) -> dict:

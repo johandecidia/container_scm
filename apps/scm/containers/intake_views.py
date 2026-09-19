@@ -344,7 +344,7 @@ def _preview_response(
     entries: list[tuple[str, str]],
     tab: str,
     attribute_values: dict | None = None,
-    start_tracking: bool = False,
+    start_tracking: bool | None = None,
     purchase_order=None,
 ):
     preview = preview_containers(team=team, entries=entries)
@@ -359,8 +359,10 @@ def _preview_response(
         # fields, and are validated again there — this side of the trip is the browser's.
         attribute_values=attribute_values or {},
         # As an explicit flag rather than a checkbox, so "off" survives the trip: a
-        # clear checkbox would post nothing and read back as "not chosen".
-        start_tracking="1" if start_tracking else "0",
+        # clear checkbox would post nothing and read back as "no choice named". Empty
+        # when this submission named none, so the confirm falls back to the team
+        # setting rather than to a value invented here.
+        start_tracking="" if start_tracking is None else ("1" if start_tracking else "0"),
         purchase_order=purchase_order,
     )
 

@@ -308,12 +308,28 @@ class IntakeImportTrackingTest(TestCase):
         self.assertContains(response, 'name="start_tracking" value="1"')
 
     def test_an_unticked_box_travels_as_an_explicit_off(self):
-        """Not as an absent field, which would read back as "the team default decides"."""
+        """Not as an absent field, which would read back as "the team default decides".
+
+        A browser sends the hidden 0 the attributes template renders, which is what
+        makes clearing the box expressible at all.
+        """
+        set_team_auto_start_tracking(self.team, True)
+
+        response = self.client.post(
+            "/scm/containers/import/paste/",
+            # What the template's hidden companion sends for a clear checkbox.
+            {"numbers": NEW_ONE, "start_tracking": "false"},
+        )
+
+        self.assertContains(response, 'name="start_tracking" value="0"')
+
+    def test_a_submission_naming_no_choice_leaves_it_to_the_team_setting(self):
+        """One rule on every surface: absent means the team default decides."""
         set_team_auto_start_tracking(self.team, True)
 
         response = self.client.post("/scm/containers/import/paste/", {"numbers": NEW_ONE})
 
-        self.assertContains(response, 'name="start_tracking" value="0"')
+        self.assertNotContains(response, 'name="start_tracking"')
 
     def test_only_the_newly_created_containers_are_tracked(self):
         _response, spy = self._confirm(start_tracking="1")
@@ -372,6 +388,27 @@ class IntakeImportTrackingTest(TestCase):
                 {"container_number": NEW_ONE, "start_tracking": "on"},
             )
         self.assertEqual(spy.containers, [])
+
+    def test_a_single_add_can_decline_a_team_default_of_on(self):
+        set_team_auto_start_tracking(self.team, True)
+        spy = _SpyStart()
+
+        with _patch_start(spy):
+            self.client.post(
+                "/scm/containers/create/",
+                {"container_number": NEW_ONE, "start_tracking": "false"},
+            )
+
+        self.assertEqual(spy.containers, [])
+
+    def test_a_single_add_naming_no_choice_follows_the_team_setting(self):
+        set_team_auto_start_tracking(self.team, True)
+        spy = _SpyStart()
+
+        with _patch_start(spy):
+            self.client.post("/scm/containers/create/", {"container_number": NEW_ONE})
+
+        self.assertEqual(spy.containers, [NEW_ONE])
 
 
 @override_settings(CACHES=_LOCMEM)
