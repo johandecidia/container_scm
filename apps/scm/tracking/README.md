@@ -21,9 +21,95 @@ So there are two fields and two decisions.
 | Carrier resolution | who is carrying the box | `integrations/carriers/carrier_resolution.py` | no |
 | Provider routing | who to ask about it | `tracking/provider_routing.py` | no |
 | Activation | does the asking and storing | `tracking/activation.py` | yes |
+| Lifecycle | whether we are asking at all | `tracking/lifecycle.py` | yes |
 
 Keeping the first two free of writes is what makes them safe to reason about: neither can
 spend a call or create a subscription, so a return value is the whole of what happened.
+
+## Start and stop (TRACK-ADMIN)
+
+`lifecycle.py` is the only thing the UI and the imports need to know about for explicit
+Start and Stop. It is a layer over the three decisions above rather than a fourth one:
+`start_container_tracking()` reaches them through `refresh_container_tracking()`, which
+already asks the question a start has to ask — refresh the sources this box proved, or
+find one.
+
+```
+start_container_tracking()     already live        → nothing asked, nothing created
+                               stopped watch       → resumed, then refreshed
+                               nothing at all      → resolution → routing → activation
+
+stop_container_tracking()      external release where a provider bills for one
+                               → local deactivation
+                               → nothing left for the scheduler to pick up
+```
+
+**Whether a container is tracked is `LIVE_SUBSCRIPTION_STATUSES`.** There is no
+`Container.tracking_enabled`, deliberately: a boolean beside the subscriptions could
+disagree with them, and the disagreement would be invisible — the flag saying tracking
+while the dispatcher polls nothing. The container list annotates the same rule
+(`tracking_live`), the workspace reads it as `has_live_tracking`, and the Control Tower
+already read it. One question, one answer, three surfaces.
+
+**A stopped watch is resumed before anything is fetched.** `CANCELLED` is excluded from
+`get_verified_container_subscriptions()`, which is what carrier resolution reads as
+trusted knowledge — so starting a stopped container *without* resuming it would run the
+whole discovery chain to re-learn a carrier that is written on the row in front of us,
+at the cost of a lookup, up to five Traqo probes and possibly a Vizion reference.
+Resuming first makes a restart one ordinary sync. It is the one write that precedes a
+fetch, and it creates no source and asserts nothing new.
+
+### What stop means to a provider, and why it is per source
+
+`sources.py` carries a `stop_tracking` capability beside `scheduled_sync`, for the same
+reason that one is per source rather than per "is it an aggregator":
+
+```
+Vizion   a reference is the billable unit and stays subscribed until released
+         → DELETE /references/{id}, which the client already implements
+Traqo    publishes no stop, delete, unsubscribe or archive call. Two GETs, and its
+         shipment slots free up as shipments close at Traqo's end
+         → stopping means it stops being polled
+```
+
+Direct carriers answer as Traqo does. `CarrierCapability.supports_subscriptions` says
+what a carrier's API offers on paper, and no adapter implements a subscribe or
+unsubscribe — each is a pull against a container number — so a direct stop is local by
+nature rather than by omission. Nothing invents an endpoint to look symmetric.
+
+**A refused release is not a refused stop.** Where a provider was asked and failed, the
+watch is left `PAUSED`: nothing polls it, the container reads as not tracked, and the
+reference is still on the row so pressing Stop again retries. Declining to stop locally
+would keep spending requests *and* keep paying for the reference. A provider that cannot
+be reached at all is a different outcome from one that failed, because no retry can
+supply a missing credential — treating it as retryable would make the container
+impossible to stop.
+
+**Stop deletes nothing.** Events, raw payloads, positions, ETA history and carrier
+evidence all survive, so a stopped container still shows its whole journey and can be
+started again. Who stopped it is in `SCMAuditLog`; when is the watch's own `updated_at`,
+which `ContainerWorkspace.tracking_stopped_at` derives — no `stopped_at` column to fall
+out of step with the status it describes.
+
+### Automatic start, and what "new" means
+
+`TeamTrackingSettings.auto_start_tracking_for_new_containers` is off by default because
+tracking costs a provider request per container and, through an aggregator, a shipment
+slot. `auto_start_tracking_for_containers()` resolves it: `enabled=None` means the team's
+setting decides, and `True`/`False` is an import overriding it for one run.
+
+It only ever runs for containers an import **created** — `IntakeResult.created_containers`
+and `run_import()`'s return value. A number that merely appeared in the file again is not
+new, and starting it would mean a re-uploaded spreadsheet resuming tracking somebody had
+deliberately stopped.
+
+Tracking is downstream of persistence and cannot take it back. `run_import` is atomic and
+the auto-start runs after it, because a provider call inside that transaction would hold
+it open for a carrier's response and roll a stored container back on a carrier's outage.
+Each container is started on its own and every outcome is counted rather than raised, so
+an import that stored its containers is a successful import even where tracking could not
+start — and the failures are named on the summary, because the only way that is
+recoverable is if somebody can see which boxes they were.
 
 ## Discovery order, and why it is a cost policy
 
@@ -213,6 +299,14 @@ scheduler alike, rather than being remembered separately at three call sites.
 A scheduled poll re-runs **no** part of carrier discovery. The watch already records who is
 carrying the box; see `integrations/traqo/README.md` for why re-deriving it per cycle would
 be both expensive and wrong.
+
+**The dispatcher knows nothing about why a watch is live.** It asks
+`get_due_tracking_subscriptions()` for the watches that are runnable and due, and that is
+the whole of its contract with the lifecycle above: Start and Stop decide which
+subscriptions are active, the scheduler consumes the state. Nothing in it reads the admin
+UI, the team's automatic-tracking setting, an import, or why somebody switched a container
+off — and a watch whose provider release failed is out of the queue for the same reason a
+cancelled one is, because `PAUSED` was never in it either.
 
 ## Failure semantics
 
