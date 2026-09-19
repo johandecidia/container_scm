@@ -443,6 +443,62 @@ class ProviderStatusVisibilityTest(TestCase):
         with self._with_usage():
             self.assertNotEqual(self._as(staff).get(self.url).status_code, 200)
 
+    def test_an_unconfigured_provider_renders_as_a_state_not_an_error(self):
+        """A deployment fact, and the page still has to render."""
+        with mock.patch(
+            "apps.scm.tracking.platform_views.get_provider_usage",
+            return_value=TraqoUsageFetch(
+                provider_code=TRAQO_PROVIDER_CODE, provider_name="Traqo Ocean", configured=False
+            ),
+        ):
+            response = self._as(self.superuser).get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Not configured")
+        self.assertNotContains(response, "Shipments used")
+
+    def test_a_provider_that_could_not_be_asked_renders_the_reason(self):
+        """An incident, and distinct from not being configured."""
+        with mock.patch(
+            "apps.scm.tracking.platform_views.get_provider_usage",
+            return_value=TraqoUsageFetch(
+                provider_code=TRAQO_PROVIDER_CODE,
+                provider_name="Traqo Ocean",
+                error="CarrierServerError: 502",
+            ),
+        ):
+            response = self._as(self.superuser).get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "could not be asked")
+        self.assertContains(response, "CarrierServerError")
+
+    def test_an_exhausted_allowance_is_shown_as_such(self):
+        exhausted = ProviderUsage(
+            provider_code=TRAQO_PROVIDER_CODE,
+            provider_name="Traqo Ocean",
+            plan="professional",
+            effective_limit=25,
+            used=25,
+            active=10,
+            remaining=0,
+        )
+        with mock.patch(
+            "apps.scm.tracking.platform_views.get_provider_usage",
+            return_value=TraqoUsageFetch(
+                provider_code=TRAQO_PROVIDER_CODE, provider_name="Traqo Ocean", usage=exhausted
+            ),
+        ):
+            response = self._as(self.superuser).get(self.url)
+
+        self.assertContains(response, "Exhausted")
+
+    def test_sandbox_figures_are_labelled_so_they_are_not_read_as_ours(self):
+        with self._with_usage():
+            response = self._as(self.superuser).get(self.url)
+
+        self.assertContains(response, "Sandbox figures")
+
     def test_the_team_admin_nav_does_not_link_to_it(self):
         response = self._as(self.admin).get(reverse("containers:list"))
 
