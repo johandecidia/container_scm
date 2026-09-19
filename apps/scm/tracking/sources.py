@@ -15,6 +15,7 @@ this module answers the questions that difference actually forces, and nothing m
 * Is it resolved through the carrier registry? (``is_polled_by_carrier_sync``)
 * How does the scheduled poller fetch it, if it can at all? (``get_scheduled_provider_sync``)
 * Which ones can it not fetch? (``unfetchable_provider_codes``)
+* Does stopping a watch have to be reported to it? (``release_provider_subscription``)
 
 The last three answer two different questions that look like one. "Resolved through the
 carrier registry" is about *how* a provider is reached — it is what
@@ -37,12 +38,35 @@ aggregators answer them differently:
 That is why the capability is per source rather than per "is it an aggregator": a blanket
 rule in either direction would either strand Traqo or start buying Vizion references.
 
+**Stopping is per source for exactly the same reason, and the two aggregators differ
+again.** When :mod:`apps.scm.tracking.lifecycle` stops watching a container, whether
+anything has to be said to the provider is a fact about that provider's contract:
+
+    Vizion   a reference is the billable unit and stays active until it is released, so
+             stopping locally while leaving it subscribed goes on costing money.
+             ``DELETE /references/{id}`` is published for this and the client already
+             implements it — see ``integrations/vizion/README.md``.
+    Traqo    publishes no stop, delete, unsubscribe or archive call. Its integrated
+             contract is two GETs, its billable unit is a shipment slot spent on fetch,
+             and ``errors.py`` records that slots free up as shipments close — at
+             Traqo's end, not ours. So the cost a stop can actually end is the polling,
+             and it ends by taking the watch out of the due query. Nothing is guessed
+             here: a ``DELETE /container/<no>`` invented to look symmetric would be a
+             call against an endpoint that is not documented to exist.
+
+Direct carriers answer it the same way Traqo does. ``CarrierCapability`` has a
+``supports_subscriptions`` flag, but it describes what a carrier's API offers on paper
+and no adapter implements a subscribe or unsubscribe call — each one is a pull against
+a container number. There is nothing remote to withdraw, so stopping a direct watch is
+local by nature rather than by omission.
+
 It does **not** decide which provider should track a container. That is
 :mod:`apps.scm.tracking.provider_routing`.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -59,6 +83,40 @@ if TYPE_CHECKING:
     from .models import TrackingSubscription
     from .sync import SyncOutcome
 
+logger = logging.getLogger(__name__)
+
+
+# What asking a provider to stop watching a container achieved. Four values, because the
+# lifecycle has to treat them differently and collapsing any two would lose money or
+# lose the ability to retry.
+#
+# ``STOP_RELEASED``      the provider was told and confirmed. Nothing is still charged.
+# ``STOP_NOT_REQUIRED``  there is nothing to release — the provider keeps no subscription
+#                        of its own, or this watch never recorded a handle for one.
+# ``STOP_NOT_CONFIGURED``the provider cannot be reached at all, so it was never asked.
+#                        Distinct from a failure because no retry can fix it: nobody can
+#                        release a reference without a credential, and refusing to record
+#                        the stop would leave the container permanently unstoppable.
+# ``STOP_FAILED``        we asked and the call failed. The only retryable one.
+STOP_RELEASED = "released"
+STOP_NOT_REQUIRED = "not_required"
+STOP_NOT_CONFIGURED = "not_configured"
+STOP_FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ProviderStopOutcome:
+    """What one attempt to release a provider's own subscription achieved."""
+
+    state: str
+    # For the log and for the watch's ``last_error_message``. Providers' own messages,
+    # which their error classifiers keep free of credentials.
+    detail: str = ""
+
+    @property
+    def released(self) -> bool:
+        return self.state == STOP_RELEASED
+
 
 @dataclass(frozen=True)
 class NonCarrierSource:
@@ -74,10 +132,19 @@ class NonCarrierSource:
     # fulfils, so the engine's run, state and cadence handling is shared rather than
     # reimplemented.
     scheduled_sync: Callable[[TrackingSubscription], SyncOutcome] | None = None
+    # How a watch on this provider is withdrawn *at the provider*, or None when there is
+    # nothing to withdraw. None is the honest answer for a provider whose contract has no
+    # such call, and it is the answer for Traqo — see this module's docstring.
+    stop_tracking: Callable[[TrackingSubscription], ProviderStopOutcome] | None = None
 
     @property
     def supports_scheduled_tracking(self) -> bool:
         return self.scheduled_sync is not None
+
+    @property
+    def requires_external_stop(self) -> bool:
+        """Whether stopping a watch here has to be reported to the provider."""
+        return self.stop_tracking is not None
 
     def __str__(self) -> str:
         return self.name
@@ -102,6 +169,13 @@ def _sync_traqo(subscription: TrackingSubscription) -> SyncOutcome:
     return sync_traqo_subscription(subscription)
 
 
+def _stop_vizion(subscription: TrackingSubscription) -> ProviderStopOutcome:
+    """Release one Vizion reference. Imported lazily, like every other provider call."""
+    from apps.scm.integrations.vizion.service import release_vizion_reference
+
+    return release_vizion_reference(subscription)
+
+
 _NON_CARRIER_SOURCES: dict[str, NonCarrierSource] = {
     TRAQO_PROVIDER_CODE: NonCarrierSource(
         code=TRAQO_PROVIDER_CODE,
@@ -109,6 +183,10 @@ _NON_CARRIER_SOURCES: dict[str, NonCarrierSource] = {
         read_payload=_read_traqo_payload,
         refresh_hint="refresh the container's tracking",
         scheduled_sync=_sync_traqo,
+        # No ``stop_tracking``, and this absence is a finding rather than a gap: Traqo's
+        # contract here is ``GET container/<no>?sealine=X`` and ``GET carriers/lookup``,
+        # and it publishes nothing that ends a shipment. Stopping a Traqo watch therefore
+        # means it stops being polled, which is the cost this end controls.
     ),
     # No ``scheduled_sync``, and that absence is the decision: registering Vizion here is
     # what stops the scheduled sync queueing a Vizion subscription and then marking the
@@ -119,6 +197,11 @@ _NON_CARRIER_SOURCES: dict[str, NonCarrierSource] = {
         name=VIZION_PROVIDER_NAME,
         read_payload=_read_vizion_payload,
         refresh_hint="run the vizion_test management command",
+        # The mirror image of the missing ``scheduled_sync``. Vizion is never polled, so
+        # it costs nothing per cycle — but the reference it bills for stays subscribed
+        # until it is released, so stopping a Vizion watch without telling Vizion is the
+        # one stop that would keep charging.
+        stop_tracking=_stop_vizion,
     ),
 }
 
@@ -159,3 +242,26 @@ def non_carrier_provider_codes() -> tuple[str, ...]:
 def unfetchable_provider_codes() -> tuple[str, ...]:
     """Provider codes the scheduled sync cannot fetch, for excluding from its queue."""
     return tuple(code for code, source in _NON_CARRIER_SOURCES.items() if not source.supports_scheduled_tracking)
+
+
+def release_provider_subscription(subscription: TrackingSubscription) -> ProviderStopOutcome:
+    """Tell ``subscription``'s provider to stop watching, where it has to be told.
+
+    The one place :mod:`apps.scm.tracking.lifecycle` asks "does stopping this cost a
+    provider call", so the answer is a property of the source rather than an ``if
+    provider.code == "vizion"`` in the lifecycle.
+
+    ``STOP_NOT_REQUIRED`` for every provider that keeps no subscription of its own —
+    which is every direct carrier and, today, Traqo. Never raises: a provider error
+    becomes a ``STOP_FAILED`` outcome, because a stop that crashed the request would
+    leave the watch in whatever state the exception interrupted.
+    """
+    source = get_non_carrier_source(subscription.provider.code if subscription.provider_id else "")
+    if source is None or source.stop_tracking is None:
+        return ProviderStopOutcome(state=STOP_NOT_REQUIRED)
+
+    try:
+        return source.stop_tracking(subscription)
+    except Exception as exc:  # noqa: BLE001 — a stop must not fail as an exception
+        logger.exception("Releasing the %s subscription for watch %s failed.", source.code, subscription.pk)
+        return ProviderStopOutcome(state=STOP_FAILED, detail=f"{type(exc).__name__}: {exc}")
