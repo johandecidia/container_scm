@@ -178,6 +178,18 @@
     </a>
   </li>
   <li>
+    {% comment %}
+      Provider account status: our own plan and allowance with each tracking
+      aggregator. In this block because it is platform information rather than tenant
+      information — the view enforces is_superuser itself, so this link only decides
+      whether it is easy to find.
+    {% endcomment %}
+    <a href="{% url 'tracking:provider_status' %}" {% if active_tab == 'provider-status' %}class="menu-active"{% endif %}>
+      <i class="fa fa-satellite-dish h-4 w-4"></i>
+      {% translate "Tracking Providers" %}
+    </a>
+  </li>
+  <li>
     <a href="{% url 'support:hijack_user' %}" {% if active_tab == 'support' %}class="menu-active"{% endif %}>
       <i class="fa fa-user-secret h-4 w-4"></i>
       {% translate "Impersonate a User" %}

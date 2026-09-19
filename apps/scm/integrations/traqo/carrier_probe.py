@@ -41,6 +41,8 @@ from apps.scm.integrations.carriers.exceptions import (
     CarrierConfigurationError,
     CarrierError,
     CarrierNoDataError,
+    CarrierProviderBillingError,
+    CarrierProviderQuotaError,
     CarrierRateLimitError,
     CarrierUnsupportedReferenceError,
 )
@@ -158,6 +160,18 @@ class TraqoCarrierProbeResult:
     attempts: tuple[TraqoProbeAttempt, ...] = ()
     error_kind: str = ""
     error_message: str = ""
+
+    @property
+    def account_blocked(self) -> bool:
+        """True when the probe stopped because our Traqo account cannot take new work.
+
+        A spent allowance or a suspended account, as opposed to a rejected credential or
+        a malformed reference. It is a distinct question because it has a distinct
+        consequence: the resolution chain must not answer an exhausted provider budget by
+        spending a *different* provider's money. See
+        :func:`apps.scm.integrations.carriers.carrier_resolution.resolve_carrier_for_container`.
+        """
+        return self.outcome == ERROR and _is_account_blocked(self.error_kind)
 
     @property
     def found(self) -> bool:
@@ -510,19 +524,40 @@ def _attempt(candidate: TraqoProbeCandidate, outcome: str, **kwargs) -> TraqoPro
 # Failures that say nothing about the candidate and everything about the account, the
 # credential or the request itself. Classified by consequence, following
 # :mod:`.errors`: another sealine cannot fix a rejected key (401), an account with
-# developer access off or payment overdue (403/402), a shipment quota that is full
-# (402, rate-limit family) or a container number Traqo will not accept at all.
+# developer access off (403), a spent shipment allowance or an unpaid account (402), or
+# a container number Traqo will not accept at all.
 _FATAL_ERROR_KINDS: frozenset[str] = frozenset(
     {
         CarrierAuthenticationError.__name__,
         CarrierConfigurationError.__name__,
         CarrierRateLimitError.__name__,
         CarrierUnsupportedReferenceError.__name__,
+        CarrierProviderQuotaError.__name__,
+        CarrierProviderBillingError.__name__,
         "TraqoShipmentLimitReachedError",
         "TraqoPaymentOverdueError",
         "TraqoDeveloperModeDisabledError",
     }
 )
+
+# The subset of those that are about *our account's capacity to take on new work* rather
+# than about configuration or this container. Carried out of the probe as a flag rather
+# than left for a caller to rediscover by matching class names, because what it decides
+# is a spending decision: see ``carrier_resolution``, which stops the chain before
+# Vizion when it is set.
+_ACCOUNT_BLOCKED_ERROR_KINDS: frozenset[str] = frozenset(
+    {
+        CarrierProviderQuotaError.__name__,
+        CarrierProviderBillingError.__name__,
+        "TraqoShipmentLimitReachedError",
+        "TraqoPaymentOverdueError",
+    }
+)
+
+
+def _is_account_blocked(error_kind: str) -> bool:
+    """Whether this failure means the provider account cannot take on another shipment."""
+    return error_kind in _ACCOUNT_BLOCKED_ERROR_KINDS
 
 
 def _is_fatal(error_kind: str) -> bool:

@@ -431,6 +431,35 @@ def resolve_carrier_for_container(
         direct_outcome = None
 
     # --- 5. Vizion ACI, which costs a reference ---------------------------------
+    #
+    # Skipped when the aggregator above reported that *our account* cannot take on
+    # another shipment. A spent Traqo allowance is a budget we have run out of, and
+    # answering it by buying a Vizion reference would resolve one provider's exhausted
+    # cost ceiling by quietly starting to spend another's. Vizion is a paid provider
+    # too, and nobody asked for that substitution.
+    #
+    # Deliberately narrow: this is not "any Traqo error stops the chain". A timeout, a
+    # 5xx or a rejected key still falls through to Vizion exactly as before, because
+    # none of those means we are out of money. Only a quota or a billing suspension —
+    # see ``TraqoCarrierProbeResult.account_blocked`` — has this consequence.
+    account_blocked = probe_result is not None and probe_result.account_blocked
+    if use_vizion_aci and account_blocked:
+        steps.append(
+            ResolutionStep(
+                step=STEP_VIZION_ACI,
+                outcome=SKIPPED,
+                detail="provider account cannot take on another shipment",
+            )
+        )
+        resolution = CarrierResolution(
+            container_number=reference,
+            steps=tuple(steps),
+            discovery=direct_outcome,
+            traqo_probe=probe_result,
+        )
+        _log(resolution)
+        return resolution
+
     if use_vizion_aci:
         identification = (vizion_identify or _default_vizion_identify)(reference)
         steps.append(

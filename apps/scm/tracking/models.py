@@ -701,6 +701,12 @@ class TrackingSyncRun(BaseTeamModel):
         # A working provider that this poller is simply not the one to call. Distinct
         # from NOT_CONFIGURED because nothing is wrong and nobody needs to fix it.
         NOT_CARRIER_POLLED = "not_carrier_polled", _("Not polled by the carrier sync")
+        # The provider's own account, rather than this reference or this installation.
+        # Kept apart from NOT_CONFIGURED because nothing here is misconfigured, and from
+        # RATE_LIMIT because neither clears in minutes: a quota clears when the billing
+        # cycle does, and an unpaid account clears when somebody pays.
+        PROVIDER_QUOTA = "provider_quota", _("Provider allowance spent for this cycle")
+        PROVIDER_BILLING = "provider_billing", _("Provider account suspended for billing")
         ALREADY_RUNNING = "already_running", _("Sync already running")
         UNSUPPORTED_REFERENCE = "unsupported_reference", _("Unsupported reference")
         AUTHENTICATION = "authentication", _("Authentication failed")

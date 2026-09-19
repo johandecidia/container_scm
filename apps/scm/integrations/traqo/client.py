@@ -52,6 +52,11 @@ _CONTAINER_NUMBER_RE = re.compile(r"^[A-Z]{4}\d{7}$")
 # while ``container`` may consume one of the account's shipment slots.
 CARRIER_LOOKUP_PATH = "carriers/lookup"
 
+# The account's own plan, allowance and billing cycle. Free — it consumes no shipment
+# slot and makes no upstream carrier call — which is what makes it safe to read for a
+# status page rather than discovering the limit by hitting it.
+ACCOUNT_USAGE_PATH = "account/usage"
+
 
 class TraqoClient:
     """Reads container tracking from Traqo, in sandbox or production mode."""
@@ -147,10 +152,22 @@ class TraqoClient:
 
     def carrier_lookup_url(self) -> str:
         """Return the carrier-lookup endpoint URL, sandbox or production."""
+        return self._url(CARRIER_LOOKUP_PATH)
+
+    def account_usage_url(self) -> str:
+        """Return the account-usage endpoint URL, sandbox or production."""
+        return self._url(ACCOUNT_USAGE_PATH)
+
+    def _url(self, path: str) -> str:
+        """Join ``path`` onto the base URL, inserting the sandbox segment when in sandbox.
+
+        The sandbox is a path segment and nothing else, so every endpoint composes its
+        URL the same way and none of them has to remember the branch.
+        """
         segments = [self.base_url]
         if self.sandbox:
             segments.append(SANDBOX_SEGMENT)
-        segments.append(CARRIER_LOOKUP_PATH)
+        segments.append(path)
         return "/".join(segments)
 
     # ------------------------------------------------------------------
@@ -249,4 +266,32 @@ class TraqoClient:
             container_number,
             len(payload["data"].get("events_table") or []),
         )
+        return payload
+
+    def get_account_usage(self) -> dict:
+        """Return Traqo's account usage envelope — plan, allowance, cycle, rate limit.
+
+        Free at Traqo's end: it spends no shipment slot and makes no upstream carrier
+        call, drawing only on the per-minute request budget. That is what makes it
+        readable for a status page — the alternative is discovering the limit by hitting
+        it, which costs a failed tracking attempt to learn.
+
+        The whole envelope is returned rather than a parsed model, for the same reason
+        :meth:`get_container` returns one: a transport must not also be a schema. What
+        the numbers *mean* is :mod:`.usage`.
+
+        Everything in here describes our own account, so the caller is responsible for
+        keeping it away from customers — see ``tracking/platform_views.py``, which is the
+        only thing that renders it.
+        """
+        payload = self.http.get(self.account_usage_url())
+        if not isinstance(payload, dict):
+            raise CarrierInvalidResponseError(
+                "Traqo account usage did not return a JSON object.",
+                provider_code=PROVIDER_CODE,
+                status_code=200,
+            )
+        if payload.get("success") is False:
+            message = str(payload.get("message") or "").strip() or "Traqo reported the usage request unsuccessful."
+            raise CarrierInvalidResponseError(message, provider_code=PROVIDER_CODE, status_code=200)
         return payload

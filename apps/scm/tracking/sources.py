@@ -16,6 +16,7 @@ this module answers the questions that difference actually forces, and nothing m
 * How does the scheduled poller fetch it, if it can at all? (``get_scheduled_provider_sync``)
 * Which ones can it not fetch? (``unfetchable_provider_codes``)
 * Does stopping a watch have to be reported to it? (``release_provider_subscription``)
+* How much of our account with it is left? (``get_provider_usage``)
 
 The last three answer two different questions that look like one. "Resolved through the
 carrier registry" is about *how* a provider is reached — it is what
@@ -46,19 +47,13 @@ anything has to be said to the provider is a fact about that provider's contract
              stopping locally while leaving it subscribed goes on costing money.
              ``DELETE /references/{id}`` is published for this and the client already
              implements it — see ``integrations/vizion/README.md``.
-    Traqo    publishes no stop, delete, unsubscribe or archive call. Its integrated
-             contract is two GETs, its billable unit is a shipment slot spent on fetch,
-             and ``errors.py`` records that slots free up as shipments close — at
-             Traqo's end, not ours. So the cost a stop can actually end is the polling,
-             and it ends by taking the watch out of the due query. Nothing is guessed
-             here: a ``DELETE /container/<no>`` invented to look symmetric would be a
-             call against an endpoint that is not documented to exist.
+    Traqo    no stop is wired up yet; TRACK-ADMIN-1F adds it.
 
-Direct carriers answer it the same way Traqo does. ``CarrierCapability`` has a
+Direct carriers are the ones with nothing to withdraw. ``CarrierCapability`` has a
 ``supports_subscriptions`` flag, but it describes what a carrier's API offers on paper
 and no adapter implements a subscribe or unsubscribe call — each one is a pull against
-a container number. There is nothing remote to withdraw, so stopping a direct watch is
-local by nature rather than by omission.
+a container number. So stopping a direct watch is local by nature rather than by
+omission.
 
 It does **not** decide which provider should track a container. That is
 :mod:`apps.scm.tracking.provider_routing`.
@@ -69,6 +64,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from apps.scm.integrations.carriers.dcsa.schemas import NormalisedTrackingEvent
@@ -118,6 +114,69 @@ class ProviderStopOutcome:
         return self.state == STOP_RELEASED
 
 
+# How much of an account is left, as a status rather than a number. Ours, for a page:
+# it is not a state Traqo reports and nothing decides anything from it.
+USAGE_OK = "ok"
+USAGE_WARNING = "warning"
+USAGE_EXHAUSTED = "exhausted"
+
+
+@dataclass(frozen=True)
+class ProviderUsage:
+    """How much of our account with one provider is spent this billing cycle.
+
+    Platform information, not tenant information. Every field here describes the
+    installation's own commercial relationship with a provider — the plan we bought, the
+    allowance on it, what it has cost so far — and none of it belongs to any team. It is
+    read by one superuser-only view and must reach nothing else; see
+    ``tracking/platform_views.py``.
+
+    ``used`` and ``active`` are kept as the two different numbers they are. See
+    ``integrations/traqo/usage.py`` for why ``used 25, active 10, remaining 0`` is an
+    ordinary state and why treating ``active`` as the spend would overstate capacity.
+    """
+
+    provider_code: str
+    provider_name: str
+    plan: str = ""
+    period_days: int = 0
+    cycle_start: datetime | None = None
+    cycle_end: datetime | None = None
+    limit: int = 0
+    addon_slots: int = 0
+    carried_slots: int = 0
+    effective_limit: int = 0
+    used: int = 0
+    active: int = 0
+    remaining: int = 0
+    # True when these are the provider's fixed demo numbers rather than our account's.
+    sandbox: bool = False
+
+    @property
+    def status(self) -> str:
+        """``USAGE_OK`` / ``USAGE_WARNING`` / ``USAGE_EXHAUSTED``.
+
+        A presentation grade over the numbers, decided here so the template holds no
+        thresholds. Exhausted is exactly zero remaining rather than a near-zero band,
+        because the provider's own answer to an activation is what actually decides
+        whether tracking can start — this only decides how loud the page is.
+        """
+        from apps.scm.integrations.traqo.usage import WARNING_REMAINING_FRACTION
+
+        if self.remaining <= 0:
+            return USAGE_EXHAUSTED
+        if self.effective_limit > 0 and self.remaining <= self.effective_limit * WARNING_REMAINING_FRACTION:
+            return USAGE_WARNING
+        return USAGE_OK
+
+    @property
+    def is_exhausted(self) -> bool:
+        return self.status == USAGE_EXHAUSTED
+
+    def __str__(self) -> str:
+        return f"{self.provider_name}: {self.used}/{self.effective_limit} used, {self.remaining} remaining"
+
+
 @dataclass(frozen=True)
 class NonCarrierSource:
     """A tracking provider that feeds the canonical pipeline from outside the registry."""
@@ -134,8 +193,12 @@ class NonCarrierSource:
     scheduled_sync: Callable[[TrackingSubscription], SyncOutcome] | None = None
     # How a watch on this provider is withdrawn *at the provider*, or None when there is
     # nothing to withdraw. None is the honest answer for a provider whose contract has no
-    # such call, and it is the answer for Traqo — see this module's docstring.
+    # such call — see this module's docstring.
     stop_tracking: Callable[[TrackingSubscription], ProviderStopOutcome] | None = None
+    # How much of our account with this provider is left, or None when it publishes no
+    # such endpoint. Installation-wide, so it takes no team: these aggregators are one
+    # account for the whole deployment, which is exactly why the answer is superuser-only.
+    account_usage: Callable[[], object] | None = None
 
     @property
     def supports_scheduled_tracking(self) -> bool:
@@ -145,6 +208,11 @@ class NonCarrierSource:
     def requires_external_stop(self) -> bool:
         """Whether stopping a watch here has to be reported to the provider."""
         return self.stop_tracking is not None
+
+    @property
+    def reports_usage(self) -> bool:
+        """Whether this provider can say how much of our account is left."""
+        return self.account_usage is not None
 
     def __str__(self) -> str:
         return self.name
@@ -176,6 +244,13 @@ def _stop_vizion(subscription: TrackingSubscription) -> ProviderStopOutcome:
     return release_vizion_reference(subscription)
 
 
+def _usage_traqo():
+    """Read our Traqo account's allowance. Imported lazily to keep this module a leaf."""
+    from apps.scm.integrations.traqo.usage import fetch_traqo_account_usage
+
+    return fetch_traqo_account_usage()
+
+
 _NON_CARRIER_SOURCES: dict[str, NonCarrierSource] = {
     TRAQO_PROVIDER_CODE: NonCarrierSource(
         code=TRAQO_PROVIDER_CODE,
@@ -183,10 +258,10 @@ _NON_CARRIER_SOURCES: dict[str, NonCarrierSource] = {
         read_payload=_read_traqo_payload,
         refresh_hint="refresh the container's tracking",
         scheduled_sync=_sync_traqo,
-        # No ``stop_tracking``, and this absence is a finding rather than a gap: Traqo's
-        # contract here is ``GET container/<no>?sealine=X`` and ``GET carriers/lookup``,
-        # and it publishes nothing that ends a shipment. Stopping a Traqo watch therefore
-        # means it stops being polled, which is the cost this end controls.
+        # ``GET /account/usage``, which is free at Traqo's end. Advisory only: it never
+        # gates a Start, because the activation response is what actually decides and a
+        # cached read cannot survive two concurrent starts against one remaining slot.
+        account_usage=_usage_traqo,
     ),
     # No ``scheduled_sync``, and that absence is the decision: registering Vizion here is
     # what stops the scheduled sync queueing a Vizion subscription and then marking the
@@ -242,6 +317,27 @@ def non_carrier_provider_codes() -> tuple[str, ...]:
 def unfetchable_provider_codes() -> tuple[str, ...]:
     """Provider codes the scheduled sync cannot fetch, for excluding from its queue."""
     return tuple(code for code, source in _NON_CARRIER_SOURCES.items() if not source.supports_scheduled_tracking)
+
+
+def get_provider_usage(provider_code: str):
+    """Return what this provider says about our account with it, or None.
+
+    None for a carrier — those are per-team integrations with no installation-wide
+    allowance — and None for a non-carrier source that publishes no usage endpoint.
+
+    The result describes the installation's own plan and spend, so every caller is
+    responsible for keeping it out of tenant-facing responses. There is exactly one
+    caller, and it is superuser-only: ``tracking/platform_views.py``.
+    """
+    source = get_non_carrier_source(provider_code)
+    if source is None or source.account_usage is None:
+        return None
+    return source.account_usage()
+
+
+def usage_reporting_provider_codes() -> tuple[str, ...]:
+    """Provider codes that can report an account allowance, for the platform status page."""
+    return tuple(code for code, source in _NON_CARRIER_SOURCES.items() if source.reports_usage)
 
 
 def release_provider_subscription(subscription: TrackingSubscription) -> ProviderStopOutcome:

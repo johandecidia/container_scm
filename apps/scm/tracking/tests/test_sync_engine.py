@@ -443,7 +443,26 @@ class FailedSyncTest(TestCase):
         self.assertEqual(self.subscription.status, TrackingSubscription.Status.FAILED)
         self.assertEqual(self.subscription.tracking_status, TrackingSubscription.TrackingStatus.ERROR)
         self.assertEqual(self.subscription.consecutive_failures, 1)
-        self.assertIn("401", self.subscription.last_error_message)
+        self.assertTrue(self.subscription.last_error_message)
+
+    def test_the_stored_error_is_the_sanitised_one_not_the_providers(self):
+        """``last_error_message`` is rendered on team-facing pages, so it is sanitised.
+
+        The container workspace's sync-problem line and the tracking detail page both
+        show this field. A provider's own text can carry a response body, a credential
+        or — in Traqo's 402 — our central account's plan and quota, so what is stored is
+        the error's ``safe_message`` and the technical text goes to the log. Asserted
+        here rather than trusted, because the leak is invisible until it happens.
+        """
+        self._run_with_error(CarrierAuthenticationError("401 Bearer sk-live-secret rejected"))
+        self.subscription.refresh_from_db()
+
+        self.assertNotIn("401", self.subscription.last_error_message)
+        self.assertNotIn("sk-live-secret", self.subscription.last_error_message)
+        self.assertEqual(
+            self.subscription.last_error_message,
+            CarrierAuthenticationError().safe_message,
+        )
 
     def test_failure_creates_no_events(self):
         self._run_with_error(CarrierTimeoutError("timeout"))

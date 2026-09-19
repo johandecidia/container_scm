@@ -1,0 +1,15 @@
+{
+  "success": false,
+  "statusCode": 402,
+  "message": "Payment overdue — API access is paused. Update your billing to resume tracking.",
+  "data": {
+    "error": "payment_overdue",
+    "overdueDays": 12,
+    "graceDays": 7,
+    "plan": "professional",
+    "message": "Your last payment on the professional plan failed 12 days ago and the 7-day grace period has ended, so API tracking is paused. Update your payment method in your dashboard billing to resume immediately — your existing shipments are unaffected.",
+    "manageUrl": "https://traqocontainer.com/dashboard/billing",
+    "usageUrl": "https://traqocontainer.com/developer",
+    "usageApi": "/api/v1/account/usage"
+  }
+}

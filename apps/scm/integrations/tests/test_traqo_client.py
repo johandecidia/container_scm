@@ -16,6 +16,8 @@ from apps.scm.integrations.carriers.exceptions import (
     CarrierConfigurationError,
     CarrierInvalidResponseError,
     CarrierNoDataError,
+    CarrierProviderBillingError,
+    CarrierProviderQuotaError,
     CarrierRateLimitError,
     CarrierServerError,
     CarrierTimeoutError,
@@ -79,9 +81,25 @@ class FakeSession:
         return self.requests[-1]
 
 
-def _error_response(status_code: int, message: str, headers=None, **extra) -> FakeResponse:
-    """Traqo's error envelope, as observed live."""
+def _error_response(
+    status_code: int,
+    message: str,
+    headers=None,
+    *,
+    data_error: str = "",
+    data_extra: dict | None = None,
+    **extra,
+) -> FakeResponse:
+    """Traqo's error envelope, as observed live.
+
+    ``data_error`` and ``data_extra`` build the nested ``data`` object Traqo actually
+    sends — the recorded 402 bodies carry the machine-readable reason at ``data.error``
+    and the account facts beside it. ``extra`` stays for the top-level keys the parser
+    keeps as a fallback.
+    """
     body = {"success": False, "statusCode": status_code, "message": message, **extra}
+    if data_error or data_extra:
+        body["data"] = {**({"error": data_error} if data_error else {}), **(data_extra or {})}
     return FakeResponse(status_code, body, headers=headers)
 
 
@@ -288,21 +306,52 @@ class TraqoStatusClassificationTest(SimpleTestCase):
         )
         self.assertFalse(error.transient)
 
-    def test_402_shipment_limit_reached_is_transient(self):
+    def test_402_shipment_limit_reached_is_a_provider_quota_not_a_rate_limit(self):
         error = self._fails_with(
             _error_response(402, "Shipment limit reached.", reason="shipment_limit_reached"),
             TraqoShipmentLimitReachedError,
         )
-        # A quota, not a dead account: transient, so tracking is not written off.
-        self.assertTrue(error.transient)
-        self.assertIsInstance(error, CarrierRateLimitError)
+        # Not transient, and deliberately no longer in the rate-limit family. The
+        # allowance counts references added during the billing cycle, so it frees up when
+        # the cycle resets rather than in a few minutes — and while this was a rate-limit
+        # error the sync engine retried it from 15 minutes out to a 12-hour cap against an
+        # account that could not accept anything at all.
+        self.assertFalse(error.transient)
+        self.assertIsInstance(error, CarrierProviderQuotaError)
+        self.assertNotIsInstance(error, CarrierRateLimitError)
+
+    def test_the_identifier_is_read_from_data_error(self):
+        """Traqo nests it, and that is the documented contract — not the prose."""
+        error = self._fails_with(
+            _error_response(402, "Some wording nobody should be matching on.", data_error="shipment_limit_reached"),
+            TraqoShipmentLimitReachedError,
+        )
+        self.assertIsInstance(error, CarrierProviderQuotaError)
+
+    def test_the_account_facts_travel_structured_and_not_in_the_safe_message(self):
+        """The 402 body states our plan and allowance. Neither may reach a customer."""
+        error = self._fails_with(
+            _error_response(
+                402,
+                "Shipment limit reached (20 of 20). Add more slots or upgrade in your dashboard billing.",
+                data_error="shipment_limit_reached",
+                data_extra={"plan": "professional", "limit": 20, "used": 20},
+            ),
+            TraqoShipmentLimitReachedError,
+        )
+
+        self.assertEqual(error.provider_detail["plan"], "professional")
+        self.assertEqual(error.provider_detail["used"], 20)
+        for leak in ("professional", "20 of 20", "upgrade", "billing"):
+            self.assertNotIn(leak, error.safe_message)
 
     def test_402_shipment_limit_reached_from_the_message_alone(self):
+        """The prose fallback still works for a body shaped unlike the recorded one."""
         error = self._fails_with(
             _error_response(402, "Your plan's shipment_limit_reached — close a shipment to add another."),
             TraqoShipmentLimitReachedError,
         )
-        self.assertTrue(error.transient)
+        self.assertIsInstance(error, CarrierProviderQuotaError)
 
     def test_402_shipment_limit_honours_retry_after(self):
         error = self._fails_with(
@@ -322,7 +371,10 @@ class TraqoStatusClassificationTest(SimpleTestCase):
             TraqoPaymentOverdueError,
         )
         self.assertFalse(error.transient)
-        self.assertIsInstance(error, CarrierConfigurationError)
+        self.assertIsInstance(error, CarrierProviderBillingError)
+        # Not a configuration error any more: nothing about *this installation* is
+        # misconfigured, and a container page must not tell a customer it is.
+        self.assertNotIsInstance(error, CarrierConfigurationError)
 
     def test_402_without_a_reason_is_treated_as_the_case_a_retry_cannot_fix(self):
         error = self._fails_with(
@@ -332,6 +384,11 @@ class TraqoStatusClassificationTest(SimpleTestCase):
         self.assertIn("did not state", str(error))
 
     def test_403_developer_mode_disabled(self):
+        """Still a configuration error: developer access is an account *setting*.
+
+        Unlike the two 402s, this one really is something somebody has to switch on, so
+        it stays in the configuration family that the sync layer already skips on.
+        """
         error = self._fails_with(
             _error_response(403, "Developer mode is disabled for this account."),
             TraqoDeveloperModeDisabledError,
