@@ -1,6 +1,13 @@
 from django.urls import path
 
-from . import condition_views, intake_views, location_views, tracking_source_views, views
+from . import (
+    condition_views,
+    intake_views,
+    location_views,
+    tracking_lifecycle_views,
+    tracking_source_views,
+    views,
+)
 
 app_name = "containers"
 
@@ -15,6 +22,20 @@ urlpatterns = [
     path("<int:container_id>/", views.container_detail, name="detail"),
     path("<int:container_id>/edit/", views.container_update, name="update"),
     path("<int:container_id>/refresh-tracking/", views.container_refresh_tracking, name="refresh_tracking"),
+    # Whether this container is tracked at all. Administrator-only — see
+    # tracking_lifecycle_views.py — and a different question from the refresh above,
+    # which asks the sources it already has. Both the container list and the workspace
+    # post here.
+    path(
+        "<int:container_id>/tracking/start/",
+        tracking_lifecycle_views.container_start_tracking,
+        name="start_tracking",
+    ),
+    path(
+        "<int:container_id>/tracking/stop/",
+        tracking_lifecycle_views.container_stop_tracking,
+        name="stop_tracking",
+    ),
     # Which provider this container is tracked through. Administrator-only — see
     # tracking_source_views.py — and separate from the refresh above, which asks the
     # sources the container already has.

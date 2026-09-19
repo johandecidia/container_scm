@@ -1,5 +1,5 @@
 # Container selectors — all read/query operations.
-from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
+from django.db.models import Count, Exists, OuterRef, Q, QuerySet, Subquery
 
 from apps.teams.models import Team
 
@@ -101,23 +101,39 @@ def get_team_containers(team: Team) -> QuerySet[Container]:
 
 
 def _tracking_annotations() -> dict:
-    """Carrier and tracking state for a list of containers, in two subqueries.
+    """Carrier and tracking state for a list of containers, in a few subqueries.
 
     Annotated rather than followed per row: the list renders 25 containers and must
     not issue a query each for their subscriptions. Cancelled watches are ignored so
     a container someone stopped tracking reads as untracked, not as a stale carrier.
+
+    ``tracking_live`` is the one the Start/Stop control is rendered from, and it is a
+    different question from the other three. They describe the container's most recent
+    watch; this one asks whether *anything* is still being run for it — the same
+    question :data:`~apps.scm.tracking.selectors.LIVE_SUBSCRIPTION_STATUSES` answers
+    for the Control Tower and
+    :attr:`~apps.scm.containers.workspace.ContainerWorkspace.has_live_tracking` answers
+    for the workspace. Asking it separately is what keeps a container with one paused
+    and one active watch reading as tracked in the list and on its own page alike.
     """
     from apps.scm.tracking.models import TrackingSubscription
+    from apps.scm.tracking.selectors import LIVE_SUBSCRIPTION_STATUSES
 
     latest = (
         TrackingSubscription.objects.filter(team=OuterRef("team"), container=OuterRef("pk"))
         .exclude(status=TrackingSubscription.Status.CANCELLED)
         .order_by("-created_at")
     )
+    live = TrackingSubscription.objects.filter(
+        team=OuterRef("team"),
+        container=OuterRef("pk"),
+        status__in=LIVE_SUBSCRIPTION_STATUSES,
+    )
     return {
         "tracking_carrier_name": Subquery(latest.values("provider__name")[:1]),
         "tracking_watch_status": Subquery(latest.values("status")[:1]),
         "tracking_carrier_status": Subquery(latest.values("tracking_status")[:1]),
+        "tracking_live": Exists(live),
     }
 
 

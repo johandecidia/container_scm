@@ -72,7 +72,7 @@ def _purchase_order(request):
     return get_team_purchase_orders(team=request.default_team).filter(pk=raw).first()
 
 
-def _refreshed_table_context(team, purchase_order=None) -> dict:
+def _refreshed_table_context(request, team, purchase_order=None) -> dict:
     """Context for re-rendering the container table out of band after a write.
 
     Skipped when the modal was opened from a purchase order: there is no container
@@ -80,6 +80,8 @@ def _refreshed_table_context(team, purchase_order=None) -> dict:
     """
     if purchase_order is not None:
         return {}
+
+    from apps.teams.roles import is_admin
 
     from .selectors import get_active_equipment_types
 
@@ -89,6 +91,10 @@ def _refreshed_table_context(team, purchase_order=None) -> dict:
         "containers": page_obj,
         "page_obj": page_obj,
         "equipment_types": get_active_equipment_types(),
+        # The rows carry a Start/Stop tracking action for administrators, so the
+        # out-of-band table needs the same flag the list view passes — without it the
+        # refreshed table would silently drop the action for somebody who has it.
+        "can_manage_tracking": is_admin(request.user, team),
         "team_slug": team.slug,
         "table_oob": True,
     }
@@ -126,7 +132,7 @@ def container_create(request):
                     "container": container,
                     "created": created,
                     "tab": "single",
-                    **_refreshed_table_context(team),
+                    **_refreshed_table_context(request, team),
                 }
                 return render(request, "scm/containers/partials/container_intake_created.html", context)
         return _modal(
@@ -259,7 +265,7 @@ def container_import_confirm(request):
     )
     if purchase_order is not None and result.containers:
         return _link_step(request, team, purchase_order, result.containers)
-    context = {"result": result, "tab": tab, **_refreshed_table_context(team, purchase_order)}
+    context = {"result": result, "tab": tab, **_refreshed_table_context(request, team, purchase_order)}
     return render(request, RESULT_TEMPLATE, context)
 
 

@@ -161,6 +161,40 @@
             {% translate "Refresh tracking" %}
           </button>
         </li>
+        {% comment %}
+          Start/Stop tracking, for administrators, posting to the same endpoints and
+          swapping the same panel as the buttons inside it. Offered here as well because
+          the Actions menu is where somebody looks for "what can I do to this box", and
+          a second implementation of the decision is what having one endpoint avoids.
+        {% endcomment %}
+        {% if can_manage_tracking_source %}
+          <li>
+            {% if workspace.has_live_tracking %}
+              <button
+                type="button"
+                hx-post="{% url 'containers:stop_tracking' container.pk %}"
+                hx-target="#container-tracking-panel"
+                hx-swap="outerHTML"
+                hx-confirm="{% translate 'Stop tracking this container? Its tracking history is kept.' %}"
+                hx-disabled-elt="this"
+              >
+                <i class="fa fa-circle-stop w-4"></i>
+                {% translate "Stop tracking" %}
+              </button>
+            {% else %}
+              <button
+                type="button"
+                hx-post="{% url 'containers:start_tracking' container.pk %}"
+                hx-target="#container-tracking-panel"
+                hx-swap="outerHTML"
+                hx-disabled-elt="this"
+              >
+                <i class="fa fa-circle-play w-4"></i>
+                {% translate "Start tracking" %}
+              </button>
+            {% endif %}
+          </li>
+        {% endif %}
         <li>
           <button
             type="button"
