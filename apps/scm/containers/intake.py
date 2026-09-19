@@ -173,12 +173,19 @@ class IntakeResult:
     ``containers`` holds the rows that now exist, whether this import created them
     or found them already there — an import run against a purchase order links both,
     since a number that was registered last week still belongs on today's order.
+
+    ``created_containers`` is the subset this run brought into existence, and it is a
+    different list for a reason: anything that happens *because* a container is new —
+    starting its tracking, above all — must act on these and not on the ones that
+    merely appeared in the file again. ``created`` holds the same rows as numbers, for
+    the summary the operator reads.
     """
 
     created: list[str] = field(default_factory=list)
     existed: list[str] = field(default_factory=list)
     invalid: list[IntakeRow] = field(default_factory=list)
     containers: list[Container] = field(default_factory=list)
+    created_containers: list[Container] = field(default_factory=list)
 
     @property
     def created_count(self) -> int:
@@ -306,6 +313,7 @@ def bulk_create_containers(
     existed: list[str] = []
     invalid: list[IntakeRow] = [row for row in preview.rows if row.state == INVALID]
     containers: list[Container] = []
+    created_containers: list[Container] = []
 
     for row in preview.rows:
         if row.state == INVALID:
@@ -321,8 +329,16 @@ def bulk_create_containers(
             continue
         (created if was_created else existed).append(row.number)
         containers.append(container)
+        if was_created:
+            created_containers.append(container)
 
-    return IntakeResult(created=created, existed=existed, invalid=invalid, containers=containers)
+    return IntakeResult(
+        created=created,
+        existed=existed,
+        invalid=invalid,
+        containers=containers,
+        created_containers=created_containers,
+    )
 
 
 def link_container_carrier(*, team: Team, container: Container, carrier: str) -> None:

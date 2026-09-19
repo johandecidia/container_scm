@@ -21,12 +21,12 @@ MAX_PASTED_CONTAINERS = 500
 
 
 class ContainerAttributesForm(forms.Form):
-    """The attributes an intake writes onto every container it creates.
+    """What an intake writes onto the containers it creates, and whether to track them.
 
-    Single, paste and CSV offer the same four, so they are declared once here and
-    inherited by all three intake forms — and validated through this same class when
-    a previewed import is confirmed, since the choices have to make that round trip
-    as hidden fields.
+    Single, paste and CSV offer the same four attributes, so they are declared once here
+    and inherited by all three intake forms — and validated through this same class when
+    a previewed import is confirmed, since the choices have to make that round trip as
+    hidden fields.
 
     Every field is optional on purpose. Left alone, equipment type falls back to the
     configured default and the rest to the model's own, which is what quick
@@ -35,6 +35,11 @@ class ContainerAttributesForm(forms.Form):
     The condition list is this team's own master data, so the form needs the team to
     know what to offer. Scoped on the queryset rather than only in ``clean``, so
     another team's condition is neither listed nor accepted when posted.
+
+    ``start_tracking`` is deliberately **not** one of ``ATTRIBUTE_FIELDS``. The four
+    attributes are columns on the container; this is an instruction about what to do
+    after it exists, it never reaches ``create_container``, and its default is the
+    team's own policy rather than a blank.
     """
 
     ATTRIBUTE_FIELDS = ("equipment_type", "condition", "color_code", "color_system")
@@ -69,16 +74,41 @@ class ContainerAttributesForm(forms.Form):
         widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
     )
 
+    start_tracking = forms.BooleanField(
+        label=_("Start tracking for new containers"),
+        required=False,
+        help_text=_("Only the containers this import creates. Ones that already exist are left as they are."),
+        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-sm"}),
+    )
+
     def __init__(self, *args, team=None, **kwargs):
         super().__init__(*args, **kwargs)
         cast(forms.ModelChoiceField, self.fields["condition"]).queryset = (
             ContainerCondition.objects.none() if team is None else get_condition_options(team)
         )
+        # The team's policy is the checkbox's starting position, so the common case is
+        # one click and the uncommon one is visibly a departure from it. Only for an
+        # unbound form: a submitted one carries what the operator actually chose, and
+        # an initial would not override it anyway.
+        if team is not None and not self.is_bound:
+            from apps.scm.tracking.preferences import get_team_auto_start_tracking
+
+            self.fields["start_tracking"].initial = get_team_auto_start_tracking(team)
 
     @property
     def attribute_fields(self) -> list[forms.BoundField]:
         """The attribute fields alone, so a template can render them as one block."""
         return [self[name] for name in self.ATTRIBUTE_FIELDS]
+
+    def start_tracking_choice(self) -> bool:
+        """Whether this intake asked for its new containers to be tracked.
+
+        Always a definite answer rather than "unset", because the form was rendered with
+        the team's policy already applied: what comes back is the operator's decision,
+        whether or not they touched the box. The "no override" case — where the team
+        default decides — is the one where no form was involved at all.
+        """
+        return bool(self.cleaned_data.get("start_tracking"))
 
     def container_attributes(self) -> dict:
         """Return the chosen attributes as ``create_container`` keyword arguments.

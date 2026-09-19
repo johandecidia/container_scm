@@ -1,4 +1,15 @@
-"""Import confirmation: create or update SCM objects from validated rows."""
+"""Import confirmation: create or update SCM objects from validated rows.
+
+``run_import`` is atomic, so nothing that reaches outside the database belongs in it —
+which is why it reports the containers it *created* rather than acting on them. Starting
+their tracking is a provider call, and a provider call inside this transaction would
+hold it open for the length of a carrier's response and roll a stored container back on
+a carrier's outage. :func:`apps.scm.imports.services.confirm_import_job` does it
+afterwards, once the rows are committed.
+
+Created, not imported. A row whose container already existed is reported as skipped or
+updated, and it must not start being tracked for having appeared in a file again.
+"""
 
 from decimal import Decimal
 
@@ -12,8 +23,20 @@ from apps.scm.containers.movements import record_container_movement
 from .models import ImportJob, ImportRow
 
 
-def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bool = False) -> str:
-    """Import a single container row. Returns 'created', 'updated', or 'skipped'."""
+def _import_container_row(
+    row: ImportRow,
+    job: ImportJob,
+    *,
+    update_existing: bool = False,
+    created_containers: list | None = None,
+) -> str:
+    """Import a single container row. Returns 'created', 'updated', or 'skipped'.
+
+    ``created_containers`` collects the containers this call brings into existence, for
+    whatever the caller wants to do with the new ones — starting their tracking, today.
+    A sink rather than a second return value because the row status is read from the
+    string, and the two other importers create no containers to report.
+    """
     data = row.validated_data
     parts = {
         "owner_code": data.get("owner_code", ""),
@@ -52,7 +75,7 @@ def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bo
             return "updated"
         return "skipped"
 
-    Container.objects.create(
+    container = Container.objects.create(
         team=job.team,
         created_by=job.created_by,
         updated_by=job.created_by,
@@ -66,10 +89,18 @@ def _import_container_row(row: ImportRow, job: ImportJob, *, update_existing: bo
         notes=data.get("notes") or "",
         manufacturer=data.get("manufacturer") or "",
     )
+    if created_containers is not None:
+        created_containers.append(container)
     return "created"
 
 
-def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existing: bool = False) -> str:
+def _import_purchase_order_row(
+    row: ImportRow,
+    job: ImportJob,
+    *,
+    update_existing: bool = False,
+    created_containers: list | None = None,  # noqa: ARG001 — creates no containers
+) -> str:
     """Import a single PO row (one PO line). Returns 'created', 'updated', or 'skipped'."""
     from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderSource
 
@@ -129,7 +160,13 @@ def _import_purchase_order_row(row: ImportRow, job: ImportJob, *, update_existin
     return "created" if line_created else "updated"
 
 
-def _import_container_movement_row(row: ImportRow, job: ImportJob, *, update_existing: bool = False) -> str:  # noqa: ARG001
+def _import_container_movement_row(
+    row: ImportRow,
+    job: ImportJob,
+    *,
+    update_existing: bool = False,  # noqa: ARG001 — a movement is never an update
+    created_containers: list | None = None,  # noqa: ARG001 — creates no containers
+) -> str:
     """Import a single container movement row. Returns 'created', 'updated', or 'skipped'."""
     data = row.validated_data
     container_number = data.get("container_number", "")
@@ -203,8 +240,13 @@ _IMPORTERS: dict = {
 
 
 @transaction.atomic
-def run_import(job: ImportJob, *, update_existing: bool = False) -> None:
-    """Import all valid rows for a job and mark it completed."""
+def run_import(job: ImportJob, *, update_existing: bool = False) -> list[Container]:
+    """Import all valid rows for a job and mark it completed.
+
+    Returns the containers this run created, in row order, for the caller to act on
+    once the transaction has committed — see this module's docstring for why nothing is
+    done with them in here.
+    """
     importer = _IMPORTERS.get(job.import_type)
     if importer is None:
         raise NotImplementedError(f"No importer registered for type: {job.import_type}")
@@ -213,10 +255,11 @@ def run_import(job: ImportJob, *, update_existing: bool = False) -> None:
     job.save(update_fields=["status", "updated_at"])
 
     valid_rows = list(job.rows.filter(status=ImportRow.Status.VALID))
+    created_containers: list[Container] = []
     processed = 0
 
     for row in valid_rows:
-        result = importer(row, job, update_existing=update_existing)
+        result = importer(row, job, update_existing=update_existing, created_containers=created_containers)
         row.status = ImportRow.Status.IMPORTED if result in ("created", "updated") else ImportRow.Status.SKIPPED
         row.save(update_fields=["status"])
         processed += 1
@@ -225,3 +268,4 @@ def run_import(job: ImportJob, *, update_existing: bool = False) -> None:
     job.status = ImportJob.Status.COMPLETED
     job.completed_at = timezone.now()
     job.save(update_fields=["processed_rows", "status", "completed_at", "updated_at"])
+    return created_containers

@@ -1,0 +1,59 @@
+{% load i18n %}
+
+{% comment %}
+  What automatic tracking did for the containers an import just created.
+
+  Renders nothing when tracking was not asked for, and nothing when it was asked for
+  but there were no new containers — an import of numbers that all already existed has
+  no tracking outcome to report, and a line saying "0 started" would read as a failure.
+
+  A container that could not be tracked is named. The import succeeded and its
+  containers exist; what did not happen is the tracking, and the only way that is
+  recoverable is if somebody can see which boxes it was. The reasons are the
+  lifecycle's own messages, built from outcome values rather than from provider error
+  text, so nothing here can leak a response body or a credential.
+
+  Usage: {% include "scm/containers/partials/container_intake_tracking_result.html" with tracking=tracking %}
+{% endcomment %}
+
+{% if tracking.attempted %}
+  {% if tracking.failed %}
+    <div role="alert" class="alert alert-warning alert-soft mb-4 items-start">
+      <i class="fa fa-triangle-exclamation mt-0.5"></i>
+      <div class="text-sm">
+        <p class="font-medium">
+          {% blocktranslate trimmed count failures=tracking.failure_count %}
+            Imported, but tracking could not be started for {{ failures }} container.
+          {% plural %}
+            Imported, but tracking could not be started for {{ failures }} containers.
+          {% endblocktranslate %}
+        </p>
+        <ul class="mt-1 space-y-0.5 text-xs">
+          {% for number, reason in tracking.failed %}
+            <li><span class="font-mono">{{ number }}</span> — {{ reason }}</li>
+          {% endfor %}
+        </ul>
+        {% if tracking.started %}
+          <p class="text-xs text-base-content/60 mt-1">
+            {% blocktranslate trimmed count started=tracking.started %}
+              Tracking started for {{ started }} other container.
+            {% plural %}
+              Tracking started for {{ started }} other containers.
+            {% endblocktranslate %}
+          </p>
+        {% endif %}
+      </div>
+    </div>
+  {% elif tracking.started %}
+    <div role="alert" class="alert alert-success alert-soft mb-4">
+      <i class="fa fa-satellite-dish"></i>
+      <span class="text-sm">
+        {% blocktranslate trimmed count started=tracking.started %}
+          Tracking started for {{ started }} new container.
+        {% plural %}
+          Tracking started for {{ started }} new containers.
+        {% endblocktranslate %}
+      </span>
+    </div>
+  {% endif %}
+{% endif %}

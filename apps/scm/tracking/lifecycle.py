@@ -48,6 +48,8 @@ workspace, and can be started again later.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from django.utils.translation import gettext_lazy as _
@@ -210,6 +212,109 @@ def _resume_stopped_watches(*, team: Team, container: Container) -> list[Trackin
             container.container_id,
         )
     return stopped
+
+
+# ---------------------------------------------------------------------------
+# Automatic start, for containers an import has just created
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AutoStartSummary:
+    """What automatically starting tracking achieved for one batch of new containers.
+
+    Returned rather than raised, and returned *whole* — including the failures — because
+    the caller is an import that has already succeeded. The import's own result is not
+    in question here; what this says is whether the tracking it asked for happened, so
+    somebody can see later that it did not.
+    """
+
+    # Whether auto-start applied at all. False means the team has it switched off, or
+    # this import overrode it off — and then nothing was attempted, which is different
+    # from attempting and failing.
+    enabled: bool = False
+    considered: int = 0
+    started: int = 0
+    already_tracked: int = 0
+    # Containers a provider could not be found or reached for. Each entry is
+    # ``(container_id, reason)`` — the reason is the lifecycle's own message, which is
+    # built from outcome values rather than from provider error text.
+    failed: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def attempted(self) -> bool:
+        return self.enabled and self.considered > 0
+
+    @property
+    def failure_count(self) -> int:
+        return len(self.failed)
+
+
+def auto_start_tracking_for_containers(
+    *,
+    team: Team,
+    containers: Iterable[Container],
+    actor=None,
+    enabled: bool | None = None,
+) -> AutoStartSummary:
+    """Start tracking containers an import has just created, if that is the policy.
+
+    ``enabled`` is the override, and ``None`` means "no override": the team's
+    :func:`~apps.scm.tracking.preferences.get_team_auto_start_tracking` setting decides.
+    An import that asked one way or the other passes ``True`` or ``False`` and the team
+    default is not consulted, which is the whole of the override semantics.
+
+    **Only the containers passed in.** Deciding *which* containers an import created is
+    the import's job and it already knows — the intake result lists them, and the job
+    importer reports each row as created or skipped. A container that merely appeared in
+    the file again is not new, and starting tracking for it would mean a re-uploaded
+    spreadsheet silently began tracking a fleet somebody had deliberately stopped.
+
+    **Tracking is downstream of persistence.** The containers are saved before this
+    runs, and nothing here can undo that. Each one is started on its own, so a carrier
+    outage on the third container does not cost the fourth its tracking, and a failure
+    is counted and logged rather than raised — an import that stored its containers
+    correctly is a successful import even when tracking could not be started for them.
+
+    Programming errors are not swallowed quietly either. ``start_container_tracking``
+    classifies every provider failure itself, so an exception escaping it is a bug; it
+    is logged with a traceback and recorded as a failure for that container rather than
+    being allowed to discard the rest of the batch.
+    """
+    from .preferences import get_team_auto_start_tracking
+
+    is_enabled = get_team_auto_start_tracking(team) if enabled is None else bool(enabled)
+    summary = AutoStartSummary(enabled=is_enabled)
+    if not is_enabled:
+        return summary
+
+    for container in containers:
+        summary.considered += 1
+        try:
+            result = start_container_tracking(team=team, container=container, actor=actor)
+        except Exception:  # noqa: BLE001 — see the docstring: a bug here must not lose the import
+            logger.exception(
+                "Automatic tracking for %s raised unexpectedly after it was imported.",
+                container.container_id,
+            )
+            summary.failed.append((container.container_id, "An unexpected error prevented tracking from starting."))
+            continue
+
+        if result.state == ALREADY_ACTIVE:
+            summary.already_tracked += 1
+        elif result.tracked:
+            summary.started += 1
+        else:
+            summary.failed.append((container.container_id, str(result.message)))
+
+    logger.info(
+        "Automatic tracking for %s newly imported container(s): %s started, %s already tracked, %s could not start.",
+        summary.considered,
+        summary.started,
+        summary.already_tracked,
+        summary.failure_count,
+    )
+    return summary
 
 
 # ---------------------------------------------------------------------------
