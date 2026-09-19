@@ -16,6 +16,9 @@ urlpatterns = [
     # Tracking integrations. Keyed by provider code rather than integration pk: the
     # page lists carriers, most of which have no integration row yet.
     path("tracking/", tracking_views.tracking, name="tracking"),
+    # Whether new containers start being tracked on their own. A team policy rather
+    # than a per-carrier one, so it hangs off the tracking page and not off a provider.
+    path("tracking/auto-start/", tracking_views.tracking_auto_start, name="tracking_auto_start"),
     path(
         "tracking/carriers/<str:provider_code>/credentials/",
         tracking_views.carrier_credentials,

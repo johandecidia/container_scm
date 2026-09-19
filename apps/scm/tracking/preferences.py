@@ -1,16 +1,23 @@
-"""Who somebody *chose* to track a container through, and what may be chosen.
+"""Who somebody *chose* to track a container through, whether to start at all, and
+what may be chosen.
 
 Three decisions already exist and this is not a fourth:
 :mod:`apps.scm.integrations.carriers.carrier_resolution` says who is carrying the
 box, :mod:`.provider_routing` says who to ask about it, and :mod:`.activation`
-does the asking. This module owns only the stored preference those read — a team
-default and a per-container override — and the rule about what is a legal value.
+does the asking. This module owns only the stored preferences those read — a team
+default, a per-container override and a team policy on new containers — and the
+rule about what is a legal value.
 
-Two scopes, two shapes, for the same reason in both cases: the smallest persistence
-that can express the choice.
+Three scopes, three shapes, for the same reason in each case: the smallest
+persistence that can express the choice.
 
 ``TeamTrackingSettings.default_provider_code``
     One row per team naming the aggregator tier. Traqo today.
+
+``TeamTrackingSettings.auto_start_tracking_for_new_containers``
+    One boolean on the same row: does a container this team creates start being
+    tracked immediately. Off by default, because tracking costs provider requests
+    and an aggregator shipment slot per box.
 
 ``Container.tracking_provider_override``
     One column on the container. Blank is the normal state and means "the team's
@@ -127,6 +134,45 @@ def set_team_default_provider(team: Team, provider_code: str) -> TeamTrackingSet
         settings.default_provider_code = code
         settings.save(update_fields=["default_provider_code", "updated_at"])
         logger.info("Team %s default tracking provider set to %s.", team.pk, code)
+    return settings
+
+
+# ---------------------------------------------------------------------------
+# Automatic tracking for new containers
+# ---------------------------------------------------------------------------
+
+
+def get_team_auto_start_tracking(team: Team) -> bool:
+    """Whether a container this team creates should start being tracked at once.
+
+    The default is off and that is a cost decision rather than caution: starting
+    tracking spends a provider request per container and, through an aggregator, a
+    shipment slot — so a team pasting six hundred container numbers must have chosen
+    that rather than found out afterwards. A team that wants it says so once here,
+    and an import can still override it for a single run.
+
+    What "start tracking" then *means* is not decided here. It is
+    :func:`apps.scm.tracking.lifecycle.start_container_tracking`, the same function the
+    Start button calls, so there is no separate import tracking behaviour to diverge.
+    """
+    return get_team_tracking_settings(team).auto_start_tracking_for_new_containers
+
+
+def set_team_auto_start_tracking(team: Team, enabled: bool) -> TeamTrackingSettings:
+    """Turn automatic tracking of newly created containers on or off for this team.
+
+    Applies to containers created *after* the change and to nothing already in the
+    fleet: it is a policy about creation, not a batch operation. Switching it on does
+    not sweep the existing containers into tracking, and switching it off does not stop
+    anything that is already tracked — that is Stop's job, per container, which is
+    where somebody can see what it costs.
+    """
+    settings = get_team_tracking_settings(team)
+    value = bool(enabled)
+    if settings.auto_start_tracking_for_new_containers != value:
+        settings.auto_start_tracking_for_new_containers = value
+        settings.save(update_fields=["auto_start_tracking_for_new_containers", "updated_at"])
+        logger.info("Team %s automatic tracking for new containers set to %s.", team.pk, value)
     return settings
 
 

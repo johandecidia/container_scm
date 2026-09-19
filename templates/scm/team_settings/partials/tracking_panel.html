@@ -37,6 +37,50 @@
     </p>
   </section>
 
+  {% comment %}
+    Whether a container this team creates starts being tracked on its own.
+
+    A checkbox that submits on change, because it is one boolean and a Save button
+    beside a single switch is a step nobody needs. Off by default and said plainly to
+    be a cost: tracking spends a provider request per container, and through an
+    aggregator a shipment slot, so a team pasting six hundred numbers has to have
+    chosen this rather than found out afterwards.
+
+    The hidden 0 is what makes "off" reachable: an unticked checkbox sends nothing, so
+    without it the view could never be told to turn the setting off.
+  {% endcomment %}
+  <section class="app-card mb-6">
+    <h2 class="text-lg font-semibold">{% translate "Automatic tracking" %}</h2>
+    <form
+      class="mt-2"
+      hx-post="{% url 'team_settings:tracking_auto_start' %}"
+      hx-target="#settings-tracking"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find input"
+    >
+      {% csrf_token %}
+      <input type="hidden" name="auto_start_tracking" value="0">
+      <label class="flex items-start gap-3 cursor-pointer">
+        <input
+          type="checkbox"
+          name="auto_start_tracking"
+          value="1"
+          class="checkbox checkbox-sm mt-0.5"
+          {% if auto_start_tracking %}checked{% endif %}
+          onchange="this.form.requestSubmit()"
+        >
+        <span>
+          <span class="text-sm font-medium">
+            {% translate "Automatically start tracking for newly created containers" %}
+          </span>
+          <span class="block text-xs text-base-content/60 mt-0.5">
+            {% translate "Applies to containers created or imported from now on. Each one costs a provider request, and a shipment slot where tracking goes through an aggregator. An import can override this for a single run." %}
+          </span>
+        </span>
+      </label>
+    </form>
+  </section>
+
   <section class="app-card mb-6">
     <h2 class="text-lg font-semibold">{% translate "Direct carrier integrations" %}</h2>
     <p class="text-sm text-base-content/60 mt-1">

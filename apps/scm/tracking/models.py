@@ -44,19 +44,31 @@ class CarrierSource(models.TextChoices):
 
 
 class TeamTrackingSettings(BaseTeamModel):
-    """A team's default tracking provider. One row per team, one field on it.
+    """A team's tracking preferences. One row per team.
 
-    The provider a container falls back to when no carrier can be called directly —
-    Traqo today, which is why that is the default and the only value Settings offers.
-    It is a row rather than a constant because "who do we ask when we cannot ask the
-    line" is a per-customer commercial fact, and with it in code every change of
-    aggregator would be a deployment.
+    Two settings, and they answer different questions — *who* to ask about a container
+    when no carrier can be called directly, and *whether* to start asking about a new
+    container at all:
+
+    ``default_provider_code``
+        The aggregator tier a container falls back to. Traqo today, which is why that
+        is the default and the only value Settings offers. It is a row rather than a
+        constant because "who do we ask when we cannot ask the line" is a per-customer
+        commercial fact, and with it in code every change of aggregator would be a
+        deployment.
+
+    ``auto_start_tracking_for_new_containers``
+        Whether a container this team creates starts being tracked straight away. Off
+        by default, deliberately: tracking spends provider requests and, for an
+        aggregator, a shipment slot per box, so a team that imports a thousand
+        containers must have said yes to that rather than discovered it. A per-team row
+        because the answer depends on what a customer is paying for.
 
     Deliberately *not* a routing policy. There is no cost model, no preference order
     and no per-carrier rules here: direct-before-aggregator is
     :mod:`apps.scm.tracking.provider_routing`'s decision, and this only names the
     aggregator tier it falls through to. See
-    :mod:`apps.scm.tracking.preferences` for the read and write.
+    :mod:`apps.scm.tracking.preferences` for the reads and writes.
     """
 
     default_provider_code = models.CharField(
@@ -64,6 +76,13 @@ class TeamTrackingSettings(BaseTeamModel):
         max_length=50,
         default=TRAQO_PROVIDER_CODE,
         help_text=_("The provider used when no direct carrier integration can answer for a container."),
+    )
+    auto_start_tracking_for_new_containers = models.BooleanField(
+        _("automatically start tracking for newly created containers"),
+        default=False,
+        help_text=_(
+            "Start tracking a container as soon as it is created or imported. An import can override this for one run."
+        ),
     )
 
     class Meta:

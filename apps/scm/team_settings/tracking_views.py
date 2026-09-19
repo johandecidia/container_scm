@@ -30,7 +30,11 @@ from apps.scm.integrations.services import (
     deactivate_integration,
     test_integration_connection,
 )
-from apps.scm.tracking.preferences import get_team_default_provider_name
+from apps.scm.tracking.preferences import (
+    get_team_auto_start_tracking,
+    get_team_default_provider_name,
+    set_team_auto_start_tracking,
+)
 
 from .forms import CarrierCredentialForm
 from .tracking_selectors import get_carrier_settings_row, get_carrier_settings_rows
@@ -56,6 +60,7 @@ def _panel_context(request, *, notice: str = "", notice_level: str = "info") -> 
         "team_slug": team.slug,
         "carrier_rows": get_carrier_settings_rows(team),
         "default_provider_name": get_team_default_provider_name(team),
+        "auto_start_tracking": get_team_auto_start_tracking(team),
         "notice": notice,
         "notice_level": notice_level,
     }
@@ -92,6 +97,32 @@ def _respond(request, *, notice: str = "", notice_level: str = "info", message=N
 def tracking(request):
     """The team's direct carrier integrations and its default tracking provider."""
     return render(request, TRACKING_PAGE_TEMPLATE, _panel_context(request))
+
+
+@scm_team_admin_required
+@require_POST
+def tracking_auto_start(request):
+    """Turn automatic tracking of newly created containers on or off for this team.
+
+    A checkbox, so its absence from the POST body *is* "off" — which is why the value
+    is read rather than toggled: a stale page that renders the box as ticked must not
+    be able to turn the setting on by being submitted twice.
+
+    A policy about creation and nothing more. It does not sweep the existing fleet into
+    tracking when switched on, and does not stop anything already tracked when switched
+    off; both of those are per-container decisions somebody makes where they can see
+    what one costs.
+    """
+    team = request.default_team
+    enabled = request.POST.get("auto_start_tracking") in ("1", "true", "on")
+    set_team_auto_start_tracking(team, enabled)
+
+    notice = (
+        _("New containers will start being tracked automatically.")
+        if enabled
+        else _("New containers will not start being tracked automatically.")
+    )
+    return _respond(request, notice=notice, notice_level="info", message=notice)
 
 
 @scm_team_admin_required
