@@ -334,9 +334,9 @@ def stop_container_tracking(*, team: Team, container: Container, actor=None) -> 
     **External first.** A provider that charges for an active subscription has to be told
     before we forget its handle, and ``provider_reference`` is that handle — Vizion's
     reference id, Traqo's sealine. Which providers need telling is
-    :func:`~apps.scm.tracking.sources.get_provider_stop`, per source, for the same reason
-    ``scheduled_sync`` is per source: a blanket rule in either direction would either
-    keep paying for Vizion references or invent an endpoint Traqo does not publish.
+    :func:`~apps.scm.tracking.sources.release_provider_subscription`, per source, for the
+    same reason ``scheduled_sync`` is per source: a blanket rule in either direction would
+    either keep paying for Vizion references or invent an endpoint Traqo does not publish.
 
     **A refused release is not a refused stop.** Where the provider was asked and failed,
     the watch is left ``PAUSED`` rather than ``CANCELLED``: nothing polls it, the
