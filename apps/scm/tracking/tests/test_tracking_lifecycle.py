@@ -9,7 +9,10 @@ is new, and most of it is about what does *not* happen:
     stopping                            keeps every event, payload and position
     stopping a Vizion watch             releases the reference that is being billed
     a failed release                    leaves the watch retryable and not tracking
-    stopping a Traqo or direct watch    makes no remote call, because none exists
+    stopping a direct watch             makes no remote call, because none exists
+
+Traqo's own untrack lives in ``test_traqo_untrack.py``, and its quota in
+``test_provider_quota.py``.
 
 Every provider is injected. Nothing below the lifecycle is mocked out: activation, the
 sync engine and the real Traqo client all run, with a fake session instead of a socket.
@@ -450,7 +453,13 @@ class VizionStopTest(TestCase):
 
 @override_settings(CACHES=_LOCMEM)
 class NoRemoteStopTest(TestCase):
-    """Traqo and the direct carriers publish nothing to withdraw, and none is invented."""
+    """Direct carriers publish nothing to withdraw, so stopping one is local.
+
+    Traqo used to belong here and no longer does: it publishes
+    ``DELETE /shipments/{id}``, and ``TraqoStopTest`` covers it. What is left is the case
+    that really has no remote handle — a carrier's own API, where every call is a pull
+    against a container number and there is no subscription to cancel.
+    """
 
     def setUp(self):
         self.team = Team.objects.create(name="no-remote-stop", slug="no-remote-stop")
@@ -466,26 +475,6 @@ class NoRemoteStopTest(TestCase):
             carrier_name=provider_name,
             carrier_source=CarrierSource.TRAQO_LOOKUP,
             provider_reference=provider_reference,
-        )
-
-    def test_a_traqo_watch_needs_no_remote_release(self):
-        subscription = self._watch(TRAQO_PROVIDER_CODE, "Traqo Ocean", provider_reference="ONEY")
-
-        outcome = release_provider_subscription(subscription)
-
-        self.assertEqual(outcome.state, STOP_NOT_REQUIRED)
-
-    def test_stopping_a_traqo_watch_makes_no_http_call_and_cancels_it(self):
-        self._watch(TRAQO_PROVIDER_CODE, "Traqo Ocean", provider_reference="ONEY")
-
-        with mock.patch("apps.scm.integrations.traqo.client.TraqoClient.from_settings") as build:
-            result = stop_container_tracking(team=self.team, container=self.container)
-
-        build.assert_not_called()
-        self.assertEqual(result.state, STOPPED)
-        self.assertEqual(
-            TrackingSubscription.objects.get(team=self.team, container=self.container).status,
-            TrackingSubscription.Status.CANCELLED,
         )
 
     def test_a_direct_carrier_watch_needs_no_remote_release(self):
@@ -506,7 +495,7 @@ class NoRemoteStopTest(TestCase):
     def test_every_live_source_is_stopped_not_just_the_newest(self):
         """A container can be watched by several providers, and Stop means all of them."""
         self._watch("maersk", "Maersk")
-        self._watch(TRAQO_PROVIDER_CODE, "Traqo Ocean", provider_reference="MAEU")
+        self._watch("cma_cgm", "CMA CGM")
 
         result = stop_container_tracking(team=self.team, container=self.container)
 

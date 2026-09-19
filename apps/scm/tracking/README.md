@@ -67,15 +67,34 @@ reason that one is per source rather than per "is it an aggregator":
 ```
 Vizion   a reference is the billable unit and stays subscribed until released
          → DELETE /references/{id}, which the client already implements
-Traqo    publishes no stop, delete, unsubscribe or archive call. Two GETs, and its
-         shipment slots free up as shipments close at Traqo's end
-         → stopping means it stops being polled
+Traqo    DELETE /shipments/{id}, addressed by the shipment id *or* the container
+         number the shipment is tracked by
+         → the shipment stops updating; the billing slot does not come back
 ```
 
-Direct carriers answer as Traqo does. `CarrierCapability.supports_subscriptions` says
-what a carrier's API offers on paper, and no adapter implements a subscribe or
-unsubscribe — each is a pull against a container number — so a direct stop is local by
-nature rather than by omission. Nothing invents an endpoint to look symmetric.
+An earlier revision of this file said Traqo published no untrack. That was wrong, and
+the correction is recorded here rather than quietly dropped: `DELETE /api/v1/shipments/:id`
+exists, and the sandbox's 404 (`{"success": false, "statusCode": 404, "message":
+"Shipment not found in your account."}`) is what a reference Traqo does not hold
+answers.
+
+Direct carriers are the case that really has nothing to withdraw.
+`CarrierCapability.supports_subscriptions` says what a carrier's API offers on paper,
+and no adapter implements a subscribe or unsubscribe — each is a pull against a
+container number — so a direct stop is local by nature rather than by omission.
+
+### The untrack handle is the container number
+
+Traqo's `DELETE /shipments/{id}` takes either the shipment id or the reference, and this
+integration uses the reference — `subscription.tracking_reference`. Two reasons, both
+load-bearing:
+
+* **`provider_reference` is already the sealine.** On a Traqo watch it is what
+  `resolve_watch_sealine()` needs to fetch at all, so putting a shipment id there would
+  have broken scheduled polling. And `/container/{number}` returns no shipment id to
+  store anyway — learning one would cost an extra `GET /shipments` per activation.
+* **Every watch created before this can be untracked**, with no migration and no
+  backfill. That is the whole of the backward-compatibility story.
 
 **A refused release is not a refused stop.** Where a provider was asked and failed, the
 watch is left `PAUSED`: nothing polls it, the container reads as not tracked, and the
@@ -90,6 +109,133 @@ evidence all survive, so a stopped container still shows its whole journey and c
 started again. Who stopped it is in `SCMAuditLog`; when is the watch's own `updated_at`,
 which `ContainerWorkspace.tracking_stopped_at` derives — no `stopped_at` column to fall
 out of step with the status it describes.
+
+### Stopping tracking is not recovering a slot
+
+The two are separate at Traqo and must stay separate in anything we say to a user.
+Traqo's allowance counts references **added** during a billing cycle, so:
+
+```
+DELETE /shipments/{id}   the shipment stops updating
+                         the slot it consumed is not returned
+```
+
+Traqo applies one narrow refund of its own — a shipment deleted very soon after it was
+added, a few times per cycle — and that is entirely server-side. Nothing here triggers
+it, depends on it or reports it, and no message tells anyone that stopping frees
+capacity, because usually it does not.
+
+The consequence for restarts: because the quota counts additions, delete-and-re-add
+spends a slot. Our Start resumes the cancelled watch and re-fetches the existing
+reference, which is the cheap path — re-fetching something already tracked is free at
+Traqo. A container whose shipment Traqo has since dropped becomes a genuine new add and
+costs a slot, and that is a provider fact rather than something to optimise around here.
+
+### The provider's allowance, and who may see it
+
+Traqo sells an **intake allowance**, not a ceiling on how many containers we hold at
+once. `GET /api/v1/account/usage` reports it, free — no slot, no upstream call:
+
+```
+plan              professional
+effective_limit   25          limit 20 + addon_slots 5 (+ carried_slots, yearly only)
+used              12          distinct references ADDED this cycle
+active             9          of those, still being tracked
+remaining         13          effective_limit − used, floored at 0
+```
+
+**`used` and `active` are different numbers and neither follows from the other.**
+Untracking lowers `active` and leaves `used` where it is, because the slot is spent on
+the *addition*. So
+
+```
+used 25   active 10   remaining 0
+```
+
+is an ordinary state, not a bug: twenty-five references were added this cycle, fifteen
+have since been untracked, and no slot came back. Anything that read `active` as the
+spend would claim capacity this account does not have. `parse_traqo_account_usage()`
+therefore takes `effective_limit` and `remaining` from the payload rather than deriving
+them — Traqo says `effective_limit` is "what enforcement compares against", and a second
+opinion on somebody else's billing is not worth having.
+
+`carried_slots` is documented as required and is genuinely **absent** on a monthly-plan
+response, so it is read as optional.
+
+#### Superuser only, by construction
+
+There is one Traqo account for the whole installation — its credential is an environment
+setting rather than an `Integration` row, precisely because no team owns it. Its plan and
+allowance are therefore platform information, no more a customer's business than the
+hosting bill, and a team administrator must not see them. That is enforced in three
+places rather than by hiding a card:
+
+1. **The page is a separate superuser route.** `tracking:provider_status`, behind
+   `is_superuser` + `staff_member_required` — the same pair `apps/dashboard` uses. No
+   team-facing template renders these figures, so none can leak them.
+2. **Nothing persists them.** A 402 body states the plan, the limit and what has been
+   used. `outcome_for_carrier_error()` stores the error's `safe_message`, never
+   `str(exc)`, so `TrackingSubscription.last_error_message` and
+   `TrackingSyncRun.error_message` — both rendered on the container workspace and the
+   tracking detail page — cannot carry it. The technical text goes to the log.
+3. **The team-facing message says nothing about it.** A spent allowance reads as
+   *"Tracking could not be started with the configured provider. Contact your system
+   administrator."* The team needs to know their container is not being tracked; why our
+   central account could not deliver it is ours.
+
+This was not hypothetical. `ContainerWorkspace.sync_problem` returns
+`last_error_message` verbatim and `tracking_detail.html` renders it, both readable by
+every team member, so before the sanitisation a single 402 would have shown our plan and
+quota to every user of that team. `test_provider_quota.py` asserts against rendered HTML
+for exactly that reason.
+
+#### 402 is two different answers
+
+The identifier is `data.error` — nested, and read from there rather than matched in
+prose:
+
+| `data.error` | meaning | internal error | sync outcome |
+|---|---|---|---|
+| `shipment_limit_reached` | the cycle's allowance is spent | `CarrierProviderQuotaError` | SKIPPED / `provider_quota` |
+| `payment_overdue` | grace period over, account soft-locked | `CarrierProviderBillingError` | SKIPPED / `provider_billing` |
+| absent | Traqo did not say | treated as the billing case | SKIPPED / `provider_billing` |
+
+An unstated 402 is read as the billing case because that is the one a retry cannot fix:
+assuming a quota would poll a suspended account indefinitely.
+
+**Neither is a rate limit, and that is a correction.** `shipment_limit_reached` used to
+subclass `CarrierRateLimitError`, so the engine treated it as transient and retried from
+15 minutes out to a 12-hour cap — against an account that could not accept anything until
+the cycle reset. Every one of those retries was a request spent to be told the same
+thing. Both are now non-transient provider-account errors recorded as SKIPPED, which
+leaves `consecutive_failures` alone (so nothing escalates) and puts the watch on the
+existing 24-hour `INTERVAL_NOT_CONFIGURED` cadence.
+
+#### A spent allowance does not start spending Vizion
+
+`carrier_resolution`'s chain used to continue past a Traqo 402 exactly as it continues
+past a timeout — through the direct sweep and on to **Vizion ACI, which bills per
+reference**. So an exhausted Traqo budget quietly began buying Vizion identifications,
+and nothing on any page said so.
+
+`TraqoCarrierProbeResult.account_blocked` now carries the distinction out of the probe,
+and resolution skips Vizion when it is set. Deliberately narrow:
+
+```
+Traqo 402 quota / billing   → direct sweep still runs, Vizion skipped
+Traqo timeout / 5xx / 401   → unchanged, Vizion still reached
+```
+
+An outage says nothing about our budget. Only "we are out of allowance" and "the account
+is suspended" have this consequence, and the direct sweep is untouched either way because
+it spends the team's own carrier integrations rather than a third party's money.
+
+#### Usage is advisory, never a gate
+
+Nothing consults the usage figures before starting tracking. The provider's activation
+response is authoritative, and a cached reading cannot survive the obvious race —
+`remaining = 1` with two Starts arriving together. So the page monitors and the 402
+decides.
 
 ### Automatic start, and what "new" means
 

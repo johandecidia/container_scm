@@ -47,7 +47,11 @@ anything has to be said to the provider is a fact about that provider's contract
              stopping locally while leaving it subscribed goes on costing money.
              ``DELETE /references/{id}`` is published for this and the client already
              implements it — see ``integrations/vizion/README.md``.
-    Traqo    no stop is wired up yet; TRACK-ADMIN-1F adds it.
+    Traqo    publishes ``DELETE /shipments/{id}``, which takes the shipment id *or*
+             the container number the shipment is tracked by. It stops the shipment
+             being updated; it does **not** return the billing slot, because the
+             allowance counts references added during the cycle. So untracking ends the
+             tracking, not the charge — see ``integrations/traqo/client.py``.
 
 Direct carriers are the ones with nothing to withdraw. ``CarrierCapability`` has a
 ``supports_subscriptions`` flag, but it describes what a carrier's API offers on paper
@@ -244,6 +248,13 @@ def _stop_vizion(subscription: TrackingSubscription) -> ProviderStopOutcome:
     return release_vizion_reference(subscription)
 
 
+def _stop_traqo(subscription: TrackingSubscription) -> ProviderStopOutcome:
+    """Untrack one Traqo shipment. Imported lazily, like every other provider call."""
+    from apps.scm.integrations.traqo.service import release_traqo_shipment
+
+    return release_traqo_shipment(subscription)
+
+
 def _usage_traqo():
     """Read our Traqo account's allowance. Imported lazily to keep this module a leaf."""
     from apps.scm.integrations.traqo.usage import fetch_traqo_account_usage
@@ -258,6 +269,10 @@ _NON_CARRIER_SOURCES: dict[str, NonCarrierSource] = {
         read_payload=_read_traqo_payload,
         refresh_hint="refresh the container's tracking",
         scheduled_sync=_sync_traqo,
+        # ``DELETE /shipments/{id}``, addressed by the container number the shipment is
+        # tracked by. It ends the tracking, not the charge — the allowance counts
+        # references added during the cycle, so the slot does not come back.
+        stop_tracking=_stop_traqo,
         # ``GET /account/usage``, which is free at Traqo's end. Advisory only: it never
         # gates a Start, because the activation response is what actually decides and a
         # cached read cannot survive two concurrent starts against one remaining slot.
