@@ -382,11 +382,23 @@ def _key(parts: dict) -> tuple[str, str, str]:
 
 def _existing_keys(team: Team, parts_list: list[dict]) -> set[tuple[str, str, str]]:
     """Return the keys of the team's containers that already cover ``parts_list``."""
+    return set(get_team_containers_by_parts(team, parts_list))
+
+
+def get_team_containers_by_parts(team: Team, parts_list: list[dict]) -> dict[tuple[str, str, str], Container]:
+    """This team's containers for ``parts_list``, keyed by owner, category and serial.
+
+    One query for any number of numbers. The check digit is not part of the key, for the
+    reason :func:`create_or_get_container` looks up without it: it is derived from the
+    other three, so it cannot name a different box.
+    """
     if not parts_list:
-        return set()
+        return {}
     serials = {parts["serial_number"] for parts in parts_list}
     wanted = {_key(parts) for parts in parts_list}
-    found = Container.objects.filter(team=team, serial_number__in=serials).values_list(
-        "owner_code", "category_id", "serial_number"
-    )
-    return {key for key in found if key in wanted}
+    found = Container.objects.filter(team=team, serial_number__in=serials).select_related("equipment_type")
+    return {
+        key: container
+        for container in found
+        if (key := (container.owner_code, container.category_id, container.serial_number)) in wanted
+    }
