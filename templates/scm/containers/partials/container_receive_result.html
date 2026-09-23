@@ -43,7 +43,8 @@
     {% endif %}
   {% endwith %}
 
-  {% include "scm/containers/partials/container_receive_rows.html" with rows=result.rows location=result.location %}
+  {% include "scm/containers/partials/container_receive_timezone.html" with zone=result.timezone location=result.location %}
+  {% include "scm/containers/partials/container_receive_rows.html" with rows=result.rows location=result.location zone=result.timezone %}
 
   <div class="mt-4 flex justify-end gap-2">
     <a href="{% url 'containers:receive' %}" class="btn btn-outline btn-sm">{% translate "Receive more" %}</a>

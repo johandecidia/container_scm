@@ -1,4 +1,4 @@
-{% load i18n %}
+{% load i18n tz %}
 {% comment %}
   One table for the preview and the result, so both describe a row the same way.
   In the preview the Action column says what Confirm will do; in the result it says
@@ -25,7 +25,12 @@
               {{ row.container_number }}
             {% endif %}
           </td>
-          <td class="whitespace-nowrap">{% if row.occurred_at %}{{ row.occurred_at|date:"Y-m-d H:i:s" }}{% else %}—{% endif %}</td>
+          <td class="whitespace-nowrap">
+            {% if row.occurred_at %}
+              {% timezone zone.name %}{{ row.occurred_at|date:"Y-m-d H:i:s" }}{% endtimezone %}
+              <span class="text-xs text-base-content/60">{{ zone.name }}</span>
+            {% else %}—{% endif %}
+          </td>
           <td>{% if row.state == "invalid" %}—{% else %}{{ location.name }}{% endif %}</td>
           <td class="whitespace-nowrap">
             {% if row.state == "ready" %}

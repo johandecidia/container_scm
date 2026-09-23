@@ -8,7 +8,7 @@ what Receive does *not* own: it asks the lifecycle's own Stop, or nothing.
 
 import pathlib
 import threading
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest import mock
 
 from django.db import connection
@@ -433,3 +433,163 @@ class TeamIsolationTest(ReceiveTestCase):
                 team=self.team, container=self.box, location=self.foreign_terminal, occurred_at=timezone.now()
             )
         self.assertFalse(ContainerMovement.objects.exists())
+
+
+class GateInSemanticsTest(ReceiveTestCase):
+    def test_gate_date_time_in_is_a_gate_in_and_loc3_reads_arrived_not_received(self):
+        shipment = Shipment.objects.create(
+            team=self.team,
+            shipment_number="SHP-GATE",
+            status=Shipment.Status.IN_TRANSIT,
+            destination_location=self.terminal,
+            actual_departure_at=_aware(2026, 9, 1),
+        )
+        bulk_receive(team=self.team, location=self.terminal, text=_line(self.box, "2026-09-17 16:00:51"))
+
+        movement = ContainerMovement.objects.get(container=self.box)
+        self.assertEqual(movement.movement_type, MovementType.GATE_IN)
+        self.assertNotEqual(movement.movement_type, MovementType.RECEIVED)
+        lifecycle = get_container_arrival_lifecycle(self.team, self.box, shipment)
+        self.assertEqual(lifecycle.state, ArrivalState.ARRIVED)
+        self.assertIsNone(lifecycle.received_at)
+
+
+class DestinationTimezoneTest(ReceiveTestCase):
+    """The report's wall-clock time is the destination's, whoever pastes it."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.port = ContainerLocation.objects.create(team=cls.team, name="Göteborg", timezone="Europe/Stockholm")
+        cls.terminal.parent_location = cls.port
+        cls.terminal.save()
+
+    def receive(self, when):
+        return bulk_receive(team=self.team, location=self.terminal, text=_line(self.box, when))
+
+    def test_a_summer_gate_in_is_read_as_cest_through_the_parent_port(self):
+        with timezone.override("America/New_York"):  # The operator's own profile.
+            result = self.receive("2026-09-17 16:00:51")
+
+        self.assertEqual(result.timezone.name, "Europe/Stockholm")
+        movement = ContainerMovement.objects.get(container=self.box)
+        self.assertEqual(movement.occurred_at, datetime(2026, 9, 17, 14, 0, 51, tzinfo=UTC))
+        self.assertIn("Europe/Stockholm", movement.notes)
+
+    def test_a_winter_gate_in_is_read_as_cet(self):
+        self.receive("2026-01-15 16:00:51")
+
+        movement = ContainerMovement.objects.get(container=self.box)
+        self.assertEqual(movement.occurred_at, datetime(2026, 1, 15, 15, 0, 51, tzinfo=UTC))
+
+    def test_the_locations_own_timezone_beats_its_parents(self):
+        self.terminal.timezone = "Europe/London"
+        self.terminal.save()
+
+        self.receive("2026-09-17 16:00:51")
+
+        self.assertEqual(
+            ContainerMovement.objects.get(container=self.box).occurred_at,
+            datetime(2026, 9, 17, 15, 0, 51, tzinfo=UTC),
+        )
+
+    def test_idempotency_holds_across_operators_in_different_timezones(self):
+        with timezone.override("America/New_York"):
+            self.receive("2026-09-17 16:00:51")
+        with timezone.override("Asia/Shanghai"):
+            again = self.receive("2026-09-17 16:00:51")
+
+        self.assertEqual(again.rows[0].state, ALREADY_RECEIVED)
+        self.assertEqual(ContainerMovement.objects.count(), 1)
+
+    def test_an_ambiguous_dst_time_is_a_warning(self):
+        preview = preview_bulk_receive(
+            team=self.team, location=self.terminal, text=_line(self.box, "2026-10-25 02:30:00")
+        )
+
+        self.assertEqual(preview.rows[0].state, READY)
+        self.assertTrue(any("daylight-saving" in warning for warning in preview.rows[0].warnings))
+
+    def test_without_any_location_timezone_the_active_one_is_used(self):
+        with timezone.override("Asia/Shanghai"):
+            preview = preview_bulk_receive(
+                team=self.team, location=self.depot, text=_line(self.box, "2026-09-17 16:00:51")
+            )
+
+        self.assertFalse(preview.timezone.is_from_location)
+        self.assertEqual(preview.rows[0].occurred_at, datetime(2026, 9, 17, 8, 0, 51, tzinfo=UTC))
+
+
+class TrackingStatePreviewTest(ReceiveTestCase):
+    """Preview and Confirm read the lifecycle's own definition of what Stop acts on."""
+
+    def watch(self, status):
+        subscription = _track(self.team, self.box)
+        subscription.status = status
+        subscription.save(update_fields=["status"])
+        return subscription
+
+    def preview_and_confirm(self):
+        text = _line(self.box, "2026-09-17 16:00:51")
+        preview = preview_bulk_receive(team=self.team, location=self.terminal, text=text)
+        result = bulk_receive(team=self.team, location=self.terminal, text=text)
+        return preview.rows[0], result.rows[0]
+
+    def test_policy_on(self):
+        cases = [
+            (TrackingSubscription.Status.ACTIVE, True, TRACKING_STOPPED, TrackingSubscription.Status.CANCELLED),
+            (TrackingSubscription.Status.PAUSED, True, TRACKING_STOPPED, TrackingSubscription.Status.CANCELLED),
+            (TrackingSubscription.Status.CANCELLED, False, TRACKING_NOT_ACTIVE, TrackingSubscription.Status.CANCELLED),
+            (None, False, TRACKING_NOT_ACTIVE, None),
+        ]
+        set_team_stop_tracking_on_receive(self.team, True)
+        for status, previews_stop, outcome, final in cases:
+            with self.subTest(status=status):
+                ContainerMovement.objects.all().delete()
+                TrackingSubscription.objects.all().delete()
+                subscription = self.watch(status) if status else None
+
+                preview_row, result_row = self.preview_and_confirm()
+
+                self.assertEqual(preview_row.will_stop_tracking, previews_stop)
+                self.assertEqual((result_row.state, result_row.tracking), (RECEIVED, outcome))
+                if subscription is not None:
+                    subscription.refresh_from_db()
+                    self.assertEqual(subscription.status, final)
+
+    def test_a_paused_watch_is_not_active_tracking_but_stop_still_acts_on_it(self):
+        self.watch(TrackingSubscription.Status.PAUSED)
+
+        preview_row, _result = self.preview_and_confirm()
+
+        self.assertFalse(preview_row.is_tracked)
+        self.assertTrue(preview_row.has_stoppable_tracking)
+
+    def test_policy_off_touches_no_subscription_in_any_state(self):
+        for status in (TrackingSubscription.Status.ACTIVE, TrackingSubscription.Status.PAUSED):
+            with self.subTest(status=status):
+                ContainerMovement.objects.all().delete()
+                TrackingSubscription.objects.all().delete()
+                subscription = self.watch(status)
+
+                with mock.patch("apps.scm.tracking.lifecycle.stop_container_tracking") as stop:
+                    preview_row, result_row = self.preview_and_confirm()
+
+                stop.assert_not_called()
+                self.assertFalse(preview_row.will_stop_tracking)
+                self.assertEqual(result_row.tracking, TRACKING_NOT_APPLIED)
+                subscription.refresh_from_db()
+                self.assertEqual(subscription.status, status)
+
+    def test_preview_and_stop_share_one_definition(self):
+        from apps.scm.tracking.lifecycle import STOPPABLE_STATUSES, stoppable_subscriptions
+
+        self.watch(TrackingSubscription.Status.PAUSED)
+
+        self.assertIn(TrackingSubscription.Status.PAUSED, STOPPABLE_STATUSES)
+        with mock.patch("apps.scm.tracking.lifecycle.stoppable_subscriptions", wraps=stoppable_subscriptions) as spy:
+            set_team_stop_tracking_on_receive(self.team, True)
+            self.preview_and_confirm()
+
+        # Twice by the previews (one inside bulk_receive) and once by the stop itself.
+        self.assertEqual(spy.call_count, 3)

@@ -36,7 +36,8 @@
       </div>
     {% endwith %}
 
-    {% include "scm/containers/partials/container_receive_rows.html" with rows=preview.rows location=preview.location %}
+    {% include "scm/containers/partials/container_receive_timezone.html" with zone=preview.timezone location=preview.location %}
+    {% include "scm/containers/partials/container_receive_rows.html" with rows=preview.rows location=preview.location zone=preview.timezone %}
 
     <form
       method="post"

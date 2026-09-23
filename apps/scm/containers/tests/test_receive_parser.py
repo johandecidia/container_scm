@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase
 from django.utils import timezone
 
 from apps.scm.containers.receive_parser import parse_receive_text
@@ -24,7 +24,6 @@ TSV = (
 )
 
 
-@override_settings(TIME_ZONE="Europe/Stockholm")
 class ReceiveParserTest(SimpleTestCase):
     def test_markdown_table_rows_are_read(self):
         result = parse_receive_text(MARKDOWN)
@@ -72,12 +71,17 @@ class ReceiveParserTest(SimpleTestCase):
 
         self.assertEqual((result.rows, result.errors), ([], []))
 
-    def test_event_time_is_exact_and_in_the_active_timezone(self):
+    def test_event_time_is_kept_as_the_reported_wall_clock_time(self):
+        """No timezone is guessed here; the destination decides it. See test_receive.py."""
         (row,) = parse_receive_text(TSV.splitlines()[0]).rows
 
-        expected = timezone.make_aware(datetime(2026, 9, 17, 16, 0, 51))
-        self.assertEqual(row.occurred_at, expected)
-        self.assertEqual(str(row.occurred_at.tzinfo), "Europe/Stockholm")
+        self.assertEqual(row.local_time, datetime(2026, 9, 17, 16, 0, 51))
+        self.assertTrue(timezone.is_naive(row.local_time))
+
+    def test_an_explicit_offset_in_the_text_is_kept(self):
+        (row,) = parse_receive_text("| PSLU | 2913030 | 22 | 10 | 2026-09-17T16:00:51+02:00 | x |").rows
+
+        self.assertEqual(row.local_time.utcoffset().total_seconds(), 7200)
 
     def test_prefix_and_unit_number_are_normalised(self):
         (row,) = parse_receive_text("| pslu | 291 3030 | 22 | 10 | 2026-09-17 16:00:51 | x |").rows

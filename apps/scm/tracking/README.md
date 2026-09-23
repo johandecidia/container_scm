@@ -64,6 +64,9 @@ fetch, and it creates no source and asserts nothing new.
 `stop_container_tracking()` after each *new* receive has been committed — never for a
 receive that was already recorded, and never before the movement exists. A failure is
 reported beside the receive and does not undo it. Receive knows nothing about providers.
+Its preview asks `stoppable_subscriptions()` — the query Stop itself runs, live watches
+plus paused ones whose release is owed — so the preview cannot promise a different stop
+than the one Confirm performs.
 
 ### What stop means to a provider, and why it is per source
 

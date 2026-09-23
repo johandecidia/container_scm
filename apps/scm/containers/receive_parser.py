@@ -21,6 +21,11 @@ list that loses a box without saying so is worse than one that refuses it.
 
 The container number is validated by the intake module's own ISO 6346 check, so a
 number accepted here is one every other intake path would accept.
+
+**No timezone is applied here.** The report's time is the site's wall clock, and which
+site is authoritative is the chosen destination — something this module does not know.
+``local_time`` is therefore naive unless the text itself carried an offset;
+:mod:`apps.scm.containers.receive` reads it in the destination's timezone.
 """
 
 from __future__ import annotations
@@ -30,7 +35,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.translation import gettext_lazy as _
 
@@ -67,7 +71,8 @@ class ReceiveRow:
     line_number: int
     container_number: str
     parts: dict
-    occurred_at: datetime
+    # The reported wall-clock time: naive, or aware only if the text gave an offset.
+    local_time: datetime
     iso_size: str = ""
     iso_type: str = ""
     source_site: str = ""
@@ -112,15 +117,13 @@ def _header_columns(cells: list[str]) -> dict[str, int] | None:
     return {_HEADER_FIELDS[name]: index for index, name in enumerate(names) if name in _HEADER_FIELDS}
 
 
-def parse_occurred_at(value: str) -> datetime | None:
-    """Read the report's gate-in time, in the active timezone when it carries none."""
+def parse_local_time(value: str) -> datetime | None:
+    """Read the report's gate-in time as written. No timezone is assumed."""
     try:
         parsed = parse_datetime(value.strip()) if value else None
     except ValueError:  # Well-formed but impossible: "2026-13-45 10:00:00".
         return None
-    if parsed is None:
-        return None
-    return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+    return parsed
 
 
 def parse_receive_text(text: str) -> ReceiveParseResult:
@@ -159,8 +162,8 @@ def _parse_row(line_number: int, line: str, cells: list[str], columns: dict[str,
         return error(" ".join(exc.messages))
 
     raw_time = _cell(cells, columns["occurred_at"])
-    occurred_at = parse_occurred_at(raw_time)
-    if occurred_at is None:
+    local_time = parse_local_time(raw_time)
+    if local_time is None:
         if not raw_time:
             return error(_("No gate-in time."))
         return error(_("Gate-in time '%(value)s' is not a date and time.") % {"value": raw_time})
@@ -169,7 +172,7 @@ def _parse_row(line_number: int, line: str, cells: list[str], columns: dict[str,
         line_number=line_number,
         container_number=number,
         parts=parts,
-        occurred_at=occurred_at,
+        local_time=local_time,
         iso_size=_cell(cells, columns["iso_size"]),
         iso_type=_cell(cells, columns["iso_type"]),
         source_site=_cell(cells, columns["source_site"]),

@@ -38,6 +38,7 @@ from django.utils.translation import gettext_lazy as _
 from .choices import LocationSource, MovementType
 from .intake import get_team_containers_by_parts
 from .location_identity import normalize_location_name
+from .location_time import LocalTime, LocationTimezone, localize, resolve_location_timezone
 from .models import Container, ContainerLocation, ContainerMovement, LocationAlias
 from .movements import record_container_movement
 from .receive_parser import ReceiveRow, parse_receive_text
@@ -140,7 +141,10 @@ class BulkReceiveRow:
     container: Container | None = None
     error: str = ""
     warnings: list[str] = field(default_factory=list)
+    # A live watch: what "tracking is still active" means on an already-received row.
     is_tracked: bool = False
+    # Anything Stop would act on, which includes a paused watch whose release is owed.
+    has_stoppable_tracking: bool = False
     will_stop_tracking: bool = False
     tracking: str = TRACKING_NOT_APPLIED
     tracking_message: str = ""
@@ -156,6 +160,7 @@ class BulkReceive:
 
     location: ContainerLocation
     stop_tracking_on_receive: bool
+    timezone: LocationTimezone
     rows: list[BulkReceiveRow] = field(default_factory=list)
 
     def count(self, state: str) -> int:
@@ -182,25 +187,35 @@ class BulkReceive:
 def preview_bulk_receive(*, team: Team, location: ContainerLocation, text: str) -> BulkReceive:
     """What confirming *text* against *location* would do. Reads only.
 
-    A fixed number of queries whatever the length of the paste: one for the containers,
-    one for receives already recorded, one for live tracking, one for the destination's
-    aliases.
+    The report's times are read in the destination's timezone — see
+    :func:`~apps.scm.containers.location_time.resolve_location_timezone` — because a
+    gate-in happens on the site's clock, not the clock of whoever pastes it.
+
+    A fixed number of queries whatever the length of the paste: the containers, the
+    receives already recorded, their stoppable tracking, the destination's aliases and
+    its parents' timezones.
     """
-    from apps.scm.tracking.lifecycle import tracked_container_ids
     from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
 
     if location.team_id != team.pk:
         raise ValidationError({"location": _("The location belongs to a different team.")})
 
     parsed = parse_receive_text(text)
+    zone = resolve_location_timezone(team, location)
     stop_policy = get_team_stop_tracking_on_receive(team)
-    result = BulkReceive(location=location, stop_tracking_on_receive=stop_policy)
+    result = BulkReceive(location=location, stop_tracking_on_receive=stop_policy, timezone=zone)
 
+    times = {row.line_number: localize(row.local_time, zone.zone) for row in parsed.rows}
     containers = get_team_containers_by_parts(team, [row.parts for row in parsed.rows])
     matched = list(containers.values())
-    received = _received_keys(team, location, matched, [row.occurred_at for row in parsed.rows])
-    tracked = tracked_container_ids(team=team, container_ids=[c.pk for c in matched])
-    site_names = _destination_names(team, location)
+    context = _PreviewContext(
+        location=location,
+        stop_policy=stop_policy,
+        containers=containers,
+        received=_received_keys(team, location, matched, [time.instant for time in times.values()]),
+        tracking=_tracking_statuses(team, matched),
+        site_names=_destination_names(team, location),
+    )
 
     seen: set[tuple[str, datetime]] = set()
     rows: list[BulkReceiveRow] = [
@@ -210,8 +225,8 @@ def preview_bulk_receive(*, team: Team, location: ContainerLocation, text: str) 
         for e in parsed.errors
     ]
     for parsed_row in parsed.rows:
-        row = _preview_row(parsed_row, containers, received, tracked, site_names, location, stop_policy)
-        key = (parsed_row.container_number, parsed_row.occurred_at)
+        row = _preview_row(parsed_row, times[parsed_row.line_number], context)
+        key = (parsed_row.container_number, times[parsed_row.line_number].instant)
         if key in seen:
             row.state, row.will_stop_tracking = DUPLICATE, False
         seen.add(key)
@@ -221,27 +236,65 @@ def preview_bulk_receive(*, team: Team, location: ContainerLocation, text: str) 
     return result
 
 
-def _preview_row(parsed_row: ReceiveRow, containers, received, tracked, site_names, location, stop_policy):
+@dataclass(frozen=True)
+class _PreviewContext:
+    location: ContainerLocation
+    stop_policy: bool
+    containers: dict
+    received: set[tuple[int, datetime]]
+    # Container id → the statuses of its stoppable watches.
+    tracking: dict[int, set[str]]
+    site_names: set[str]
+
+
+def _tracking_statuses(team: Team, containers) -> dict[int, set[str]]:
+    """What Stop would act on, per container — the lifecycle's own definition, not a copy."""
+    from apps.scm.tracking.lifecycle import stoppable_subscriptions
+
+    statuses: dict[int, set[str]] = {}
+    if not containers:
+        return statuses
+    rows = stoppable_subscriptions(team=team, container_ids=[c.pk for c in containers]).values_list(
+        "container_id", "status"
+    )
+    for container_id, status in rows:
+        statuses.setdefault(container_id, set()).add(status)
+    return statuses
+
+
+def _preview_row(parsed_row: ReceiveRow, time: LocalTime, context: _PreviewContext) -> BulkReceiveRow:
+    from apps.scm.tracking.selectors import LIVE_SUBSCRIPTION_STATUSES
+
     parts = parsed_row.parts
-    container = containers.get((parts["owner_code"], parts["category_id"], parts["serial_number"]))
+    container = context.containers.get((parts["owner_code"], parts["category_id"], parts["serial_number"]))
     row = BulkReceiveRow(
         line_number=parsed_row.line_number,
         container_number=parsed_row.container_number,
         state=READY,
-        occurred_at=parsed_row.occurred_at,
+        occurred_at=time.instant,
         source_site=parsed_row.source_site,
         iso_code=parsed_row.iso_code,
         container=container,
     )
+    if time.is_ambiguous:
+        row.warnings.append(
+            str(_("This local time occurs twice at the daylight-saving change; the earlier (summer-time) one is used."))
+        )
+    elif time.is_nonexistent:
+        row.warnings.append(
+            str(_("This local time does not exist at the daylight-saving change; it is read with the winter offset."))
+        )
     if container is None:
         row.state = NOT_FOUND
         return row
 
-    row.is_tracked = container.pk in tracked
-    if (container.pk, parsed_row.occurred_at) in received:
+    statuses = context.tracking.get(container.pk, set())
+    row.is_tracked = bool(statuses & set(LIVE_SUBSCRIPTION_STATUSES))
+    row.has_stoppable_tracking = bool(statuses)
+    if (container.pk, time.instant) in context.received:
         row.state = ALREADY_RECEIVED
     else:
-        row.will_stop_tracking = stop_policy and row.is_tracked
+        row.will_stop_tracking = context.stop_policy and row.has_stoppable_tracking
 
     if parsed_row.iso_code and parsed_row.iso_code != (container.equipment_type_id or "").upper():
         row.warnings.append(
@@ -250,11 +303,11 @@ def _preview_row(parsed_row: ReceiveRow, containers, received, tracked, site_nam
                 % {"imported": parsed_row.iso_code, "recorded": container.equipment_type_id}
             )
         )
-    if parsed_row.source_site and not _site_matches(parsed_row.source_site, site_names):
+    if parsed_row.source_site and not _site_matches(parsed_row.source_site, context.site_names):
         row.warnings.append(
             str(
                 _("Reported site '%(site)s' does not look like %(location)s.")
-                % {"site": parsed_row.source_site, "location": location.name}
+                % {"site": parsed_row.source_site, "location": context.location.name}
             )
         )
     return row
@@ -311,7 +364,11 @@ def bulk_receive(*, team: Team, location: ContainerLocation, text: str, actor=No
             continue
         try:
             outcome = receive_container(
-                team=team, container=container, location=location, occurred_at=occurred_at, notes=_provenance(row)
+                team=team,
+                container=container,
+                location=location,
+                occurred_at=occurred_at,
+                notes=_provenance(row, result.timezone),
             )
         except ValidationError as exc:
             row.state, row.error, row.will_stop_tracking = FAILED, " ".join(exc.messages), False
@@ -328,8 +385,9 @@ def bulk_receive(*, team: Team, location: ContainerLocation, text: str, actor=No
     return result
 
 
-def _provenance(row: BulkReceiveRow) -> str:
+def _provenance(row: BulkReceiveRow, zone: LocationTimezone) -> str:
     details = [str(_("Bulk receive (pasted report)."))]
+    details.append(str(_("Local time read in %(zone)s.") % {"zone": zone.name}))
     if row.source_site:
         details.append(str(_("Reported site: %(site)s.") % {"site": row.source_site}))
     if row.iso_code:

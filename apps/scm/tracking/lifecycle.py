@@ -116,17 +116,18 @@ def is_container_tracked(*, team: Team, container: Container) -> bool:
     ).exists()
 
 
-def tracked_container_ids(*, team: Team, container_ids: Iterable[int]) -> set[int]:
-    """The bulk form of :func:`is_container_tracked`: which of these containers are watched."""
-    container_ids = list(container_ids)
-    if not container_ids:
-        return set()
-    return set(
-        TrackingSubscription.objects.filter(
-            team=team,
-            container_id__in=container_ids,
-            status__in=LIVE_SUBSCRIPTION_STATUSES,
-        ).values_list("container_id", flat=True)
+def stoppable_subscriptions(*, team: Team, container_ids: Iterable[int]):
+    """The watches :func:`stop_container_tracking` acts on for these containers.
+
+    :data:`STOPPABLE_STATUSES` — live watches, and paused ones whose provider release
+    may still be owed. The one definition of "Stop has something to do here": the stop
+    itself reads it, and so does anything that previews a stop, so the two cannot say
+    different things about the same container.
+    """
+    return TrackingSubscription.objects.filter(
+        team=team,
+        container_id__in=list(container_ids),
+        status__in=STOPPABLE_STATUSES,
     )
 
 
@@ -367,13 +368,7 @@ def stop_container_tracking(*, team: Team, container: Container, actor=None) -> 
     """
     from .manual_refresh import INFO, RefreshResult, describe_subscription_carrier
 
-    stoppable = list(
-        TrackingSubscription.objects.filter(
-            team=team,
-            container=container,
-            status__in=STOPPABLE_STATUSES,
-        ).select_related("provider")
-    )
+    stoppable = list(stoppable_subscriptions(team=team, container_ids=[container.pk]).select_related("provider"))
     if not stoppable:
         return RefreshResult(
             level=INFO,
