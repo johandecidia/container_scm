@@ -19,6 +19,7 @@ urlpatterns = [
     # Whether new containers start being tracked on their own. A team policy rather
     # than a per-carrier one, so it hangs off the tracking page and not off a provider.
     path("tracking/auto-start/", tracking_views.tracking_auto_start, name="tracking_auto_start"),
+    path("tracking/stop-on-receive/", tracking_views.tracking_stop_on_receive, name="tracking_stop_on_receive"),
     path(
         "tracking/carriers/<str:provider_code>/credentials/",
         tracking_views.carrier_credentials,

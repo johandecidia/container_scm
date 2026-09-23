@@ -79,6 +79,34 @@
         </span>
       </label>
     </form>
+    <form
+      class="mt-3"
+      hx-post="{% url 'team_settings:tracking_stop_on_receive' %}"
+      hx-target="#settings-tracking"
+      hx-swap="outerHTML"
+      hx-disabled-elt="find input"
+    >
+      {% csrf_token %}
+      <input type="hidden" name="stop_tracking_on_receive" value="0">
+      <label class="flex items-start gap-3 cursor-pointer">
+        <input
+          type="checkbox"
+          name="stop_tracking_on_receive"
+          value="1"
+          class="checkbox checkbox-sm mt-0.5"
+          {% if stop_tracking_on_receive %}checked{% endif %}
+          onchange="this.form.requestSubmit()"
+        >
+        <span>
+          <span class="text-sm font-medium">
+            {% translate "Automatically stop tracking when a container is received" %}
+          </span>
+          <span class="block text-xs text-base-content/60 mt-0.5">
+            {% translate "Applies to receives recorded from now on. The receive itself is recorded either way; tracking history is kept." %}
+          </span>
+        </span>
+      </label>
+    </form>
   </section>
 
   <section class="app-card mb-6">

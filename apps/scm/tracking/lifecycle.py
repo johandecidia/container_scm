@@ -116,6 +116,20 @@ def is_container_tracked(*, team: Team, container: Container) -> bool:
     ).exists()
 
 
+def tracked_container_ids(*, team: Team, container_ids: Iterable[int]) -> set[int]:
+    """The bulk form of :func:`is_container_tracked`: which of these containers are watched."""
+    container_ids = list(container_ids)
+    if not container_ids:
+        return set()
+    return set(
+        TrackingSubscription.objects.filter(
+            team=team,
+            container_id__in=container_ids,
+            status__in=LIVE_SUBSCRIPTION_STATUSES,
+        ).values_list("container_id", flat=True)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Start
 # ---------------------------------------------------------------------------

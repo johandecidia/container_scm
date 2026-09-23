@@ -59,6 +59,12 @@ at the cost of a lookup, up to five Traqo probes and possibly a Vizion reference
 Resuming first makes a restart one ordinary sync. It is the one write that precedes a
 fetch, and it creates no source and asserts nothing new.
 
+**Stop on receive is a caller of Stop, not a second Stop.** When
+`TeamTrackingSettings.stop_tracking_on_receive` is on, `containers/receive.py` calls
+`stop_container_tracking()` after each *new* receive has been committed — never for a
+receive that was already recorded, and never before the movement exists. A failure is
+reported beside the receive and does not undo it. Receive knows nothing about providers.
+
 ### What stop means to a provider, and why it is per source
 
 `sources.py` carries a `stop_tracking` capability beside `scheduled_sync`, for the same

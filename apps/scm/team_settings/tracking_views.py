@@ -33,7 +33,9 @@ from apps.scm.integrations.services import (
 from apps.scm.tracking.preferences import (
     get_team_auto_start_tracking,
     get_team_default_provider_name,
+    get_team_stop_tracking_on_receive,
     set_team_auto_start_tracking,
+    set_team_stop_tracking_on_receive,
 )
 
 from .forms import CarrierCredentialForm
@@ -61,6 +63,7 @@ def _panel_context(request, *, notice: str = "", notice_level: str = "info") -> 
         "carrier_rows": get_carrier_settings_rows(team),
         "default_provider_name": get_team_default_provider_name(team),
         "auto_start_tracking": get_team_auto_start_tracking(team),
+        "stop_tracking_on_receive": get_team_stop_tracking_on_receive(team),
         "notice": notice,
         "notice_level": notice_level,
     }
@@ -121,6 +124,26 @@ def tracking_auto_start(request):
         _("New containers will start being tracked automatically.")
         if enabled
         else _("New containers will not start being tracked automatically.")
+    )
+    return _respond(request, notice=notice, notice_level="info", message=notice)
+
+
+@scm_team_admin_required
+@require_POST
+def tracking_stop_on_receive(request):
+    """Turn automatic stop-tracking-on-receive on or off for this team.
+
+    Read rather than toggled, for the reason ``tracking_auto_start`` gives. Applies to
+    receives recorded from now on; nothing already received is stopped by switching it on.
+    """
+    team = request.default_team
+    enabled = request.POST.get("stop_tracking_on_receive") in ("1", "true", "on")
+    set_team_stop_tracking_on_receive(team, enabled)
+
+    notice = (
+        _("Tracking will stop automatically when a container is received.")
+        if enabled
+        else _("Tracking will not stop automatically when a container is received.")
     )
     return _respond(request, notice=notice, notice_level="info", message=notice)
 

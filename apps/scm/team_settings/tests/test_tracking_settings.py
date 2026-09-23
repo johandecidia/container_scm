@@ -355,3 +355,55 @@ class TrackingSettingsIsolationTest(TestCase):
     def test_usable_codes_are_scoped_to_the_team(self):
         self.assertEqual(get_usable_carrier_codes(self.team), set())
         self.assertEqual(get_usable_carrier_codes(self.other_team), {"maersk"})
+
+
+class StopTrackingOnReceiveSettingTest(TestCase):
+    """The team's policy on whether receiving a container stops its tracking. Off by default."""
+
+    def setUp(self):
+        self.team = Team.objects.create(name="MCR", slug="mcr-stop-on-receive")
+        self.admin = _user("admin@stop-on-receive.test")
+        self.member = _user("member@stop-on-receive.test")
+        self.team.members.add(self.admin, through_defaults={"role": ROLE_ADMIN})
+        self.team.members.add(self.member, through_defaults={"role": ROLE_MEMBER})
+        self.url = reverse("team_settings:tracking_stop_on_receive")
+        self.client = Client()
+        self.client.force_login(self.admin)
+
+    def test_a_team_starts_with_it_off_and_it_is_offered_on_the_page(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
+
+        response = self.client.get(reverse("team_settings:tracking"))
+
+        self.assertFalse(get_team_stop_tracking_on_receive(self.team))
+        self.assertFalse(response.context["stop_tracking_on_receive"])
+        self.assertContains(response, "Automatically stop tracking when a container is received")
+        self.assertContains(response, self.url)
+
+    def test_an_admin_can_switch_it_on_and_off(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
+
+        self.client.post(self.url, {"stop_tracking_on_receive": "1"})
+        self.assertTrue(get_team_stop_tracking_on_receive(self.team))
+
+        self.client.post(self.url, {"stop_tracking_on_receive": "0"})
+        self.assertFalse(get_team_stop_tracking_on_receive(self.team))
+
+    def test_a_member_cannot_change_it(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
+
+        client = Client()
+        client.force_login(self.member)
+
+        response = client.post(self.url, {"stop_tracking_on_receive": "1"})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(get_team_stop_tracking_on_receive(self.team))
+
+    def test_the_setting_is_per_team(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive, set_team_stop_tracking_on_receive
+
+        other = Team.objects.create(name="Theirs", slug="theirs-stop-on-receive")
+        set_team_stop_tracking_on_receive(self.team, True)
+
+        self.assertFalse(get_team_stop_tracking_on_receive(other))

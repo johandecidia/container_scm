@@ -177,6 +177,36 @@ def set_team_auto_start_tracking(team: Team, enabled: bool) -> TeamTrackingSetti
 
 
 # ---------------------------------------------------------------------------
+# Automatic stop, once a container is received
+# ---------------------------------------------------------------------------
+
+
+def get_team_stop_tracking_on_receive(team: Team) -> bool:
+    """Whether a container this team receives should stop being tracked straight after.
+
+    Off by default. What "stop" then means is
+    :func:`apps.scm.tracking.lifecycle.stop_container_tracking` — the same function the
+    Stop button calls — so a receive has no tracking behaviour of its own.
+    """
+    return get_team_tracking_settings(team).stop_tracking_on_receive
+
+
+def set_team_stop_tracking_on_receive(team: Team, enabled: bool) -> TeamTrackingSettings:
+    """Turn automatic stop-on-receive on or off for this team.
+
+    Applies to receives recorded after the change. Switching it on does not stop
+    containers received earlier; that stays a per-container Stop.
+    """
+    settings = get_team_tracking_settings(team)
+    value = bool(enabled)
+    if settings.stop_tracking_on_receive != value:
+        settings.stop_tracking_on_receive = value
+        settings.save(update_fields=["stop_tracking_on_receive", "updated_at"])
+        logger.info("Team %s stop tracking on receive set to %s.", team.pk, value)
+    return settings
+
+
+# ---------------------------------------------------------------------------
 # Container override
 # ---------------------------------------------------------------------------
 
