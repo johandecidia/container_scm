@@ -1,0 +1,57 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold">{% translate "Receive containers" %}</h1>
+      <p class="text-sm text-base-content/60 mt-1">
+        {% translate "Paste a gate-in report to record containers as received at one of your locations. Only containers already registered are received; nothing is created." %}
+      </p>
+    </div>
+    <a href="{% url 'containers:list' %}" class="btn btn-ghost btn-sm">
+      <i class="fa fa-arrow-left w-4 h-4"></i>
+      {% translate "Containers" %}
+    </a>
+  </div>
+
+  <section class="app-card mb-6">
+    <form
+      id="receive-form"
+      method="post"
+      action="{% url 'containers:receive_preview' %}"
+      hx-post="{% url 'containers:receive_preview' %}"
+      hx-target="#receive-output"
+      hx-swap="innerHTML"
+      hx-disabled-elt="find button[type=submit]"
+    >
+      {% csrf_token %}
+      <div class="form-control mb-4 max-w-md">
+        <label class="label" for="{{ form.location.id_for_label }}">
+          <span class="label-text">{{ form.location.label }}</span>
+        </label>
+        {{ form.location }}
+        {% for error in form.location.errors %}
+          <p class="text-error text-sm mt-1">{{ error }}</p>
+        {% endfor %}
+      </div>
+
+      <div class="form-control mb-4">
+        <label class="label" for="{{ form.text.id_for_label }}">
+          <span class="label-text">{{ form.text.label }}</span>
+        </label>
+        {{ form.text }}
+        <span class="label-text-alt text-base-content/50 mt-1">{{ form.text.help_text }}</span>
+        {% for error in form.text.errors %}
+          <p class="text-error text-sm mt-1">{{ error }}</p>
+        {% endfor %}
+      </div>
+
+      <button type="submit" class="btn btn-primary">{% translate "Preview" %}</button>
+    </form>
+  </section>
+
+  <div id="receive-output">
+    {% if partial %}{% include partial %}{% endif %}
+  </div>
+{% endblock %}

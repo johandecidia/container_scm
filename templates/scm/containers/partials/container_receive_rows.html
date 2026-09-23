@@ -1,0 +1,70 @@
+{% load i18n %}
+{% comment %}
+  One table for the preview and the result, so both describe a row the same way.
+  In the preview the Action column says what Confirm will do; in the result it says
+  what Confirm did, with the tracking outcome beside it.
+{% endcomment %}
+<div class="overflow-x-auto border border-base-300 rounded-box">
+  <table class="table table-sm table-pin-rows">
+    <thead>
+      <tr>
+        <th>{% translate "Container" %}</th>
+        <th>{% translate "Gate in" %}</th>
+        <th>{% translate "Destination" %}</th>
+        <th>{% translate "Action" %}</th>
+        <th>{% translate "Notes" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td class="font-mono whitespace-nowrap">
+            {% if row.container %}
+              <a class="link link-hover" href="{% url 'containers:detail' row.container.pk %}">{{ row.container_number }}</a>
+            {% else %}
+              {{ row.container_number }}
+            {% endif %}
+          </td>
+          <td class="whitespace-nowrap">{% if row.occurred_at %}{{ row.occurred_at|date:"Y-m-d H:i:s" }}{% else %}—{% endif %}</td>
+          <td>{% if row.state == "invalid" %}—{% else %}{{ location.name }}{% endif %}</td>
+          <td class="whitespace-nowrap">
+            {% if row.state == "ready" %}
+              <span class="text-success">
+                {% if row.will_stop_tracking %}{% translate "Receive + Stop tracking" %}{% else %}{% translate "Receive" %}{% endif %}
+              </span>
+            {% elif row.state == "received" %}
+              <span class="text-success">{% translate "Received ✓" %}</span>
+              {% if row.tracking == "stopped" %}
+                <span class="block text-success text-xs">{% translate "Tracking stopped ✓" %}</span>
+              {% elif row.tracking == "not_active" %}
+                <span class="block text-base-content/60 text-xs">{% translate "Tracking not active" %}</span>
+              {% elif row.tracking == "stop_failed" %}
+                <span class="block text-warning text-xs">{% translate "Tracking stop failed ⚠" %}</span>
+              {% endif %}
+            {% elif row.state == "already_received" %}
+              <span class="text-base-content/60">{% translate "Already received" %}</span>
+            {% elif row.state == "not_found" %}
+              <span class="text-warning">{% translate "Container not found" %}</span>
+            {% elif row.state == "duplicate" %}
+              <span class="text-base-content/60">{% translate "Duplicate in paste" %}</span>
+            {% elif row.state == "failed" %}
+              <span class="text-error">{% translate "Not received" %}</span>
+            {% else %}
+              <span class="text-error">{% translate "Invalid" %}</span>
+            {% endif %}
+          </td>
+          <td class="text-xs">
+            {% if row.error %}<p class="text-error">{{ row.error }}</p>{% endif %}
+            {% for warning in row.warnings %}<p class="text-warning">{% translate "Warning" %}: {{ warning }}</p>{% endfor %}
+            {% if row.state == "already_received" and row.is_tracked %}
+              <p class="text-base-content/60">{% translate "Tracking is still active. It is not stopped for a receive already recorded." %}</p>
+            {% endif %}
+            {% if row.tracking == "stop_failed" and row.tracking_message %}
+              <p class="text-warning">{{ row.tracking_message }}</p>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

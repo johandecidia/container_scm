@@ -208,6 +208,57 @@ class ContainerPasteForm(ContainerAttributesForm):
         return self.cleaned_data["numbers"]
 
 
+class BulkReceiveForm(forms.Form):
+    """A pasted gate-in report and the canonical location the containers were received at.
+
+    The destination is chosen from this team's active canonical locations and nothing
+    else: the report's own "Site" column is evidence, and never picks, or creates, one.
+    """
+
+    location = forms.ModelChoiceField(
+        label=_("Received at"),
+        queryset=ContainerLocation.objects.none(),
+        empty_label=_("— Choose a location —"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    text = forms.CharField(
+        label=_("Receive report"),
+        help_text=_(
+            "Paste the report as copied — a table from the depot's page or rows from a spreadsheet. "
+            "Headers and surrounding text are ignored."
+        ),
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full font-mono text-xs",
+                "rows": 12,
+                "placeholder": "PSLU\t2913030\t22\t10\t2026-09-17 16:00:51\tMCR AB - Oceanterminalen",
+            }
+        ),
+    )
+
+    def __init__(self, *args, team=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        cast(forms.ModelChoiceField, self.fields["location"]).queryset = (
+            ContainerLocation.objects.none()
+            if team is None
+            else ContainerLocation.objects.filter(team=team, is_active=True).order_by("name")
+        )
+
+    def clean_text(self) -> str:
+        from .receive_parser import parse_receive_text
+
+        text = self.cleaned_data["text"]
+        parsed = parse_receive_text(text)
+        found = len(parsed.rows) + len(parsed.errors)
+        if not found:
+            raise forms.ValidationError(_("No receive rows were found in the pasted text."))
+        if found > MAX_PASTED_CONTAINERS:
+            raise forms.ValidationError(
+                _("Too many rows at once — the maximum is %(max)s.") % {"max": MAX_PASTED_CONTAINERS}
+            )
+        return text
+
+
 class ContainerCsvImportForm(ContainerAttributesForm):
     """Bulk intake from a small CSV: a ``container_number`` column, optional ``carrier``."""
 

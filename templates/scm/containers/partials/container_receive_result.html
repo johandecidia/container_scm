@@ -1,0 +1,54 @@
+{% load i18n %}
+
+<section class="app-card">
+  <h2 class="text-lg font-semibold mb-3">
+    {% blocktranslate trimmed with location=result.location.name %}Received at {{ location }}{% endblocktranslate %}
+  </h2>
+
+  {% with counts=result.counts %}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
+      <div>
+        <p class="font-medium">
+          {% blocktranslate trimmed count counter=result.total %}{{ counter }} row processed{% plural %}{{ counter }} rows processed{% endblocktranslate %}
+        </p>
+        <ul class="text-sm mt-1 space-y-0.5">
+          <li class="text-success">{% translate "Received" %}: {{ counts.received }}</li>
+          <li>{% translate "Already received" %}: {{ counts.already_received }}</li>
+          <li class="{% if counts.not_found %}text-warning{% endif %}">{% translate "Container not found" %}: {{ counts.not_found }}</li>
+          {% if counts.invalid %}<li class="text-error">{% translate "Invalid" %}: {{ counts.invalid }}</li>{% endif %}
+          {% if counts.duplicate %}<li>{% translate "Duplicate in paste" %}: {{ counts.duplicate }}</li>{% endif %}
+          {% if counts.failed %}<li class="text-error">{% translate "Not received" %}: {{ counts.failed }}</li>{% endif %}
+        </ul>
+      </div>
+      <div>
+        <p class="font-medium">{% translate "Tracking" %}</p>
+        {% if result.stop_tracking_on_receive %}
+          <ul class="text-sm mt-1 space-y-0.5">
+            <li class="text-success">{% translate "Stopped" %}: {{ counts.tracking_stopped }}</li>
+            <li>{% translate "Not active" %}: {{ counts.tracking_not_active }}</li>
+            <li class="{% if counts.tracking_stop_failed %}text-warning{% endif %}">{% translate "Failed" %}: {{ counts.tracking_stop_failed }}</li>
+          </ul>
+        {% else %}
+          <p class="text-sm text-base-content/60 mt-1">
+            {% translate "Stop tracking on receive is off for this team, so tracking was not changed." %}
+          </p>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if counts.not_found or counts.invalid or counts.failed or counts.tracking_stop_failed %}
+      <div class="alert alert-warning mb-4">
+        <span>{% translate "Partially completed. Rows marked below were not received, or their tracking could not be stopped; every receive shown as received is recorded." %}</span>
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% include "scm/containers/partials/container_receive_rows.html" with rows=result.rows location=result.location %}
+
+  <div class="mt-4 flex justify-end gap-2">
+    <a href="{% url 'containers:receive' %}" class="btn btn-outline btn-sm">{% translate "Receive more" %}</a>
+    <a href="{% url 'containers:location_detail' result.location.pk %}" class="btn btn-ghost btn-sm">
+      {% blocktranslate trimmed with location=result.location.name %}Open {{ location }}{% endblocktranslate %}
+    </a>
+  </div>
+</section>
