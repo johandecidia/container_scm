@@ -488,7 +488,7 @@ def stop_container_tracking(*, team: Team, container: Container, actor=None) -> 
     _log_stop(
         team=team,
         object_type="Container",
-        object_id=container.pk,
+        object_id=str(container.pk),
         object_repr=container.container_id,
         actor=actor,
         stopped=stoppable,
@@ -534,7 +534,7 @@ def stop_subscription_tracking(*, team: Team, subscription: TrackingSubscription
     _log_stop(
         team=team,
         object_type="TrackingSubscription",
-        object_id=subscription.pk,
+        object_id=str(subscription.pk),
         object_repr=subscription.tracking_reference,
         actor=actor,
         stopped=[subscription],
@@ -647,7 +647,7 @@ def _log_start(
         team=team,
         action=SCMAuditLog.Action.TRACKING_STARTED,
         object_type="Container",
-        object_id=container.pk,
+        object_id=str(container.pk),
         object_repr=container.container_id,
         actor=actor,
         metadata={
@@ -663,7 +663,7 @@ def _log_start(
 
 
 def _log_stop(
-    *, team: Team, object_type: str, object_id, object_repr: str, actor, stopped: list, unreleased: list
+    *, team: Team, object_type: str, object_id: str, object_repr: str, actor, stopped: list, unreleased: list
 ) -> None:
     from apps.scm.audit_log.models import SCMAuditLog
     from apps.scm.audit_log.services import log_scm_action

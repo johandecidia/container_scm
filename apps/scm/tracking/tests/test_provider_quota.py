@@ -277,7 +277,9 @@ class QuotaRetrySemanticsTest(SimpleTestCase):
     """A spent allowance must not be retried like a network blip."""
 
     def _classify(self, payload):
-        return outcome_for_carrier_error(classify_traqo_error(402, FakeResponse(402, payload)))
+        error = classify_traqo_error(402, FakeResponse(402, payload))
+        assert error is not None
+        return outcome_for_carrier_error(error)
 
     def test_a_spent_allowance_is_skipped_rather_than_failed(self):
         """SKIPPED is what stops ``consecutive_failures`` driving the backoff ladder."""
@@ -544,11 +546,9 @@ class NoAccountDataOnTeamPagesTest(TestCase):
             provider_reference="ONEY",
         )
         sync_run = create_sync_run(team=self.team, subscription=subscription, provider=subscription.provider)
-        apply_sync_outcome(
-            subscription,
-            sync_run,
-            outcome_for_carrier_error(classify_traqo_error(402, FakeResponse(402, limit_payload()))),
-        )
+        error = classify_traqo_error(402, FakeResponse(402, limit_payload()))
+        assert error is not None
+        apply_sync_outcome(subscription, sync_run, outcome_for_carrier_error(error))
         return subscription
 
     def _assert_clean(self, response):

@@ -66,7 +66,8 @@ def parse_traqo_account_usage(payload: dict):
         logger.warning("Traqo usage response carried no shipments object.")
         return None
 
-    cycle = data.get("cycle") if isinstance(data.get("cycle"), dict) else {}
+    raw_cycle = data.get("cycle")
+    cycle = raw_cycle if isinstance(raw_cycle, dict) else {}
     return ProviderUsage(
         provider_code=PROVIDER_CODE,
         provider_name=PROVIDER_NAME,
@@ -145,10 +146,8 @@ def fetch_traqo_account_usage(*, client=None, sandbox: bool = False) -> TraqoUsa
     from .client import TraqoClient
     from .discovery import is_traqo_configured
 
-    identity = {"provider_code": PROVIDER_CODE, "provider_name": PROVIDER_NAME}
-
     if client is None and not sandbox and not is_traqo_configured():
-        return TraqoUsageFetch(configured=False, **identity)
+        return TraqoUsageFetch(provider_code=PROVIDER_CODE, provider_name=PROVIDER_NAME, configured=False)
 
     try:
         client = client or TraqoClient.from_settings(sandbox=sandbox)
@@ -157,9 +156,15 @@ def fetch_traqo_account_usage(*, client=None, sandbox: bool = False) -> TraqoUsa
         logger.warning("Traqo account usage could not be read: %s (%s).", type(exc).__name__, exc)
         # The provider's own message. Safe here and only here: this result is rendered
         # on the superuser page and reaches no tenant response.
-        return TraqoUsageFetch(error=f"{type(exc).__name__}: {exc}", **identity)
+        return TraqoUsageFetch(
+            provider_code=PROVIDER_CODE, provider_name=PROVIDER_NAME, error=f"{type(exc).__name__}: {exc}"
+        )
 
     usage = parse_traqo_account_usage(payload)
     if usage is None:
-        return TraqoUsageFetch(error="Traqo returned a usage response this version cannot read.", **identity)
-    return TraqoUsageFetch(usage=usage, **identity)
+        return TraqoUsageFetch(
+            provider_code=PROVIDER_CODE,
+            provider_name=PROVIDER_NAME,
+            error="Traqo returned a usage response this version cannot read.",
+        )
+    return TraqoUsageFetch(provider_code=PROVIDER_CODE, provider_name=PROVIDER_NAME, usage=usage)
