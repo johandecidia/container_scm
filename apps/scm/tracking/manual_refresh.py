@@ -104,6 +104,10 @@ NOT_CONFIGURED = "not_configured"
 CARRIER_UNKNOWN = "carrier_unknown"
 UNAVAILABLE = "unavailable"
 IN_PROGRESS = "in_progress"
+# The provider is up and configured, and our own account with it cannot take another
+# container. A distinct state because the remedy is ours rather than the team's — and
+# because what the team is told must not include what the account's plan or allowance is.
+PROVIDER_UNAVAILABLE = "provider_unavailable"
 
 # One discovery sweep per container at a time. Kept in its own namespace because it
 # guards a container, not a subscription — the first sweep has no subscription to
@@ -598,7 +602,7 @@ def describe_activation(resolution, activation, *, reference: str) -> RefreshRes
         level, message = _unactivated_message(resolution, activation)
         return RefreshResult(
             level=level,
-            state=NOT_CONFIGURED if activation.state == "not_configured" else UNAVAILABLE,
+            state=_refresh_state_for(activation.state),
             message=message,
             **common,
         )
@@ -615,6 +619,17 @@ def describe_activation(resolution, activation, *, reference: str) -> RefreshRes
     )
 
 
+def _refresh_state_for(activation_state: str) -> str:
+    """Map an activation state onto the refresh vocabulary the panel branches on."""
+    from . import activation as activation_states
+
+    if activation_state == activation_states.PROVIDER_UNAVAILABLE:
+        return PROVIDER_UNAVAILABLE
+    if activation_state == activation_states.NOT_CONFIGURED:
+        return NOT_CONFIGURED
+    return UNAVAILABLE
+
+
 def _provider_label(activation) -> str:
     """The provider's name when it is not the carrier itself, else "".
 
@@ -629,6 +644,7 @@ def _provider_label(activation) -> str:
 
 def _unactivated_message(resolution, activation) -> tuple[str, StrOrPromise]:
     """Say that the carrier is known but nothing could be asked, without provider detail."""
+    from . import activation as activation_states
     from . import provider_routing
 
     route = activation.route
@@ -648,7 +664,19 @@ def _unactivated_message(resolution, activation) -> tuple[str, StrOrPromise]:
             "carrier": carrier
         }
 
-    if activation.state == "not_configured":
+    if activation.state == activation_states.PROVIDER_UNAVAILABLE:
+        # The provider answered, and the answer was about our account rather than about
+        # this container: the allowance for the billing cycle is spent, or the account is
+        # suspended. Neither is the reader's to fix and neither is theirs to know — the
+        # plan, the limit, what has been used and where to pay are all platform facts,
+        # and the 402 body states every one of them. So this says what happened to their
+        # container and who to ask, and nothing else. See
+        # ``apps/scm/tracking/platform_views.py`` for where the numbers do go.
+        return ERROR, _(
+            "Tracking could not be started with the configured provider. Contact your system administrator."
+        )
+
+    if activation.state == activation_states.NOT_CONFIGURED:
         return WARNING, _(
             "%(carrier)s is carrying this container, but no tracking provider is configured that can be asked about it."
         ) % {"carrier": carrier}

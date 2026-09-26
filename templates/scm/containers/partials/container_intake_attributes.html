@@ -28,4 +28,40 @@
       </div>
     {% endfor %}
   </div>
+
+  {% comment %}
+    Whether to start tracking the containers this import creates. Separate from the
+    attributes above because it is not one: those are columns on the container, this is
+    an instruction about what to do once it exists.
+
+    The box arrives already set to the team's own policy — Settings → Tracking — so the
+    usual case needs no thought and a departure from it is a visible one. Only the
+    containers this import creates are affected, which is what the help text says,
+    because the alternative reading is the dangerous one: a re-uploaded spreadsheet
+    resuming tracking somebody deliberately stopped.
+  {% endcomment %}
+  <div class="form-control mt-3">
+    {% comment %}
+      The hidden companion is what makes "do not track these" expressible. A clear
+      checkbox posts nothing, and nothing means "this request named no choice — use the
+      team setting", which is the rule every surface follows. Without it, unticking the
+      box on a team that has automatic tracking on would be silently ignored.
+
+      The value is "false" rather than "0" because Django's CheckboxInput reads the
+      strings "true" and "false" and calls bool() on anything else — so "0" would come
+      back as True. A ticked box appends its own value after this one and wins, since a
+      QueryDict yields the last value for a key.
+    {% endcomment %}
+    <input type="hidden" name="start_tracking" value="false">
+    <label class="flex items-start gap-3 cursor-pointer" for="{{ form.start_tracking.id_for_label }}">
+      {{ form.start_tracking }}
+      <span>
+        <span class="label-text text-sm">{{ form.start_tracking.label }}</span>
+        <span class="block text-xs text-base-content/60 mt-0.5">{{ form.start_tracking.help_text }}</span>
+      </span>
+    </label>
+    {% for error in form.start_tracking.errors %}
+      <p class="text-error text-sm mt-1">{{ error }}</p>
+    {% endfor %}
+  </div>
 </div>

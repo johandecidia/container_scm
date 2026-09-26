@@ -60,6 +60,12 @@ NO_DATA = "no_data"
 NOT_CONFIGURED = "not_configured"
 UNAVAILABLE = "unavailable"
 CARRIER_UNKNOWN = "carrier_unknown"
+# The provider is working and configured, and our account with it cannot take on another
+# container — a spent allowance or an unpaid bill. Its own state, distinct from
+# NOT_CONFIGURED (nothing is misconfigured) and from UNAVAILABLE (nothing is down),
+# because the person who can fix it is not the person looking at the container and the
+# message they get has to say so without saying what our plan is.
+PROVIDER_UNAVAILABLE = "provider_unavailable"
 
 
 @dataclass
@@ -365,12 +371,19 @@ def _state_for_carrier_error(exc: CarrierError) -> str:
         CarrierConfigurationError,
         CarrierNoDataError,
         CarrierNotImplementedError,
+        CarrierProviderBillingError,
+        CarrierProviderQuotaError,
         CarrierUnsupportedReferenceError,
     )
 
     if isinstance(exc, CarrierNoDataError):
         # A real answer: Traqo has no shipment for this container under this sealine.
         return NO_DATA
+    # Checked before the configuration branch: a billing suspension is a configuration
+    # error by inheritance in neither direction now, but the ordering states the intent
+    # — our account's capacity is its own answer and must not read as "not configured".
+    if isinstance(exc, (CarrierProviderQuotaError, CarrierProviderBillingError)):
+        return PROVIDER_UNAVAILABLE
     if isinstance(exc, (CarrierConfigurationError, CarrierNotImplementedError, CarrierUnsupportedReferenceError)):
         return NOT_CONFIGURED
     return UNAVAILABLE

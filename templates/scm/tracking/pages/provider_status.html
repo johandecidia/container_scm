@@ -1,0 +1,133 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Provider account status — plan, allowance, billing cycle. Reached only through
+  `tracking:provider_status`, which is superuser-only.
+
+  Everything on this page describes the installation's own agreement with a provider,
+  not any team's data. It is a separate page rather than a card hidden on a shared one
+  on purpose: the server must never send these numbers to a team administrator, so
+  there is no team-facing template that could ever render them. The tracking layer does
+  not persist them either — see `carriers/exceptions.py` on `safe_message` — so the
+  only copy outside this page is the application log.
+
+  `used` and `active` are shown as the two different numbers they are, and the page
+  says so, because the obvious misreading is expensive: untracking lowers `active` and
+  leaves `used` where it is, so treating `active` as the spend would claim capacity the
+  account does not have.
+{% endcomment %}
+
+{% block app %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold">{% translate "Tracking providers" %}</h1>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% translate "This installation's own account with each tracking aggregator. Visible to superusers only — no team sees these figures." %}
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    {% for fetch in provider_fetches %}
+      {% with usage=fetch.usage %}
+        <section class="app-card">
+          {% if fetch.available %}
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <h2 class="font-semibold">{{ usage.provider_name }}</h2>
+                <p class="text-xs text-base-content/50">
+                  {% if usage.plan %}
+                    {% blocktranslate trimmed with plan=usage.plan %}Plan: {{ plan }}{% endblocktranslate %}
+                  {% else %}
+                    {% translate "Plan not reported" %}
+                  {% endif %}
+                </p>
+              </div>
+              {% if usage.status == "exhausted" %}
+                <span class="badge badge-sm badge-error badge-soft shrink-0">{% translate "Exhausted" %}</span>
+              {% elif usage.status == "warning" %}
+                <span class="badge badge-sm badge-warning badge-soft shrink-0">{% translate "Warning" %}</span>
+              {% else %}
+                <span class="badge badge-sm badge-success badge-soft shrink-0">{% translate "OK" %}</span>
+              {% endif %}
+            </div>
+
+            {% if usage.sandbox %}
+              <div role="alert" class="alert alert-info alert-soft mt-3">
+                <i class="fa fa-flask"></i>
+                <span class="text-xs">
+                  {% translate "Sandbox figures — the provider's fixed demo data, not this account." %}
+                </span>
+              </div>
+            {% endif %}
+
+            <dl class="mt-4 space-y-2 text-sm">
+              <div class="flex items-baseline justify-between gap-2">
+                <dt class="text-xs text-base-content/60">{% translate "Shipments used" %}</dt>
+                <dd class="font-medium">{{ usage.used }} / {{ usage.effective_limit }}</dd>
+              </div>
+              <div class="flex items-baseline justify-between gap-2">
+                <dt class="text-xs text-base-content/60">{% translate "Still tracking" %}</dt>
+                <dd>{{ usage.active }}</dd>
+              </div>
+              <div class="flex items-baseline justify-between gap-2">
+                <dt class="text-xs text-base-content/60">{% translate "Remaining" %}</dt>
+                <dd class="font-medium">{{ usage.remaining }}</dd>
+              </div>
+              <div class="flex items-baseline justify-between gap-2">
+                <dt class="text-xs text-base-content/60">{% translate "Billing cycle" %}</dt>
+                <dd class="text-right">
+                  {% if usage.cycle_start and usage.cycle_end %}
+                    {{ usage.cycle_start|date:"j M" }} – {{ usage.cycle_end|date:"j M Y" }}
+                  {% else %}—{% endif %}
+                </dd>
+              </div>
+              {% if usage.addon_slots or usage.carried_slots %}
+                <div class="flex items-baseline justify-between gap-2">
+                  <dt class="text-xs text-base-content/60">{% translate "Plan limit plus add-ons" %}</dt>
+                  <dd class="text-right text-xs text-base-content/60">
+                    {{ usage.limit }}
+                    {% if usage.addon_slots %}
+                      + {% blocktranslate trimmed with slots=usage.addon_slots %}{{ slots }} add-on{% endblocktranslate %}
+                    {% endif %}
+                    {% if usage.carried_slots %}
+                      + {% blocktranslate trimmed with slots=usage.carried_slots %}{{ slots }} carried{% endblocktranslate %}
+                    {% endif %}
+                  </dd>
+                </div>
+              {% endif %}
+            </dl>
+
+            {% comment %}
+              The distinction the numbers above will otherwise be misread as. Stated on
+              the page rather than left to whoever reads it, because "used 25, active 10,
+              remaining 0" looks like an error and is not.
+            {% endcomment %}
+            <p class="text-xs text-base-content/50 mt-4 pt-3 border-t border-base-300">
+              {% translate "The allowance counts shipments added during the cycle, so untracking one lowers the still-tracking count and does not return a slot." %}
+            </p>
+          {% elif not fetch.configured %}
+            <h2 class="font-semibold">{{ fetch.provider_name|default:_("Provider") }}</h2>
+            <p class="text-sm text-base-content/60 mt-2">
+              {% translate "Not configured in this installation, so its account cannot be read." %}
+            </p>
+          {% else %}
+            <h2 class="font-semibold">{{ fetch.provider_name|default:_("Provider") }}</h2>
+            <div role="alert" class="alert alert-warning alert-soft mt-3 items-start">
+              <i class="fa fa-triangle-exclamation mt-0.5"></i>
+              <div class="text-xs">
+                <p class="font-medium">{% translate "The provider could not be asked about this account." %}</p>
+                <p class="mt-0.5 break-words">{{ fetch.error }}</p>
+              </div>
+            </div>
+          {% endif %}
+        </section>
+      {% endwith %}
+    {% empty %}
+      <section class="app-card">
+        <p class="text-sm text-base-content/60">
+          {% translate "No tracking provider in this installation reports an account allowance." %}
+        </p>
+      </section>
+    {% endfor %}
+  </div>
+{% endblock %}

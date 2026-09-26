@@ -44,6 +44,8 @@ def import_upload(request):
 @scm_login_required
 def import_detail(request, pk):
     team = request.default_team
+    from apps.scm.tracking.preferences import get_team_auto_start_tracking
+
     from .selectors import get_import_job
 
     job = get_import_job(team, pk)
@@ -58,6 +60,11 @@ def import_detail(request, pk):
         "can_parse": job.status == ImportJob.Status.UPLOADED,
         "can_validate": job.status == ImportJob.Status.PARSED,
         "can_confirm": job.status == ImportJob.Status.VALIDATED,
+        # Only a container import can create containers, so only it offers the tracking
+        # choice — on a purchase-order or movement file the checkbox would be an option
+        # that does nothing.
+        "offers_tracking_choice": job.import_type == ImportJob.ImportType.CONTAINERS,
+        "auto_start_tracking": get_team_auto_start_tracking(team),
     }
     return render(request, "scm/imports/pages/import_detail.html", context)
 
@@ -110,7 +117,11 @@ def import_confirm(request, pk):
         return redirect("imports:detail", pk=pk)
     try:
         update_existing = request.POST.get("update_existing") == "1"
-        confirm_import_job(job, update_existing=update_existing)
+        # Absent means "no override", so the team's automatic-tracking setting decides.
+        # The two confirm buttons send it explicitly; nothing else has to.
+        raw_tracking = request.POST.get("start_tracking")
+        start_tracking = None if raw_tracking is None else raw_tracking in ("1", "true", "on")
+        confirm_import_job(job, update_existing=update_existing, start_tracking=start_tracking)
         messages.success(
             request,
             _("Import completed: %(processed)s rows processed.") % {"processed": job.processed_rows},

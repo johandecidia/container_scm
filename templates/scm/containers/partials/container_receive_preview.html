@@ -1,0 +1,67 @@
+{% load i18n %}
+
+{% if form_invalid %}
+  <div class="alert alert-error">
+    <div>
+      {% for field in form %}
+        {% for error in field.errors %}<p>{{ field.label }}: {{ error }}</p>{% endfor %}
+      {% endfor %}
+      {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+  </div>
+{% elif preview %}
+  <section class="app-card">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <h2 class="text-lg font-semibold">
+        {% blocktranslate trimmed with location=preview.location.name %}Preview — received at {{ location }}{% endblocktranslate %}
+      </h2>
+      <span class="badge {% if preview.stop_tracking_on_receive %}badge-info{% else %}badge-ghost{% endif %}">
+        {% if preview.stop_tracking_on_receive %}
+          {% translate "Stop tracking on receive: on" %}
+        {% else %}
+          {% translate "Stop tracking on receive: off" %}
+        {% endif %}
+      </span>
+    </div>
+
+    {% with counts=preview.counts %}
+      <div class="mb-3 flex flex-wrap gap-2 text-sm">
+        <span class="badge badge-success badge-outline">{% translate "To receive" %}: {{ counts.ready }}</span>
+        <span class="badge badge-ghost">{% translate "Already received" %}: {{ counts.already_received }}</span>
+        <span class="badge badge-warning badge-outline">{% translate "Container not found" %}: {{ counts.not_found }}</span>
+        <span class="badge badge-error badge-outline">{% translate "Invalid" %}: {{ counts.invalid }}</span>
+        {% if counts.duplicate %}
+          <span class="badge badge-ghost">{% translate "Duplicate in paste" %}: {{ counts.duplicate }}</span>
+        {% endif %}
+      </div>
+    {% endwith %}
+
+    {% include "scm/containers/partials/container_receive_timezone.html" with zone=preview.timezone location=preview.location %}
+    {% include "scm/containers/partials/container_receive_rows.html" with rows=preview.rows location=preview.location zone=preview.timezone %}
+
+    <form
+      method="post"
+      action="{% url 'containers:receive_confirm' %}"
+      hx-post="{% url 'containers:receive_confirm' %}"
+      hx-target="#receive-output"
+      hx-swap="innerHTML"
+      hx-disabled-elt="find button[type=submit]"
+      class="mt-4 flex justify-end"
+    >
+      {% csrf_token %}
+      {% comment %}
+        Exactly what was previewed. The confirm re-validates and re-previews it before
+        writing, so these are inputs, not decisions.
+      {% endcomment %}
+      <input type="hidden" name="location" value="{{ preview.location.pk }}">
+      <textarea name="text" hidden>{{ form.cleaned_data.text }}</textarea>
+      <button type="submit" class="btn btn-primary" {% if not preview.ready_count %}disabled{% endif %}>
+        {% blocktranslate trimmed count counter=preview.ready_count %}
+          Confirm receive of {{ counter }} container
+        {% plural %}
+          Confirm receive of {{ counter }} containers
+        {% endblocktranslate %}
+      </button>
+    </form>
+  </section>
+{% endif %}

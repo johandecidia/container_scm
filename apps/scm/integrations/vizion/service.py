@@ -46,6 +46,7 @@ from .schemas import ACI_PENDING, VizionReference, read_reference
 
 if TYPE_CHECKING:
     from apps.scm.tracking.models import TrackingSubscription, TrackingSyncRun
+    from apps.scm.tracking.sources import ProviderStopOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,82 @@ def fetch_vizion_updates(*, reference_id: str, demo: bool = False, client=None) 
     """
     client = client or VizionClient.from_settings(demo=demo)
     return client.list_updates(reference_id)
+
+
+def release_vizion_reference(subscription: TrackingSubscription, *, client=None) -> ProviderStopOutcome:
+    """Unsubscribe the Vizion reference behind one watch, so it stops being charged.
+
+    Called by :func:`apps.scm.tracking.sources.release_provider_subscription` when the
+    tracking lifecycle stops watching a container. It is the one provider operation a
+    *stop* has to perform: a reference is Vizion's billable unit and stays subscribed
+    after ACI has resolved, so a watch deactivated only locally would go on costing
+    money with nothing polling it — see ``README.md`` in this package.
+
+    Deliberately still not reached from any ingest or resolve path, which is the rule
+    :meth:`~apps.scm.integrations.vizion.client.VizionClient.deactivate_reference`
+    was written with: a fetch has no business deciding whether we still want a container
+    watched. A stop is exactly that decision, made explicitly.
+
+    Four outcomes, and the distinctions are the ones the lifecycle acts on:
+
+    * no reference recorded — nothing was ever subscribed on our behalf, so there is
+      nothing to release and the watch can simply be closed.
+    * Vizion not configured — it cannot be asked at all. Reported as such rather than
+      as a failure, because no retry can supply a credential that is not there, and
+      treating it as retryable would make the container impossible to stop.
+    * already gone — Vizion answers 404 for a reference that is no longer subscribed,
+      which is the state a release is trying to reach. Success, not an error, and it is
+      what makes pressing Stop twice safe.
+    * a failed call — retryable, and the only outcome that leaves the watch parked.
+    """
+    from apps.scm.integrations.carriers.exceptions import CarrierError, CarrierNoDataError
+    from apps.scm.tracking.sources import (
+        STOP_FAILED,
+        STOP_NOT_CONFIGURED,
+        STOP_NOT_REQUIRED,
+        STOP_RELEASED,
+        ProviderStopOutcome,
+    )
+
+    from .discovery import is_vizion_configured
+
+    reference_id = (subscription.provider_reference or "").strip()
+    if not reference_id:
+        return ProviderStopOutcome(state=STOP_NOT_REQUIRED, detail="No Vizion reference is recorded for this watch.")
+
+    if client is None and not is_vizion_configured():
+        logger.warning(
+            "Vizion reference %s cannot be released: Vizion is not configured in this installation.",
+            reference_id,
+        )
+        return ProviderStopOutcome(
+            state=STOP_NOT_CONFIGURED,
+            detail="Vizion is not configured, so its reference could not be released.",
+        )
+
+    try:
+        client = client or VizionClient.from_settings()
+        client.deactivate_reference(reference_id)
+    except CarrierNoDataError:
+        logger.info("Vizion reference %s was already released.", reference_id)
+        return ProviderStopOutcome(state=STOP_RELEASED, detail="The Vizion reference was already released.")
+    except CarrierError as exc:
+        # The provider's own message is logged and kept on ``detail``, never stored for
+        # the team; only the error's ``safe_message`` is.
+        logger.warning(
+            "Releasing Vizion reference %s failed: %s (%s).",
+            reference_id,
+            type(exc).__name__,
+            exc,
+            extra={"provider_detail": exc.provider_detail},
+        )
+        return ProviderStopOutcome(
+            state=STOP_FAILED,
+            detail=f"{type(exc).__name__}: {exc}",
+            safe_message=exc.safe_message,
+        )
+
+    return ProviderStopOutcome(state=STOP_RELEASED, detail=f"Vizion reference {reference_id} unsubscribed.")
 
 
 def build_raw_payload(*, reference: VizionReference | None, updates: list[dict]) -> dict:

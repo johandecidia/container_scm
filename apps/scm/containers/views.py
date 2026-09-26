@@ -103,12 +103,18 @@ def container_list(request):
     paginator = Paginator(containers_qs, CONTAINERS_PER_PAGE)
     page_obj = paginator.get_page(request.GET.get("page"))
     saved_filters = get_saved_filters(team, request.user, SavedFilter.ViewKey.CONTAINERS)
+    from apps.teams.roles import is_admin
+
     from .choices import LocationType
     from .selectors import get_team_locations
 
     context = {
         "containers": page_obj,
         "page_obj": page_obj,
+        # Whether the rows offer Start/Stop tracking. Decided once for the page rather
+        # than per row, and it is only a rendering decision — the endpoints apply the
+        # same check themselves, so a hand-made POST is refused whatever was rendered.
+        "can_manage_tracking": is_admin(request.user, team),
         "equipment_types": get_active_equipment_types(),
         # The filter offers the team's active conditions. A container graded with a
         # retired one still shows it in its row; what is gone is the option to filter

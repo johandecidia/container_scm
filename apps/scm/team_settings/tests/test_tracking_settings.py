@@ -125,6 +125,7 @@ class TrackingSettingsViewTest(TestCase):
             ("get", reverse("team_settings:carrier_credentials", args=["maersk"])),
             ("post", reverse("team_settings:carrier_test_connection", args=["maersk"])),
             ("post", reverse("team_settings:carrier_toggle", args=["maersk"])),
+            ("post", reverse("team_settings:tracking_auto_start")),
         ]
         for method, url in routes:
             with self.subTest(url=url):
@@ -247,6 +248,81 @@ class TrackingSettingsViewTest(TestCase):
         self.assertNotIn(MAERSK_KEY, integration.last_error_message)
 
 
+class AutomaticTrackingSettingTest(TestCase):
+    """The team's policy on whether a new container starts being tracked.
+
+    Off by default, because it costs a provider request and an aggregator shipment slot
+    per container — a team that wants it has to say so.
+    """
+
+    def setUp(self):
+        self.team = Team.objects.create(name="MCR", slug="mcr-auto-start")
+        self.admin = _user("admin@auto-start.test")
+        self.member = _user("member@auto-start.test")
+        self.team.members.add(self.admin, through_defaults={"role": ROLE_ADMIN})
+        self.team.members.add(self.member, through_defaults={"role": ROLE_MEMBER})
+        self.url = reverse("team_settings:tracking_auto_start")
+        self.client = Client()
+        self.client.force_login(self.admin)
+
+    def test_a_team_starts_with_automatic_tracking_off(self):
+        from apps.scm.tracking.preferences import get_team_auto_start_tracking
+
+        self.assertFalse(get_team_auto_start_tracking(self.team))
+
+    def test_the_setting_is_offered_on_the_tracking_page(self):
+        response = self.client.get(reverse("team_settings:tracking"))
+
+        self.assertFalse(response.context["auto_start_tracking"])
+        self.assertContains(response, "Automatically start tracking for newly created containers")
+        self.assertContains(response, self.url)
+
+    def test_an_admin_can_switch_it_on(self):
+        from apps.scm.tracking.preferences import get_team_auto_start_tracking
+
+        self.client.post(self.url, {"auto_start_tracking": "1"})
+
+        self.assertTrue(get_team_auto_start_tracking(self.team))
+
+    def test_an_unticked_checkbox_switches_it_off(self):
+        """A checkbox sends nothing when clear, so the hidden 0 is what reaches the view."""
+        from apps.scm.tracking.preferences import get_team_auto_start_tracking, set_team_auto_start_tracking
+
+        set_team_auto_start_tracking(self.team, True)
+
+        self.client.post(self.url, {"auto_start_tracking": "0"})
+
+        self.assertFalse(get_team_auto_start_tracking(self.team))
+
+    def test_a_member_cannot_change_it(self):
+        from apps.scm.tracking.preferences import get_team_auto_start_tracking
+
+        client = Client()
+        client.force_login(self.member)
+
+        response = client.post(self.url, {"auto_start_tracking": "1"})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(get_team_auto_start_tracking(self.team))
+
+    def test_the_setting_is_per_team(self):
+        from apps.scm.tracking.preferences import get_team_auto_start_tracking, set_team_auto_start_tracking
+
+        other = Team.objects.create(name="Theirs", slug="theirs-auto-start")
+        set_team_auto_start_tracking(self.team, True)
+
+        self.assertTrue(get_team_auto_start_tracking(self.team))
+        self.assertFalse(get_team_auto_start_tracking(other))
+
+    def test_switching_it_on_tracks_nothing_that_already_exists(self):
+        """A policy about creation, not a batch operation over the fleet."""
+        from apps.scm.tracking.models import TrackingSubscription
+
+        self.client.post(self.url, {"auto_start_tracking": "1"})
+
+        self.assertFalse(TrackingSubscription.objects.filter(team=self.team).exists())
+
+
 class TrackingSettingsIsolationTest(TestCase):
     """One team's carrier configuration is invisible and untouchable from another."""
 
@@ -279,3 +355,55 @@ class TrackingSettingsIsolationTest(TestCase):
     def test_usable_codes_are_scoped_to_the_team(self):
         self.assertEqual(get_usable_carrier_codes(self.team), set())
         self.assertEqual(get_usable_carrier_codes(self.other_team), {"maersk"})
+
+
+class StopTrackingOnReceiveSettingTest(TestCase):
+    """The team's policy on whether receiving a container stops its tracking. Off by default."""
+
+    def setUp(self):
+        self.team = Team.objects.create(name="MCR", slug="mcr-stop-on-receive")
+        self.admin = _user("admin@stop-on-receive.test")
+        self.member = _user("member@stop-on-receive.test")
+        self.team.members.add(self.admin, through_defaults={"role": ROLE_ADMIN})
+        self.team.members.add(self.member, through_defaults={"role": ROLE_MEMBER})
+        self.url = reverse("team_settings:tracking_stop_on_receive")
+        self.client = Client()
+        self.client.force_login(self.admin)
+
+    def test_a_team_starts_with_it_off_and_it_is_offered_on_the_page(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
+
+        response = self.client.get(reverse("team_settings:tracking"))
+
+        self.assertFalse(get_team_stop_tracking_on_receive(self.team))
+        self.assertFalse(response.context["stop_tracking_on_receive"])
+        self.assertContains(response, "Automatically stop tracking when a container is received")
+        self.assertContains(response, self.url)
+
+    def test_an_admin_can_switch_it_on_and_off(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
+
+        self.client.post(self.url, {"stop_tracking_on_receive": "1"})
+        self.assertTrue(get_team_stop_tracking_on_receive(self.team))
+
+        self.client.post(self.url, {"stop_tracking_on_receive": "0"})
+        self.assertFalse(get_team_stop_tracking_on_receive(self.team))
+
+    def test_a_member_cannot_change_it(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
+
+        client = Client()
+        client.force_login(self.member)
+
+        response = client.post(self.url, {"stop_tracking_on_receive": "1"})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(get_team_stop_tracking_on_receive(self.team))
+
+    def test_the_setting_is_per_team(self):
+        from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive, set_team_stop_tracking_on_receive
+
+        other = Team.objects.create(name="Theirs", slug="theirs-stop-on-receive")
+        set_team_stop_tracking_on_receive(self.team, True)
+
+        self.assertFalse(get_team_stop_tracking_on_receive(other))

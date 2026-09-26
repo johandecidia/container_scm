@@ -9,6 +9,19 @@ That only changes where the flow ends: instead of the import summary, the contai
 are handed to the supplier-delivery app to be booked onto the order. The PO travels
 through every tab, form and preview as a plain hidden field, because the modal is
 several requests long and each one has to know it is still working for that order.
+
+**Tracking is started after the containers are, and only for the new ones.** The
+checkbox starts from the team's own policy and the operator may override it for this
+run; what happens then is
+:func:`apps.scm.tracking.lifecycle.auto_start_tracking_for_containers`, the same
+lifecycle the Start button uses, applied to ``IntakeResult.created_containers``. A
+number that was already registered is not started again just for appearing in the file
+— a re-uploaded spreadsheet must not resume tracking somebody deliberately stopped.
+
+The choice makes the same round trip through the preview as the attribute choices, and
+is re-read on the confirm rather than trusted: it travels through the browser. It has to
+travel as an explicit ``1``/``0`` rather than as a checkbox value, because a clear
+checkbox posts nothing and "off" has to be distinguishable from "not chosen".
 """
 
 import json
@@ -72,7 +85,7 @@ def _purchase_order(request):
     return get_team_purchase_orders(team=request.default_team).filter(pk=raw).first()
 
 
-def _refreshed_table_context(team, purchase_order=None) -> dict:
+def _refreshed_table_context(request, team, purchase_order=None) -> dict:
     """Context for re-rendering the container table out of band after a write.
 
     Skipped when the modal was opened from a purchase order: there is no container
@@ -80,6 +93,8 @@ def _refreshed_table_context(team, purchase_order=None) -> dict:
     """
     if purchase_order is not None:
         return {}
+
+    from apps.teams.roles import is_admin
 
     from .selectors import get_active_equipment_types
 
@@ -89,9 +104,44 @@ def _refreshed_table_context(team, purchase_order=None) -> dict:
         "containers": page_obj,
         "page_obj": page_obj,
         "equipment_types": get_active_equipment_types(),
+        # The rows carry a Start/Stop tracking action for administrators, so the
+        # out-of-band table needs the same flag the list view passes — without it the
+        # refreshed table would silently drop the action for somebody who has it.
+        "can_manage_tracking": is_admin(request.user, team),
         "team_slug": team.slug,
         "table_oob": True,
     }
+
+
+def _start_tracking_override(request) -> bool | None:
+    """The tracking choice this request carried, or None when it carried none.
+
+    ``None`` is what makes the team default apply: an import that never showed the
+    checkbox — or a request from before it existed — must not be read as an explicit
+    "no". Only ``1`` and ``0``, because the value is written by
+    :func:`_preview_response` and is not a checkbox by the time it comes back.
+    """
+    raw = request.POST.get("start_tracking")
+    if raw is None:
+        return None
+    return raw in ("1", "true", "on")
+
+
+def _auto_start_tracking(request, team, containers, *, enabled: bool | None):
+    """Start tracking the containers this intake created, if that is what was asked.
+
+    Downstream of the writes, deliberately outside them, and it cannot fail the intake:
+    the lifecycle classifies every provider outcome and returns a summary, so a carrier
+    outage costs the import its tracking and nothing else.
+    """
+    from apps.scm.tracking.lifecycle import auto_start_tracking_for_containers
+
+    return auto_start_tracking_for_containers(
+        team=team,
+        containers=containers,
+        actor=request.user,
+        enabled=enabled,
+    )
 
 
 def _link_step(request, team, purchase_order, containers):
@@ -120,13 +170,22 @@ def container_create(request):
             except ValidationError as exc:
                 form.add_error("container_number", exc)
             else:
+                # Only a container this request created. Adding a number that was
+                # already registered is not a reason to start watching it.
+                tracking = _auto_start_tracking(
+                    request,
+                    team,
+                    [container] if created else [],
+                    enabled=form.start_tracking_choice(),
+                )
                 if purchase_order is not None:
                     return _link_step(request, team, purchase_order, [container])
                 context = {
                     "container": container,
                     "created": created,
+                    "tracking": tracking,
                     "tab": "single",
-                    **_refreshed_table_context(team),
+                    **_refreshed_table_context(request, team),
                 }
                 return render(request, "scm/containers/partials/container_intake_created.html", context)
         return _modal(
@@ -176,6 +235,7 @@ def container_import_paste(request):
                 entries=entries,
                 tab="paste",
                 attribute_values=form.selected_values(),
+                start_tracking=form.start_tracking_choice(),
                 purchase_order=purchase_order,
             )
         return _modal(
@@ -214,6 +274,7 @@ def container_import_csv(request):
                         entries=entries,
                         tab="csv",
                         attribute_values=form.selected_values(),
+                        start_tracking=form.start_tracking_choice(),
                         purchase_order=purchase_order,
                     )
         return _modal(request, team, tab="csv", body_template=CSV_TEMPLATE, form=form, purchase_order=purchase_order)
@@ -257,9 +318,22 @@ def container_import_confirm(request):
         entries=entries,
         attributes=attributes_form.container_attributes(),
     )
+    # The containers exist from here on, whatever tracking does next. Only the ones this
+    # run created, from the persist result rather than from the list that was submitted.
+    tracking = _auto_start_tracking(
+        request,
+        team,
+        result.created_containers,
+        enabled=_start_tracking_override(request),
+    )
     if purchase_order is not None and result.containers:
         return _link_step(request, team, purchase_order, result.containers)
-    context = {"result": result, "tab": tab, **_refreshed_table_context(team, purchase_order)}
+    context = {
+        "result": result,
+        "tracking": tracking,
+        "tab": tab,
+        **_refreshed_table_context(request, team, purchase_order),
+    }
     return render(request, RESULT_TEMPLATE, context)
 
 
@@ -270,6 +344,7 @@ def _preview_response(
     entries: list[tuple[str, str]],
     tab: str,
     attribute_values: dict | None = None,
+    start_tracking: bool | None = None,
     purchase_order=None,
 ):
     preview = preview_containers(team=team, entries=entries)
@@ -283,6 +358,11 @@ def _preview_response(
         # The attributes chosen before the preview travel on to the confirm as hidden
         # fields, and are validated again there — this side of the trip is the browser's.
         attribute_values=attribute_values or {},
+        # As an explicit flag rather than a checkbox, so "off" survives the trip: a
+        # clear checkbox would post nothing and read back as "no choice named". Empty
+        # when this submission named none, so the confirm falls back to the team
+        # setting rather than to a value invented here.
+        start_tracking="" if start_tracking is None else ("1" if start_tracking else "0"),
         purchase_order=purchase_order,
     )
 

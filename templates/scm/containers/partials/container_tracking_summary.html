@@ -48,10 +48,19 @@
           {% else %}
             <span class="font-medium text-base-content/60">{% translate "Carrier unknown" %}</span>
           {% endif %}
+          {% comment %}
+            "Not tracking" is the answer whenever no watch is live, however the watches
+            that exist are individually labelled — a cancelled one and a paused one are
+            both boxes nothing is fetching, and calling one of them "Cancelled" here
+            would describe a record rather than answer the question. Which watch it was
+            and when it stopped is the line underneath.
+          {% endcomment %}
           {% if workspace.has_tracking_error %}
             <span class="text-error ml-2">! {{ workspace.tracking_status|default:_("Error") }}</span>
           {% elif workspace.is_tracking_active %}
             <span class="text-success ml-2">● {{ workspace.tracking_status|default:_("Active") }}</span>
+          {% elif not workspace.has_live_tracking %}
+            <span class="text-base-content/50 ml-2">○ {% translate "Not tracking" %}</span>
           {% else %}
             <span class="text-base-content/50 ml-2">○ {{ workspace.active_subscription.get_status_display }}</span>
           {% endif %}
@@ -75,6 +84,24 @@
         is only worth showing when it was not the carrier's own events that proved it —
         "Carrier: Maersk, identified via Maersk" is noise.
       {% endcomment %}
+      {% comment %}
+        A stopped container keeps everything it learned, so the page has to say that the
+        watching is over without implying the journey below it is. `tracking_stopped_at`
+        is derived from the stopped watch itself rather than stored — see the workspace
+        read model — so there is no second timestamp to keep in step with the status.
+      {% endcomment %}
+      {% if workspace.is_tracked and not workspace.has_live_tracking %}
+        <p class="text-xs text-base-content/60 mt-1">
+          {% if workspace.tracking_stopped_at %}
+            {% blocktranslate trimmed with when=workspace.tracking_stopped_at|date:"d M Y H:i" %}
+              Tracking stopped {{ when }}. The history below is kept, and tracking can be started again.
+            {% endblocktranslate %}
+          {% else %}
+            {% translate "Nothing is watching this container. The history below is kept." %}
+          {% endif %}
+        </p>
+      {% endif %}
+
       {% if workspace.is_tracked %}
         <p class="text-xs text-base-content/60 mt-1">
           {% if workspace.tracking_is_direct %}
@@ -116,20 +143,64 @@
       One button, one request: hx-disabled-elt disables it for the duration, so a
       double click cannot start a second refresh. The Actions menu in the header
       posts to the same endpoint with the same target.
+
+      Start/Stop sits beside it because they answer different questions about the same
+      box — Refresh asks the sources it has, Start/Stop decides whether it has any —
+      and both re-render this panel so the two can never contradict each other.
+
+      Which of the two is offered comes from `has_live_tracking`, the same live-watch
+      rule the container list and the Control Tower read. Administrators only, and the
+      endpoint checks that itself; `can_manage_tracking_source` is the same admin flag
+      the "Tracking via" selector below is built from.
     {% endcomment %}
-    <button
-      type="button"
-      class="btn btn-outline btn-sm shrink-0"
-      hx-post="{% url 'containers:refresh_tracking' container.pk %}"
-      hx-target="#container-tracking-panel"
-      hx-swap="outerHTML"
-      hx-disabled-elt="this"
-    >
-      <span class="loading loading-spinner loading-xs htmx-request-show"></span>
-      <i class="fa fa-rotate htmx-request-hide"></i>
-      <span class="htmx-request-hide">{% translate "Refresh tracking" %}</span>
-      <span class="htmx-request-show">{% translate "Refreshing…" %}</span>
-    </button>
+    <div class="flex flex-wrap items-center gap-2 shrink-0">
+      {% if can_manage_tracking_source %}
+        {% if workspace.has_live_tracking %}
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            hx-post="{% url 'containers:stop_tracking' container.pk %}"
+            hx-target="#container-tracking-panel"
+            hx-swap="outerHTML"
+            hx-confirm="{% translate 'Stop tracking this container? Its tracking history is kept.' %}"
+            hx-disabled-elt="this"
+          >
+            <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+            <i class="fa fa-circle-stop htmx-request-hide"></i>
+            <span class="htmx-request-hide">{% translate "Stop tracking" %}</span>
+            <span class="htmx-request-show">{% translate "Stopping…" %}</span>
+          </button>
+        {% else %}
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            hx-post="{% url 'containers:start_tracking' container.pk %}"
+            hx-target="#container-tracking-panel"
+            hx-swap="outerHTML"
+            hx-disabled-elt="this"
+          >
+            <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+            <i class="fa fa-circle-play htmx-request-hide"></i>
+            <span class="htmx-request-hide">{% translate "Start tracking" %}</span>
+            <span class="htmx-request-show">{% translate "Starting…" %}</span>
+          </button>
+        {% endif %}
+      {% endif %}
+
+      <button
+        type="button"
+        class="btn btn-outline btn-sm"
+        hx-post="{% url 'containers:refresh_tracking' container.pk %}"
+        hx-target="#container-tracking-panel"
+        hx-swap="outerHTML"
+        hx-disabled-elt="this"
+      >
+        <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+        <i class="fa fa-rotate htmx-request-hide"></i>
+        <span class="htmx-request-hide">{% translate "Refresh tracking" %}</span>
+        <span class="htmx-request-show">{% translate "Refreshing…" %}</span>
+      </button>
+    </div>
   </div>
 
   {% comment %}

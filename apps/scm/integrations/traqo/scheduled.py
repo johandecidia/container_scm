@@ -139,7 +139,9 @@ def sync_traqo_subscription(
         return SyncOutcome(
             status=statuses.FAILED,
             error_type=error_types.INVALID_RESPONSE,
-            error_message=f"Traqo answered about {response.reported_reference}, not {container_number}.",
+            # Static on purpose: the reference Traqo named is provider data, and it is in
+            # the log line above.
+            error_message="The provider answered about a different container, so its data was not stored.",
         )
 
     write = write_traqo_response(subscription=subscription, container=container, response=response)

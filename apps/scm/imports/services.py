@@ -149,9 +149,39 @@ def validate_import_job(job: ImportJob) -> ImportJob:
     return job
 
 
-def confirm_import_job(job: ImportJob, *, update_existing: bool = False) -> ImportJob:
-    """Confirm and run the actual import."""
+def confirm_import_job(
+    job: ImportJob,
+    *,
+    update_existing: bool = False,
+    start_tracking: bool | None = None,
+) -> ImportJob:
+    """Confirm and run the actual import, then start tracking whatever it created.
+
+    Two steps, and the order is the point. ``run_import`` is atomic and ends by marking
+    the job completed; tracking runs after it, outside that transaction, because a
+    provider call inside one would hold it open for a carrier's response time and would
+    roll back stored containers on a carrier's outage.
+
+    So the import's success does not depend on tracking's. A container that was saved
+    stays saved, its row stays IMPORTED and the job stays COMPLETED even where no
+    provider could be reached for it — the tracking failures are logged and counted by
+    :func:`~apps.scm.tracking.lifecycle.auto_start_tracking_for_containers` so it is
+    visible afterwards that tracking did not start.
+
+    ``start_tracking`` overrides the team's automatic-tracking setting for this run;
+    ``None`` means the team's setting decides. Only the containers this run *created*
+    are considered — a row whose container already existed is skipped or updated, and
+    re-importing a file must not resume tracking somebody stopped on purpose.
+    """
+    from apps.scm.tracking.lifecycle import auto_start_tracking_for_containers
+
     from .importers import run_import
 
-    run_import(job, update_existing=update_existing)
+    created_containers = run_import(job, update_existing=update_existing)
+    auto_start_tracking_for_containers(
+        team=job.team,
+        containers=created_containers,
+        actor=job.created_by,
+        enabled=start_tracking,
+    )
     return job

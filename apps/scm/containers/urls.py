@@ -1,6 +1,14 @@
 from django.urls import path
 
-from . import condition_views, intake_views, location_views, tracking_source_views, views
+from . import (
+    condition_views,
+    intake_views,
+    location_views,
+    receive_views,
+    tracking_lifecycle_views,
+    tracking_source_views,
+    views,
+)
 
 app_name = "containers"
 
@@ -12,9 +20,28 @@ urlpatterns = [
     path("import/paste/", intake_views.container_import_paste, name="import_paste"),
     path("import/csv/", intake_views.container_import_csv, name="import_csv"),
     path("import/confirm/", intake_views.container_import_confirm, name="import_confirm"),
+    # Receiving containers that already exist, from a pasted gate-in report. Never
+    # creates a container or a location; see receive.py.
+    path("receive/", receive_views.container_receive, name="receive"),
+    path("receive/preview/", receive_views.container_receive_preview, name="receive_preview"),
+    path("receive/confirm/", receive_views.container_receive_confirm, name="receive_confirm"),
     path("<int:container_id>/", views.container_detail, name="detail"),
     path("<int:container_id>/edit/", views.container_update, name="update"),
     path("<int:container_id>/refresh-tracking/", views.container_refresh_tracking, name="refresh_tracking"),
+    # Whether this container is tracked at all. Administrator-only — see
+    # tracking_lifecycle_views.py — and a different question from the refresh above,
+    # which asks the sources it already has. Both the container list and the workspace
+    # post here.
+    path(
+        "<int:container_id>/tracking/start/",
+        tracking_lifecycle_views.container_start_tracking,
+        name="start_tracking",
+    ),
+    path(
+        "<int:container_id>/tracking/stop/",
+        tracking_lifecycle_views.container_stop_tracking,
+        name="stop_tracking",
+    ),
     # Which provider this container is tracked through. Administrator-only — see
     # tracking_source_views.py — and separate from the refresh above, which asks the
     # sources the container already has.

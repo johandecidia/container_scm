@@ -51,6 +51,7 @@ from .mapper import map_traqo_container_payload
 if TYPE_CHECKING:
     from apps.scm.containers.models import Container
     from apps.scm.tracking.models import TrackingSubscription, TrackingSyncRun
+    from apps.scm.tracking.sources import ProviderStopOutcome
     from apps.scm.tracking.sync import SyncOutcome
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,89 @@ def fetch_traqo_container(*, container_number: str, sealine: str, sandbox: bool 
     """
     client = client or TraqoClient.from_settings(sandbox=sandbox)
     return client.get_container(container_number, sealine)
+
+
+def release_traqo_shipment(subscription: TrackingSubscription, *, client=None) -> ProviderStopOutcome:
+    """Untrack this watch's shipment at Traqo, so Traqo stops updating it.
+
+    Called by :func:`apps.scm.tracking.sources.release_provider_subscription` when the
+    tracking lifecycle stops watching a container — the same contract
+    ``release_vizion_reference`` fulfils, so the lifecycle needs no branch per provider.
+
+    **The handle is the container number**, from ``subscription.tracking_reference``.
+    Traqo's ``DELETE /shipments/{id}`` documents the path parameter as the shipment id
+    *or* the container / bill-of-lading number the shipment is tracked by, and the
+    container number is already on every subscription ever created. Two consequences
+    worth stating, because both were design choices:
+
+    * ``provider_reference`` is left alone. On a Traqo watch it holds the **sealine**,
+      which :func:`~apps.scm.integrations.traqo.scheduled.resolve_watch_sealine` needs to
+      refresh the watch at all. Storing a shipment id there would have broken scheduled
+      polling, and Traqo's ``/container`` response carries no shipment id to store
+      anyway — it would have cost an extra ``GET /shipments`` per activation to learn one.
+    * Every watch created before this existed can be untracked, with no migration and no
+      backfill. That is the whole of the backward compatibility story.
+
+    **This stops tracking, not billing.** Traqo's allowance counts references *added*
+    during a billing cycle, so untracking does not return the slot. Nothing here implies
+    otherwise, and no caller may tell a user that stopping frees capacity.
+
+    Three outcomes, matching the lifecycle's vocabulary:
+
+    * no reference recorded — there is nothing to address the call to, so there is
+      nothing to release and the watch can simply be closed.
+    * Traqo not configured — it cannot be asked. Reported as such rather than as a
+      failure, because no retry supplies a credential that is not there, and treating it
+      as retryable would leave the container impossible to stop.
+    * 404 — Traqo does not hold this shipment. That is the state a release is trying to
+      reach, so it is success, and it is what makes pressing Stop twice safe.
+    """
+    from apps.scm.integrations.carriers.exceptions import CarrierError, CarrierNoDataError
+    from apps.scm.tracking.sources import (
+        STOP_FAILED,
+        STOP_NOT_CONFIGURED,
+        STOP_NOT_REQUIRED,
+        STOP_RELEASED,
+        ProviderStopOutcome,
+    )
+
+    from .discovery import is_traqo_configured
+
+    reference = (subscription.tracking_reference or "").strip()
+    if not reference:
+        return ProviderStopOutcome(state=STOP_NOT_REQUIRED, detail="This watch records no Traqo reference.")
+
+    if client is None and not is_traqo_configured():
+        logger.warning("Traqo shipment %s cannot be untracked: Traqo is not configured here.", reference)
+        return ProviderStopOutcome(
+            state=STOP_NOT_CONFIGURED,
+            detail="Traqo is not configured, so its shipment could not be untracked.",
+        )
+
+    try:
+        client = client or TraqoClient.from_settings()
+        client.untrack_shipment(reference)
+    except CarrierNoDataError:
+        logger.info("Traqo shipment %s was already untracked.", reference)
+        return ProviderStopOutcome(state=STOP_RELEASED, detail="Traqo no longer holds this shipment.")
+    except CarrierError as exc:
+        # Traqo's own message is logged and kept on ``detail``, never stored for the team:
+        # it can carry our account's plan and allowance. The lifecycle parks the watch
+        # rather than closing it so the retry is possible at all.
+        logger.warning(
+            "Untracking Traqo shipment %s failed: %s (%s).",
+            reference,
+            type(exc).__name__,
+            exc,
+            extra={"provider_detail": exc.provider_detail},
+        )
+        return ProviderStopOutcome(
+            state=STOP_FAILED,
+            detail=f"{type(exc).__name__}: {exc}",
+            safe_message=exc.safe_message,
+        )
+
+    return ProviderStopOutcome(state=STOP_RELEASED, detail=f"Traqo shipment {reference} untracked.")
 
 
 def fetch_and_map_traqo_container(

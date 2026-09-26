@@ -44,19 +44,37 @@ class CarrierSource(models.TextChoices):
 
 
 class TeamTrackingSettings(BaseTeamModel):
-    """A team's default tracking provider. One row per team, one field on it.
+    """A team's tracking preferences. One row per team.
 
-    The provider a container falls back to when no carrier can be called directly —
-    Traqo today, which is why that is the default and the only value Settings offers.
-    It is a row rather than a constant because "who do we ask when we cannot ask the
-    line" is a per-customer commercial fact, and with it in code every change of
-    aggregator would be a deployment.
+    Three settings, and they answer different questions — *who* to ask about a container
+    when no carrier can be called directly, *whether* to start asking about a new
+    container at all, and whether to stop asking once it has been received:
+
+    ``default_provider_code``
+        The aggregator tier a container falls back to. Traqo today, which is why that
+        is the default and the only value Settings offers. It is a row rather than a
+        constant because "who do we ask when we cannot ask the line" is a per-customer
+        commercial fact, and with it in code every change of aggregator would be a
+        deployment.
+
+    ``auto_start_tracking_for_new_containers``
+        Whether a container this team creates starts being tracked straight away. Off
+        by default, deliberately: tracking spends provider requests and, for an
+        aggregator, a shipment slot per box, so a team that imports a thousand
+        containers must have said yes to that rather than discovered it. A per-team row
+        because the answer depends on what a customer is paying for.
+
+    ``stop_tracking_on_receive``
+        Whether a container stops being tracked once it is physically received. Off by
+        default: the receive is the fact, and releasing a provider subscription as a
+        side effect of it is something a team opts into. Consulted only after a *new*
+        receive — see :mod:`apps.scm.containers.receive`.
 
     Deliberately *not* a routing policy. There is no cost model, no preference order
     and no per-carrier rules here: direct-before-aggregator is
     :mod:`apps.scm.tracking.provider_routing`'s decision, and this only names the
     aggregator tier it falls through to. See
-    :mod:`apps.scm.tracking.preferences` for the read and write.
+    :mod:`apps.scm.tracking.preferences` for the reads and writes.
     """
 
     default_provider_code = models.CharField(
@@ -64,6 +82,20 @@ class TeamTrackingSettings(BaseTeamModel):
         max_length=50,
         default=TRAQO_PROVIDER_CODE,
         help_text=_("The provider used when no direct carrier integration can answer for a container."),
+    )
+    auto_start_tracking_for_new_containers = models.BooleanField(
+        _("automatically start tracking for newly created containers"),
+        default=False,
+        help_text=_(
+            "Start tracking a container as soon as it is created or imported. An import can override this for one run."
+        ),
+    )
+    stop_tracking_on_receive = models.BooleanField(
+        _("automatically stop tracking when a container is received"),
+        default=False,
+        help_text=_(
+            "Stop tracking a container once a new gate-in is recorded for it. Receiving it is recorded either way."
+        ),
     )
 
     class Meta:
@@ -682,6 +714,12 @@ class TrackingSyncRun(BaseTeamModel):
         # A working provider that this poller is simply not the one to call. Distinct
         # from NOT_CONFIGURED because nothing is wrong and nobody needs to fix it.
         NOT_CARRIER_POLLED = "not_carrier_polled", _("Not polled by the carrier sync")
+        # The provider's own account, rather than this reference or this installation.
+        # Kept apart from NOT_CONFIGURED because nothing here is misconfigured, and from
+        # RATE_LIMIT because neither clears in minutes: a quota clears when the billing
+        # cycle does, and an unpaid account clears when somebody pays.
+        PROVIDER_QUOTA = "provider_quota", _("Provider allowance spent for this cycle")
+        PROVIDER_BILLING = "provider_billing", _("Provider account suspended for billing")
         ALREADY_RUNNING = "already_running", _("Sync already running")
         UNSUPPORTED_REFERENCE = "unsupported_reference", _("Unsupported reference")
         AUTHENTICATION = "authentication", _("Authentication failed")

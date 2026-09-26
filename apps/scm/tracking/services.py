@@ -32,7 +32,13 @@ def create_tracking_subscription(
 
 
 def pause_tracking_subscription(subscription: TrackingSubscription) -> TrackingSubscription:
-    """Pause an active tracking subscription."""
+    """Pause an active tracking subscription.
+
+    ``next_sync_at`` is left alone, unlike cancelling. A paused watch is one somebody
+    means to come back to — superseded by another provider, or waiting on a provider
+    release that failed — and resuming it should pick up its own cadence rather than
+    firing immediately because the timestamp was thrown away.
+    """
     subscription.status = TrackingSubscription.Status.PAUSED
     subscription.save(update_fields=["status", "updated_at"])
     return subscription
@@ -60,9 +66,17 @@ def complete_tracking_subscription(subscription: TrackingSubscription) -> Tracki
 
 
 def cancel_tracking_subscription(subscription: TrackingSubscription) -> TrackingSubscription:
-    """Cancel a tracking subscription."""
+    """Cancel a tracking subscription and stop scheduling it.
+
+    ``next_sync_at`` is cleared for the same reason
+    :func:`complete_tracking_subscription` clears it: the dispatcher reads a null as
+    "due now", so a cancelled watch that kept its old timestamp would be pollable again
+    the moment anything reopened its status. It is the status that takes it out of the
+    due query today — this is what keeps that true after a restart.
+    """
     subscription.status = TrackingSubscription.Status.CANCELLED
-    subscription.save(update_fields=["status", "updated_at"])
+    subscription.next_sync_at = None
+    subscription.save(update_fields=["status", "next_sync_at", "updated_at"])
     return subscription
 
 

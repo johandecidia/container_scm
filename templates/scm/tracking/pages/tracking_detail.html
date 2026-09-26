@@ -29,10 +29,12 @@
               {% include "scm/tracking/partials/_tracking_sync_button.html" %}
             </button>
           </form>
-          <form method="post" action="{% url 'tracking:cancel' subscription.pk %}">
-            {% csrf_token %}
-            <button type="submit" class="btn btn-outline btn-error btn-sm">{% translate "Cancel" %}</button>
-          </form>
+          {% if can_manage_tracking %}
+            <form method="post" action="{% url 'tracking:stop' subscription.pk %}">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-outline btn-error btn-sm">{% translate "Stop tracking" %}</button>
+            </form>
+          {% endif %}
         {% endif %}
       </div>
     </div>

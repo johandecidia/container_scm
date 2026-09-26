@@ -1,0 +1,21 @@
+{% load i18n %}
+{% comment %}
+  Which clock the report's times were read on. A gate-in time is the site's wall
+  clock, so this names the location that supplied the zone — or says plainly that
+  none did and the operator's own timezone was used instead.
+{% endcomment %}
+{% if zone.is_from_location %}
+  <p class="text-sm text-base-content/70 mb-3">
+    {% blocktranslate trimmed with zone=zone.name source=zone.location.name %}
+      Reported times are read as local time in <strong>{{ zone }}</strong>, the timezone of {{ source }}.
+    {% endblocktranslate %}
+  </p>
+{% else %}
+  <div class="alert alert-warning mb-3">
+    <span>
+      {% blocktranslate trimmed with zone=zone.name location=location.name %}
+        {{ location }} has no timezone, so reported times are read in <strong>{{ zone }}</strong> — your profile's timezone, or the system default. Set a timezone on the location if the report uses the site's local time.
+      {% endblocktranslate %}
+    </span>
+  </div>
+{% endif %}

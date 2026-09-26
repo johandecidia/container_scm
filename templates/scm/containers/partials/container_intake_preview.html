@@ -46,6 +46,18 @@
   {% include "scm/containers/partials/container_intake_attributes_hidden.html" %}
   <input type="hidden" name="entries" value="{{ payload }}">
   <input type="hidden" name="tab" value="{{ tab }}">
+  {% comment %}
+    The tracking choice, carried across the preview as an explicit 1 or 0. It cannot
+    ride along with the attributes above: those are dropped when blank, and "do not
+    start tracking" is a decision rather than a blank. Re-read on the confirm, never
+    trusted — it has been through the browser.
+
+    Absent when the form that produced this preview named no choice, so the confirm
+    falls back to the team setting rather than to a value this page invented.
+  {% endcomment %}
+  {% if start_tracking %}
+    <input type="hidden" name="start_tracking" value="{{ start_tracking }}">
+  {% endif %}
 
   <div class="modal-action">
     <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-container').innerHTML=''">

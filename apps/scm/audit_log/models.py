@@ -40,6 +40,12 @@ class SCMAuditLog(BaseTeamModel):
         # Tracking events
         TRACKING_SYNC_COMPLETED = "tracking_sync_completed", _("Tracking Sync Completed")
         TRACKING_SYNC_FAILED = "tracking_sync_failed", _("Tracking Sync Failed")
+        # Tracking lifecycle: somebody, or an import, decided whether a container is
+        # watched at all. Kept apart from the sync actions above because those record
+        # what a provider said and these record what we decided to ask — and it is the
+        # decision that answers "who stopped tracking this box, and when".
+        TRACKING_STARTED = "tracking_started", _("Tracking Started")
+        TRACKING_STOPPED = "tracking_stopped", _("Tracking Stopped")
         # Filter events
         SAVED_FILTER_CREATED = "saved_filter_created", _("Saved Filter Created")
         SAVED_FILTER_DELETED = "saved_filter_deleted", _("Saved Filter Deleted")

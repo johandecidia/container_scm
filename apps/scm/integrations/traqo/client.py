@@ -52,6 +52,16 @@ _CONTAINER_NUMBER_RE = re.compile(r"^[A-Z]{4}\d{7}$")
 # while ``container`` may consume one of the account's shipment slots.
 CARRIER_LOOKUP_PATH = "carriers/lookup"
 
+# The account's own plan, allowance and billing cycle. Free — it consumes no shipment
+# slot and makes no upstream carrier call — which is what makes it safe to read for a
+# status page rather than discovering the limit by hitting it.
+ACCOUNT_USAGE_PATH = "account/usage"
+
+# Untracking a shipment. The path parameter takes the shipment id *or* the container /
+# bill-of-lading number the shipment is tracked by, which is why this integration needs
+# no second identifier: the container number is already on every subscription.
+SHIPMENTS_PATH = "shipments"
+
 
 class TraqoClient:
     """Reads container tracking from Traqo, in sandbox or production mode."""
@@ -147,10 +157,26 @@ class TraqoClient:
 
     def carrier_lookup_url(self) -> str:
         """Return the carrier-lookup endpoint URL, sandbox or production."""
+        return self._url(CARRIER_LOOKUP_PATH)
+
+    def account_usage_url(self) -> str:
+        """Return the account-usage endpoint URL, sandbox or production."""
+        return self._url(ACCOUNT_USAGE_PATH)
+
+    def shipment_url(self, reference: str) -> str:
+        """Return the shipment URL for ``reference`` — a shipment id or a container number."""
+        return self._url(f"{SHIPMENTS_PATH}/{reference}")
+
+    def _url(self, path: str) -> str:
+        """Join ``path`` onto the base URL, inserting the sandbox segment when in sandbox.
+
+        The sandbox is a path segment and nothing else, so every endpoint composes its
+        URL the same way and none of them has to remember the branch.
+        """
         segments = [self.base_url]
         if self.sandbox:
             segments.append(SANDBOX_SEGMENT)
-        segments.append(CARRIER_LOOKUP_PATH)
+        segments.append(path)
         return "/".join(segments)
 
     # ------------------------------------------------------------------
@@ -250,3 +276,60 @@ class TraqoClient:
             len(payload["data"].get("events_table") or []),
         )
         return payload
+
+    def get_account_usage(self) -> dict:
+        """Return Traqo's account usage envelope — plan, allowance, cycle, rate limit.
+
+        Free at Traqo's end: it spends no shipment slot and makes no upstream carrier
+        call, drawing only on the per-minute request budget. That is what makes it
+        readable for a status page — the alternative is discovering the limit by hitting
+        it, which costs a failed tracking attempt to learn.
+
+        The whole envelope is returned rather than a parsed model, for the same reason
+        :meth:`get_container` returns one: a transport must not also be a schema. What
+        the numbers *mean* is :mod:`.usage`.
+
+        Everything in here describes our own account, so the caller is responsible for
+        keeping it away from customers — see ``tracking/platform_views.py``, which is the
+        only thing that renders it.
+        """
+        payload = self.http.get(self.account_usage_url())
+        if not isinstance(payload, dict):
+            raise CarrierInvalidResponseError(
+                "Traqo account usage did not return a JSON object.",
+                provider_code=PROVIDER_CODE,
+                status_code=200,
+            )
+        if payload.get("success") is False:
+            message = str(payload.get("message") or "").strip() or "Traqo reported the usage request unsuccessful."
+            raise CarrierInvalidResponseError(message, provider_code=PROVIDER_CODE, status_code=200)
+        return payload
+
+    def untrack_shipment(self, reference: str) -> dict:
+        """Untrack a shipment at Traqo, so it stops being updated. Returns the response.
+
+        ``reference`` may be the shipment id or the container / bill-of-lading number the
+        shipment is tracked by — Traqo documents both, which is why nothing here needs a
+        shipment id we would otherwise have to fetch separately.
+
+        **This stops tracking, not billing.** Traqo's allowance counts references *added*
+        during a cycle, so untracking does not return the slot; it is not a refund and
+        must never be described as one. Traqo applies a narrow refund of its own for a
+        shipment deleted very soon after it was added, a few times per cycle — that is
+        entirely server-side and this client neither triggers nor relies on it.
+
+        A reference Traqo does not hold answers 404, which the shared transport turns
+        into :class:`CarrierNoDataError`. For a caller trying to reach "not tracked any
+        more" that is the destination, not a failure — see
+        :func:`~apps.scm.integrations.traqo.service.release_traqo_shipment`.
+        """
+        identifier = (reference or "").strip()
+        if not identifier:
+            raise CarrierUnsupportedReferenceError(
+                "A shipment id or reference is required to untrack a shipment.",
+                provider_code=PROVIDER_CODE,
+            )
+
+        payload = self.http.delete(self.shipment_url(identifier))
+        logger.info("Traqo shipment %s untracked.", identifier)
+        return payload if isinstance(payload, dict) else {}

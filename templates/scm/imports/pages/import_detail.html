@@ -68,23 +68,46 @@
         </form>
       {% endif %}
 
+      {% comment %}
+        The two confirm buttons are two forms, so the tracking choice cannot be a
+        checkbox outside them — an unsubmitted control would silently fall back to the
+        team default whatever the operator ticked. Alpine holds the answer and each form
+        carries it as a hidden field, which is also what makes "off" expressible: the
+        value is always 1 or 0, never absent.
+
+        Offered only for a container import, and only it can create containers.
+      {% endcomment %}
       {% if can_confirm %}
-        <form method="post" action="{% url 'imports:confirm' pk=job.pk %}">
-          {% csrf_token %}
-          <input type="hidden" name="update_existing" value="0">
-          <button type="submit" class="btn btn-success btn-sm">
-            <i class="fa fa-check w-4 h-4"></i>
-            {% translate "Confirm Import" %}
-          </button>
-        </form>
-        <form method="post" action="{% url 'imports:confirm' pk=job.pk %}">
-          {% csrf_token %}
-          <input type="hidden" name="update_existing" value="1">
-          <button type="submit" class="btn btn-warning btn-sm">
-            <i class="fa fa-refresh w-4 h-4"></i>
-            {% translate "Confirm Import (update existing)" %}
-          </button>
-        </form>
+        <div
+          class="flex flex-wrap items-center gap-3"
+          x-data="{ startTracking: {{ auto_start_tracking|yesno:'true,false' }} }"
+        >
+          {% if offers_tracking_choice %}
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" class="checkbox checkbox-sm" x-model="startTracking">
+              <span class="text-sm">{% translate "Start tracking for new containers" %}</span>
+            </label>
+          {% endif %}
+
+          <form method="post" action="{% url 'imports:confirm' pk=job.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="update_existing" value="0">
+            <input type="hidden" name="start_tracking" :value="startTracking ? '1' : '0'">
+            <button type="submit" class="btn btn-success btn-sm">
+              <i class="fa fa-check w-4 h-4"></i>
+              {% translate "Confirm Import" %}
+            </button>
+          </form>
+          <form method="post" action="{% url 'imports:confirm' pk=job.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="update_existing" value="1">
+            <input type="hidden" name="start_tracking" :value="startTracking ? '1' : '0'">
+            <button type="submit" class="btn btn-warning btn-sm">
+              <i class="fa fa-refresh w-4 h-4"></i>
+              {% translate "Confirm Import (update existing)" %}
+            </button>
+          </form>
+        </div>
       {% endif %}
     </div>
 

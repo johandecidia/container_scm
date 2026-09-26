@@ -226,6 +226,33 @@ else:
         }
     }
 
+# Server-side cursors and transaction-pooling connection poolers cannot both be used.
+#
+# `QuerySet.iterator()` on PostgreSQL issues `DECLARE _django_curs_<id> ...` and then
+# FETCHes from it. A pooler in *transaction* mode — PgBouncer, and Neon's `-pooler`
+# endpoints, which are PgBouncer — hands each statement whichever backend connection is
+# free, so the DECLARE and the FETCH can land on different ones, and the cursor name
+# (derived from the client connection id) can collide with a name another multiplexed
+# connection already declared. That surfaces as:
+#
+#     ProgrammingError: cursor "_django_curs_..._sync_1" already exists
+#
+# It is not specific to any one query. Django's own PgBouncer guidance is to turn the
+# feature off, which is what this does: `.iterator()` keeps working and simply chunks
+# client-side instead.
+#
+# Off only when we are actually behind a pooler, so a direct connection keeps the
+# streaming behaviour — a large `.iterator()` against a direct endpoint should not have
+# to buffer. Neon marks pooled endpoints in the host name; `DJANGO_DATABASE_POOLED`
+# forces it for any other pooler that does not.
+#
+# A per-connection option, not a top-level setting: Django reads it from
+# ``connections[alias].settings_dict``, so it only has an effect inside the DATABASES entry.
+_database_host = DATABASES["default"].get("HOST") or ""
+DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = env.bool(
+    "DJANGO_DATABASE_POOLED", default="-pooler." in _database_host
+)
+
 # Auth and Login
 
 # Django recommends overriding the user model even if you don"t think you need to because it makes

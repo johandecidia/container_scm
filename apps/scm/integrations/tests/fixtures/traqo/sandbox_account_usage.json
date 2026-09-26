@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "mode": "sandbox",
+  "note": "Sandbox data. Get a free API key for live tracking → /developer",
+  "data": {
+    "plan": "professional",
+    "period_days": 30,
+    "cycle": {
+      "start": "2026-08-01T00:00:00.000Z",
+      "end": "2026-09-01T00:00:00.000Z"
+    },
+    "shipments": {
+      "limit": 20,
+      "addon_slots": 5,
+      "effective_limit": 25,
+      "used": 12,
+      "active": 9,
+      "remaining": 13
+    },
+    "rate_limit": {
+      "per_minute": 60,
+      "remaining": 60,
+      "reset": 1789800882
+    },
+    "mode": "sandbox"
+  }
+}

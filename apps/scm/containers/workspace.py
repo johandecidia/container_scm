@@ -412,6 +412,37 @@ class ContainerWorkspace:
         return has_live_subscription(self.tracking_subscriptions)
 
     @property
+    def tracking_stopped_at(self):
+        """When this container's tracking was last switched off, or None.
+
+        Derived rather than stored. A stopped watch is one whose status was moved to
+        CANCELLED or PAUSED, and ``updated_at`` is when that happened — so there is no
+        ``stopped_at`` column to fall out of step with the status it describes, and no
+        migration for a fact the row already carries. See
+        :mod:`apps.scm.tracking.lifecycle`; who stopped it is in the audit log, because
+        that is a history and not a current value.
+
+        The most recent across the stopped watches, so a container whose second source
+        was stopped last week reads as stopped last week rather than whenever the first
+        one ended. None while anything is still live — there is nothing to report — and
+        None for a container that has never been watched.
+
+        Reads the subscriptions already loaded, so it costs nothing per container on a
+        bulk-built workspace.
+        """
+        from apps.scm.tracking.models import TrackingSubscription
+
+        if self.has_live_tracking:
+            return None
+        stopped = [
+            subscription.updated_at
+            for subscription in self.tracking_subscriptions
+            if subscription.status in (TrackingSubscription.Status.CANCELLED, TrackingSubscription.Status.PAUSED)
+            and subscription.updated_at is not None
+        ]
+        return max(stopped) if stopped else None
+
+    @property
     def has_tracking_error(self) -> bool:
         from apps.scm.tracking.models import TrackingSubscription
 

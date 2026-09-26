@@ -1,0 +1,17 @@
+{
+  "success": false,
+  "statusCode": 402,
+  "message": "Shipment limit reached (20 of 20). Add more slots or upgrade in your dashboard billing.",
+  "data": {
+    "error": "shipment_limit_reached",
+    "limit": 20,
+    "used": 20,
+    "plan": "professional",
+    "maxedOut": false,
+    "message": "You've used 20 of 20 shipment slots on the professional plan. Add more slots or upgrade your plan in your dashboard billing.",
+    "manageUrl": "https://traqocontainer.com/dashboard/billing",
+    "contactUrl": null,
+    "usageUrl": "https://traqocontainer.com/developer",
+    "usageApi": "/api/v1/account/usage"
+  }
+}

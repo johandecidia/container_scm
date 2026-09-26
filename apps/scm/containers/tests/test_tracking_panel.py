@@ -314,9 +314,9 @@ class ContainerListTrackingColumnTest(TrackingPanelTestBase):
 
     team_slug = "panel-list"
 
-    def test_an_untracked_container_reads_as_not_tracked(self):
+    def test_an_untracked_container_reads_as_not_tracking(self):
         response = self.client_.get(reverse("containers:list"))
-        self.assertContains(response, "Not tracked")
+        self.assertContains(response, "Not tracking")
 
     def test_a_tracked_container_shows_its_carrier_and_state(self):
         from apps.scm.integrations.carriers.auto_link import get_or_create_tracking_provider
@@ -331,7 +331,21 @@ class ContainerListTrackingColumnTest(TrackingPanelTestBase):
         )
         response = self.client_.get(reverse("containers:list"))
         self.assertContains(response, "Maersk")
-        self.assertContains(response, "Active")
+        self.assertContains(response, "Tracking")
+
+    def test_a_stopped_container_reads_as_not_tracking(self):
+        """The column asks whether anything is running, not what the last watch was."""
+        from apps.scm.integrations.carriers.auto_link import get_or_create_tracking_provider
+
+        provider = get_or_create_tracking_provider(carrier_code="maersk", carrier_name="Maersk")
+        TrackingSubscription.objects.create(
+            team=self.team,
+            provider=provider,
+            container=self.container,
+            tracking_reference=self.container.container_id,
+            status=TrackingSubscription.Status.CANCELLED,
+        )
+        self.assertContains(self.client_.get(reverse("containers:list")), "Not tracking")
 
     def test_a_failed_subscription_reads_as_an_error(self):
         from apps.scm.integrations.carriers.auto_link import get_or_create_tracking_provider

@@ -39,6 +39,8 @@ from apps.scm.integrations.carriers.exceptions import (
     CarrierInvalidResponseError,
     CarrierNoDataError,
     CarrierNotImplementedError,
+    CarrierProviderBillingError,
+    CarrierProviderQuotaError,
     CarrierRateLimitError,
     CarrierServerError,
     CarrierTimeoutError,
@@ -78,10 +80,32 @@ _REFERENCE_KWARG: dict[str, str] = {
 }
 
 # Carrier errors that mean "nothing was attempted" rather than "the attempt failed".
+#
+# Order matters: these are matched by isinstance, first hit wins, so anything that
+# subclasses another entry has to come before it.
+#
+# The two provider-account entries lead for a second reason as well as ordering. A
+# spent allowance and an unpaid account are not failures of the attempt — the provider
+# answered, correctly, that it will not take on new work — and SKIPPED is what keeps
+# ``consecutive_failures`` from climbing. That counter drives the exponential backoff,
+# so classifying a quota as a failure produced a retry ladder from 15 minutes to a
+# 12-hour cap against an account that could not accept anything until the cycle reset.
 _SKIP_ERRORS: dict[type[CarrierError], str] = {
+    CarrierProviderQuotaError: _ErrorType.PROVIDER_QUOTA,
+    CarrierProviderBillingError: _ErrorType.PROVIDER_BILLING,
     CarrierNotImplementedError: _ErrorType.NOT_IMPLEMENTED,
     CarrierConfigurationError: _ErrorType.NOT_CONFIGURED,
 }
+
+# The skip reasons that mean "this reference cannot be tracked as things stand", as
+# opposed to "not this poller's job" or "a lock was held". Stated once because both
+# ``_tracking_status_for`` and the polling cadence ask the same question.
+PROVIDER_ACCOUNT_ERROR_TYPES: tuple[str, ...] = (_ErrorType.PROVIDER_QUOTA, _ErrorType.PROVIDER_BILLING)
+UNTRACKABLE_SKIP_ERROR_TYPES: tuple[str, ...] = (
+    _ErrorType.NOT_IMPLEMENTED,
+    _ErrorType.NOT_CONFIGURED,
+    *PROVIDER_ACCOUNT_ERROR_TYPES,
+)
 
 # Carrier errors that mean the attempt failed, and how to label them.
 _FAILURE_ERRORS: list[tuple[type[CarrierError], str]] = [
@@ -198,12 +222,15 @@ def _run_sync(subscription: TrackingSubscription) -> TrackingSyncRun:
     )
     try:
         outcome = _fetch_normalise_and_store(subscription)
-    except Exception as exc:  # noqa: BLE001 — an unexpected bug must still close the run cleanly
+    except Exception:  # noqa: BLE001 — an unexpected bug must still close the run cleanly
+        # The traceback is logged here and nowhere else. ``error_message`` reaches the
+        # run and the subscription's ``last_error_message``, both team-facing, and an
+        # arbitrary exception's text is ours to read — see ``outcome_for_carrier_error``.
         logger.exception("Unexpected error syncing subscription %s.", subscription.pk)
         outcome = SyncOutcome(
             status=TrackingSyncRun.Status.FAILED,
             error_type=_ErrorType.UNEXPECTED,
-            error_message=f"{type(exc).__name__}: {exc}",
+            error_message=CarrierError.safe_message_template,
         )
 
     apply_sync_outcome(subscription, sync_run, outcome)
@@ -247,10 +274,12 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
         client = build_carrier_client(provider_code, team=subscription.team)
         parser = build_carrier_parser(provider_code)
     except UnknownCarrierError as exc:
+        # The registry's message lists every carrier we support; it is for the log.
+        logger.warning("No carrier adapter for subscription %s: %s", subscription.pk, exc)
         return SyncOutcome(
             status=TrackingSyncRun.Status.SKIPPED,
             error_type=_ErrorType.NOT_CONFIGURED,
-            error_message=str(exc),
+            error_message=CarrierConfigurationError.safe_message_template,
         )
 
     # 2. Work out which reference to ask by.
@@ -293,20 +322,27 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
     try:
         normalised_events = parser.parse_tracking_events(raw_payload)
     except CarrierNotImplementedError as exc:
+        logger.warning(
+            "Parser for provider %s is not implemented (subscription %s): %s", provider_code, subscription.pk, exc
+        )
         return SyncOutcome(
             status=TrackingSyncRun.Status.SKIPPED,
             error_type=_ErrorType.NOT_IMPLEMENTED,
-            error_message=str(exc),
+            error_message=exc.safe_message,
             raw_payloads_created=1,
         )
     except Exception as exc:  # noqa: BLE001 — a parser bug must not lose the payload
+        # The technical text stays on the raw payload — internal diagnostics, kept beside
+        # the response it describes so a corrected parser can be checked against it —
+        # and in the log. A parser error can quote the payload, so the team sees only
+        # the sanitised sentence.
         message = f"{type(exc).__name__}: {exc}"
         mark_raw_payload_parsed(raw_payload_record, success=False, error_message=message)
         logger.warning("Parser error for provider %s (subscription %s): %s", provider_code, subscription.pk, message)
         return SyncOutcome(
             status=TrackingSyncRun.Status.FAILED,
             error_type=_ErrorType.PARSE_ERROR,
-            error_message=message,
+            error_message=CarrierInvalidResponseError.safe_message_template,
             raw_payloads_created=1,
         )
 
@@ -373,13 +409,32 @@ def outcome_for_carrier_error(exc: CarrierError) -> SyncOutcome:
     errors and must be classified the same way — a Traqo timeout has to back off exactly
     as a carrier timeout does, and a second opinion on what "transient" means is how two
     providers end up with two retry policies.
+
+    ``error_message`` is the error's ``safe_message``, never ``str(exc)``. It is
+    persisted to ``TrackingSyncRun.error_message`` and ``TrackingSubscription
+    .last_error_message``, both of which are rendered on team-facing pages — the
+    container workspace's sync problem line and the tracking detail page. A provider's
+    own text can carry a response body, a credential or, in Traqo's 402, our central
+    account's plan and quota, so it is logged by the caller and stored nowhere. See
+    ``carriers/exceptions.py``.
     """
+    # The one place a provider error is turned into stored state, so the one place the
+    # technical text has to be preserved. Logged here rather than at each catch site,
+    # because a caller that forgot would lose the only copy: nothing else keeps it.
+    logger.warning(
+        "Provider %s error %s: %s",
+        exc.provider_code or "unknown",
+        type(exc).__name__,
+        exc,
+        extra={"provider_detail": exc.provider_detail},
+    )
+
     for error_class, error_type in _SKIP_ERRORS.items():
         if isinstance(exc, error_class):
             return SyncOutcome(
                 status=TrackingSyncRun.Status.SKIPPED,
                 error_type=error_type,
-                error_message=str(exc),
+                error_message=exc.safe_message,
             )
 
     for error_class, error_type in _FAILURE_ERRORS:
@@ -387,14 +442,14 @@ def outcome_for_carrier_error(exc: CarrierError) -> SyncOutcome:
             return SyncOutcome(
                 status=TrackingSyncRun.Status.FAILED,
                 error_type=error_type,
-                error_message=str(exc),
+                error_message=exc.safe_message,
                 retry_after_seconds=getattr(exc, "retry_after", None),
             )
 
     return SyncOutcome(
         status=TrackingSyncRun.Status.FAILED,
         error_type=_ErrorType.UNEXPECTED,
-        error_message=str(exc),
+        error_message=exc.safe_message,
     )
 
 
@@ -405,7 +460,7 @@ def _tracking_status_for(subscription: TrackingSubscription, outcome: SyncOutcom
         # Only a skip that means "this reference cannot be tracked as things stand"
         # changes the status. Every other skip — a lock held, a provider this poller
         # does not drive — leaves whatever the last real answer was standing.
-        if outcome.error_type in (_ErrorType.NOT_IMPLEMENTED, _ErrorType.NOT_CONFIGURED):
+        if outcome.error_type in UNTRACKABLE_SKIP_ERROR_TYPES:
             return statuses.NOT_CONFIGURED
         return subscription.tracking_status
     if not outcome.succeeded:

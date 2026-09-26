@@ -483,7 +483,7 @@ class DestructiveActionIsolationTest(TestCase):
 
     def test_cannot_cancel_other_team_tracking_subscription(self):
         sub_b = _tracking_subscription(self.team_b, "DEST-TRACK-B")
-        resp = self._client_a().post(reverse("tracking:cancel", kwargs={"pk": sub_b.pk}))
+        resp = self._client_a().post(reverse("tracking:stop", kwargs={"pk": sub_b.pk}))
         self.assertEqual(resp.status_code, 404)
         sub_b.refresh_from_db()
         self.assertNotEqual(sub_b.status, TrackingSubscription.Status.CANCELLED)

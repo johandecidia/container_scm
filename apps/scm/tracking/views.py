@@ -4,8 +4,10 @@ from django.contrib import messages
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
+from django.views.decorators.http import require_POST
 
-from apps.scm.decorators import scm_login_required
+from apps.scm.decorators import scm_login_required, scm_team_admin_required
+from apps.teams.roles import is_admin
 
 from .forms import TrackingSubscriptionForm
 from .models import TrackingSubscription
@@ -15,7 +17,6 @@ from .selectors import (
     get_tracking_sync_runs_for_subscription,
 )
 from .services import (
-    cancel_tracking_subscription,
     create_tracking_subscription,
     pause_tracking_subscription,
     resume_tracking_subscription,
@@ -56,6 +57,9 @@ def tracking_detail(request, pk):
         "subscription": subscription,
         "events": events,
         "sync_runs": sync_runs,
+        # Same flag, same test as the container list and workspace: Stop tracking is
+        # administrator-only wherever it is offered. The endpoint enforces it itself.
+        "can_manage_tracking": is_admin(request.user, team),
         "team_slug": team.slug,
     }
     return render(request, "scm/tracking/pages/tracking_detail.html", context)
@@ -178,24 +182,33 @@ def manual_sync_tracking(request, pk):
     return redirect("tracking:detail", pk=pk)
 
 
-@scm_login_required
-def cancel_tracking(request, pk):
-    """Cancel a tracking subscription."""
+# The messages framework function for each RefreshResult level the lifecycle returns.
+_MESSAGE_LEVELS = {
+    "success": messages.success,
+    "info": messages.info,
+    "warning": messages.warning,
+    "error": messages.error,
+}
+
+
+@scm_team_admin_required
+@require_POST
+def stop_tracking(request, pk):
+    """Stop this tracking subscription through the tracking lifecycle.
+
+    Administrator-only and POST-only, exactly like Stop tracking from the container list
+    and workspace (``containers/tracking_lifecycle_views.py``): it is the same operation,
+    and may release a billable provider subscription, so no URL may offer it on weaker
+    terms. A member gets the decorator's 404.
+
+    The lifecycle releases the provider's own subscription first where there is one, and
+    leaves the watch ``PAUSED`` rather than ``CANCELLED`` when the provider refused — so
+    the page redirects back to the watch, whose status and message show which happened.
+    """
+    from .lifecycle import stop_subscription_tracking
+
     team = request.default_team
-    subscription = get_object_or_404(TrackingSubscription, pk=pk, team=team)
-    if request.method == "POST":
-        cancel_tracking_subscription(subscription)
-        if request.htmx:
-            subscriptions = get_team_tracking_subscriptions(team=team)
-            return render(
-                request,
-                "scm/tracking/partials/_tracking_subscriptions_table.html",
-                {
-                    "subscriptions": subscriptions,
-                    "status_choices": TrackingSubscription.Status.choices,
-                    "team_slug": team.slug,
-                },
-            )
-        messages.success(request, _("Tracking subscription cancelled."))
-        return redirect("tracking:list")
+    subscription = get_object_or_404(TrackingSubscription.objects.select_related("provider"), pk=pk, team=team)
+    result = stop_subscription_tracking(team=team, subscription=subscription, actor=request.user)
+    _MESSAGE_LEVELS[result.level](request, result.message)
     return redirect("tracking:detail", pk=pk)

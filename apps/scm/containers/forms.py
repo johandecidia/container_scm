@@ -21,12 +21,12 @@ MAX_PASTED_CONTAINERS = 500
 
 
 class ContainerAttributesForm(forms.Form):
-    """The attributes an intake writes onto every container it creates.
+    """What an intake writes onto the containers it creates, and whether to track them.
 
-    Single, paste and CSV offer the same four, so they are declared once here and
-    inherited by all three intake forms — and validated through this same class when
-    a previewed import is confirmed, since the choices have to make that round trip
-    as hidden fields.
+    Single, paste and CSV offer the same four attributes, so they are declared once here
+    and inherited by all three intake forms — and validated through this same class when
+    a previewed import is confirmed, since the choices have to make that round trip as
+    hidden fields.
 
     Every field is optional on purpose. Left alone, equipment type falls back to the
     configured default and the rest to the model's own, which is what quick
@@ -35,6 +35,11 @@ class ContainerAttributesForm(forms.Form):
     The condition list is this team's own master data, so the form needs the team to
     know what to offer. Scoped on the queryset rather than only in ``clean``, so
     another team's condition is neither listed nor accepted when posted.
+
+    ``start_tracking`` is deliberately **not** one of ``ATTRIBUTE_FIELDS``. The four
+    attributes are columns on the container; this is an instruction about what to do
+    after it exists, it never reaches ``create_container``, and its default is the
+    team's own policy rather than a blank.
     """
 
     ATTRIBUTE_FIELDS = ("equipment_type", "condition", "color_code", "color_system")
@@ -69,16 +74,47 @@ class ContainerAttributesForm(forms.Form):
         widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
     )
 
+    start_tracking = forms.BooleanField(
+        label=_("Start tracking for new containers"),
+        required=False,
+        help_text=_("Only the containers this import creates. Ones that already exist are left as they are."),
+        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-sm"}),
+    )
+
     def __init__(self, *args, team=None, **kwargs):
         super().__init__(*args, **kwargs)
         cast(forms.ModelChoiceField, self.fields["condition"]).queryset = (
             ContainerCondition.objects.none() if team is None else get_condition_options(team)
         )
+        # The team's policy is the checkbox's starting position, so the common case is
+        # one click and the uncommon one is visibly a departure from it. Only for an
+        # unbound form: a submitted one carries what the operator actually chose, and
+        # an initial would not override it anyway.
+        if team is not None and not self.is_bound:
+            from apps.scm.tracking.preferences import get_team_auto_start_tracking
+
+            self.fields["start_tracking"].initial = get_team_auto_start_tracking(team)
 
     @property
     def attribute_fields(self) -> list[forms.BoundField]:
         """The attribute fields alone, so a template can render them as one block."""
         return [self[name] for name in self.ATTRIBUTE_FIELDS]
+
+    def start_tracking_choice(self) -> bool | None:
+        """Whether this intake asked for its new containers to be tracked.
+
+        Three answers, not two. ``None`` means the submission named no choice, and the
+        team's setting decides — which keeps one rule across every surface that can
+        start tracking, instead of "absent means the team default" on the import confirm
+        and "absent means no" here.
+
+        A browser always names one: the template renders a hidden ``0`` beside the
+        checkbox precisely so that clearing it is expressible. So ``False`` here is a
+        decision somebody made, and ``None`` is a request that never showed the control.
+        """
+        if "start_tracking" not in self.data:
+            return None
+        return bool(self.cleaned_data.get("start_tracking"))
 
     def container_attributes(self) -> dict:
         """Return the chosen attributes as ``create_container`` keyword arguments.
@@ -170,6 +206,57 @@ class ContainerPasteForm(ContainerAttributesForm):
                 _("Too many container numbers at once — the maximum is %(max)s.") % {"max": MAX_PASTED_CONTAINERS}
             )
         return self.cleaned_data["numbers"]
+
+
+class BulkReceiveForm(forms.Form):
+    """A pasted gate-in report and the canonical location the containers were received at.
+
+    The destination is chosen from this team's active canonical locations and nothing
+    else: the report's own "Site" column is evidence, and never picks, or creates, one.
+    """
+
+    location = forms.ModelChoiceField(
+        label=_("Received at"),
+        queryset=ContainerLocation.objects.none(),
+        empty_label=_("— Choose a location —"),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+    text = forms.CharField(
+        label=_("Receive report"),
+        help_text=_(
+            "Paste the report as copied — a table from the depot's page or rows from a spreadsheet. "
+            "Headers and surrounding text are ignored."
+        ),
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full font-mono text-xs",
+                "rows": 12,
+                "placeholder": "PSLU\t2913030\t22\t10\t2026-09-17 16:00:51\tMCR AB - Oceanterminalen",
+            }
+        ),
+    )
+
+    def __init__(self, *args, team=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        cast(forms.ModelChoiceField, self.fields["location"]).queryset = (
+            ContainerLocation.objects.none()
+            if team is None
+            else ContainerLocation.objects.filter(team=team, is_active=True).order_by("name")
+        )
+
+    def clean_text(self) -> str:
+        from .receive_parser import parse_receive_text
+
+        text = self.cleaned_data["text"]
+        parsed = parse_receive_text(text)
+        found = len(parsed.rows) + len(parsed.errors)
+        if not found:
+            raise forms.ValidationError(_("No receive rows were found in the pasted text."))
+        if found > MAX_PASTED_CONTAINERS:
+            raise forms.ValidationError(
+                _("Too many rows at once — the maximum is %(max)s.") % {"max": MAX_PASTED_CONTAINERS}
+            )
+        return text
 
 
 class ContainerCsvImportForm(ContainerAttributesForm):

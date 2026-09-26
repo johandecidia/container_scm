@@ -4,6 +4,8 @@
   <span>{% translate "Import finished." %}</span>
 </div>
 
+{% include "scm/containers/partials/container_intake_tracking_result.html" with tracking=tracking %}
+
 <ul class="mb-4 space-y-1 text-sm">
   <li><span class="font-semibold">{% translate "Created" %}:</span> {{ result.created_count }}</li>
   <li><span class="font-semibold">{% translate "Already existed" %}:</span> {{ result.existed_count }}</li>
