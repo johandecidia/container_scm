@@ -93,7 +93,7 @@ class TrackingTeamIsolationTest(TestCase):
     def test_cancel_other_team_subscription_gives_404(self):
         client = Client()
         client.force_login(self.user)
-        url = reverse("tracking:cancel", kwargs={"pk": self.other_sub.pk})
+        url = reverse("tracking:stop", kwargs={"pk": self.other_sub.pk})
         response = client.post(url)
         self.assertIn(response.status_code, [404, 403])
         self.other_sub.refresh_from_db()

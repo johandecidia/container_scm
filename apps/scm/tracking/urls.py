@@ -15,6 +15,6 @@ urlpatterns = [
     path("<int:pk>/pause/", views.pause_tracking, name="pause"),
     path("<int:pk>/resume/", views.resume_tracking, name="resume"),
     path("<int:pk>/sync/", views.manual_sync_tracking, name="sync"),
-    path("<int:pk>/cancel/", views.cancel_tracking, name="cancel"),
+    path("<int:pk>/stop/", views.stop_tracking, name="stop"),
     path("<int:pk>/timeline/", views.tracking_timeline_partial, name="timeline"),
 ]

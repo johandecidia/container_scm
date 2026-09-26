@@ -15,7 +15,6 @@ from .selectors import (
     get_tracking_sync_runs_for_subscription,
 )
 from .services import (
-    cancel_tracking_subscription,
     create_tracking_subscription,
     pause_tracking_subscription,
     resume_tracking_subscription,
@@ -178,24 +177,28 @@ def manual_sync_tracking(request, pk):
     return redirect("tracking:detail", pk=pk)
 
 
+# The messages framework function for each RefreshResult level the lifecycle returns.
+_MESSAGE_LEVELS = {
+    "success": messages.success,
+    "info": messages.info,
+    "warning": messages.warning,
+    "error": messages.error,
+}
+
+
 @scm_login_required
-def cancel_tracking(request, pk):
-    """Cancel a tracking subscription."""
+def stop_tracking(request, pk):
+    """Stop this tracking subscription through the tracking lifecycle.
+
+    The lifecycle releases the provider's own subscription first where there is one, and
+    leaves the watch ``PAUSED`` rather than ``CANCELLED`` when the provider refused — so
+    the page redirects back to the watch, whose status and message show which happened.
+    """
     team = request.default_team
-    subscription = get_object_or_404(TrackingSubscription, pk=pk, team=team)
+    subscription = get_object_or_404(TrackingSubscription.objects.select_related("provider"), pk=pk, team=team)
     if request.method == "POST":
-        cancel_tracking_subscription(subscription)
-        if request.htmx:
-            subscriptions = get_team_tracking_subscriptions(team=team)
-            return render(
-                request,
-                "scm/tracking/partials/_tracking_subscriptions_table.html",
-                {
-                    "subscriptions": subscriptions,
-                    "status_choices": TrackingSubscription.Status.choices,
-                    "team_slug": team.slug,
-                },
-            )
-        messages.success(request, _("Tracking subscription cancelled."))
-        return redirect("tracking:list")
+        from .lifecycle import stop_subscription_tracking
+
+        result = stop_subscription_tracking(team=team, subscription=subscription, actor=request.user)
+        _MESSAGE_LEVELS[result.level](request, result.message)
     return redirect("tracking:detail", pk=pk)

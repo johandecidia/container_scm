@@ -480,10 +480,20 @@ def stop_container_tracking(*, team: Team, container: Container, actor=None) -> 
 
     carrier_code, carrier_name = describe_subscription_carrier(stoppable[0])
     unreleased = [
-        subscription for subscription in stoppable if not _stop_one_subscription(subscription, container=container)
+        subscription
+        for subscription in stoppable
+        if not _stop_one_subscription(subscription, label=container.container_id)
     ]
 
-    _log_stop(team=team, container=container, actor=actor, stopped=stoppable, unreleased=unreleased)
+    _log_stop(
+        team=team,
+        object_type="Container",
+        object_id=container.pk,
+        object_repr=container.container_id,
+        actor=actor,
+        stopped=stoppable,
+        unreleased=unreleased,
+    )
     return _describe_stop(
         stopped=stoppable,
         unreleased=unreleased,
@@ -492,7 +502,53 @@ def stop_container_tracking(*, team: Team, container: Container, actor=None) -> 
     )
 
 
-def _stop_one_subscription(subscription: TrackingSubscription, *, container: Container) -> bool:
+def stop_subscription_tracking(*, team: Team, subscription: TrackingSubscription, actor=None) -> RefreshResult:
+    """Stop one watch, with exactly the semantics of :func:`stop_container_tracking`.
+
+    For the tracking detail page, which is about a single subscription — one that may
+    track a booking or bill of lading and have no container at all, and one of possibly
+    several legs when it does. Stopping the whole container from there would stop legs the
+    reader was not looking at, so the scope is the watch; everything else is shared: the
+    same :data:`STOPPABLE_STATUSES`, the same external-first release, ``CANCELLED`` only
+    once the provider let go, ``PAUSED`` when it refused, the same audit action and the
+    same result wording.
+
+    There is deliberately no way left to mark a watch ``CANCELLED`` without asking its
+    provider first. That was what the page's old Cancel did, and it left a Vizion
+    reference or a Traqo shipment subscribed behind a row claiming it was over.
+    """
+    from .manual_refresh import INFO, RefreshResult, describe_subscription_carrier
+
+    if subscription.team_id != team.pk or subscription.status not in STOPPABLE_STATUSES:
+        return RefreshResult(
+            level=INFO,
+            state=ALREADY_STOPPED,
+            message=_("Tracking for this reference is already stopped."),
+            tracked=False,
+        )
+
+    carrier_code, carrier_name = describe_subscription_carrier(subscription)
+    released = _stop_one_subscription(subscription, label=subscription.tracking_reference)
+    unreleased = [] if released else [subscription]
+
+    _log_stop(
+        team=team,
+        object_type="TrackingSubscription",
+        object_id=subscription.pk,
+        object_repr=subscription.tracking_reference,
+        actor=actor,
+        stopped=[subscription],
+        unreleased=unreleased,
+    )
+    return _describe_stop(
+        stopped=[subscription],
+        unreleased=unreleased,
+        carrier_code=carrier_code,
+        carrier_name=carrier_name,
+    )
+
+
+def _stop_one_subscription(subscription: TrackingSubscription, *, label: str) -> bool:
     """Stop one watch. Returns True when it was fully stopped, provider included.
 
     False means the provider was asked to release its subscription and could not, so the
@@ -512,7 +568,7 @@ def _stop_one_subscription(subscription: TrackingSubscription, *, container: Con
         subscription.save(update_fields=["last_error_message", "updated_at"])
         logger.warning(
             "Tracking for %s: %s could not release its subscription (%s). Watch %s paused for retry.",
-            container.container_id,
+            label,
             subscription.provider.code,
             outcome.detail,
             subscription.pk,
@@ -522,7 +578,7 @@ def _stop_one_subscription(subscription: TrackingSubscription, *, container: Con
     cancel_tracking_subscription(subscription)
     logger.info(
         "Tracking for %s stopped: watch %s (%s) cancelled, provider release %s.",
-        container.container_id,
+        label,
         subscription.pk,
         subscription.provider.code,
         outcome.state,
@@ -606,16 +662,18 @@ def _log_start(
     )
 
 
-def _log_stop(*, team: Team, container: Container, actor, stopped: list, unreleased: list) -> None:
+def _log_stop(
+    *, team: Team, object_type: str, object_id, object_repr: str, actor, stopped: list, unreleased: list
+) -> None:
     from apps.scm.audit_log.models import SCMAuditLog
     from apps.scm.audit_log.services import log_scm_action
 
     log_scm_action(
         team=team,
         action=SCMAuditLog.Action.TRACKING_STOPPED,
-        object_type="Container",
-        object_id=container.pk,
-        object_repr=container.container_id,
+        object_type=object_type,
+        object_id=object_id,
+        object_repr=object_repr,
         actor=actor,
         metadata={
             "subscriptions": [subscription.pk for subscription in stopped],
