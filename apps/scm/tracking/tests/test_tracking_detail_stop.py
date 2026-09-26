@@ -50,8 +50,8 @@ PROVIDERS_LIVE = {
 class TrackingDetailStopTest(TestCase):
     def setUp(self):
         self.team = Team.objects.create(name="detail-stop", slug="detail-stop")
-        self.user = CustomUser.objects.create_user(username="member@detail-stop.test", password="pass")
-        self.team.members.add(self.user, through_defaults={"role": "member"})
+        self.user = CustomUser.objects.create_user(username="admin@detail-stop.test", password="pass")
+        self.team.members.add(self.user, through_defaults={"role": "admin"})
         self.client = Client()
         self.client.force_login(self.user)
         self.container = _container(self.team, owner_code="BBC", serial="327307", check_digit=0)
@@ -176,8 +176,9 @@ class TrackingDetailStopTest(TestCase):
     def test_a_get_changes_nothing(self):
         watch = self._watch(VIZION_PROVIDER_CODE, VIZION_PROVIDER_NAME, provider_reference="vizion-ref-1")
 
-        self.client.get(reverse("tracking:stop", kwargs={"pk": watch.pk}))
+        response = self.client.get(reverse("tracking:stop", kwargs={"pk": watch.pk}))
 
+        self.assertEqual(response.status_code, 405)
         watch.refresh_from_db()
         self.assertEqual(watch.status, TrackingSubscription.Status.ACTIVE)
 
@@ -206,3 +207,83 @@ class TrackingDetailStopTest(TestCase):
         watch.refresh_from_db()
         self.assertEqual(watch.status, TrackingSubscription.Status.CANCELLED)
         self.assertTrue(is_container_tracked(team=self.team, container=self.container))
+
+
+@override_settings(**PROVIDERS_LIVE)
+class TrackingDetailStopPermissionTest(TestCase):
+    """Stop tracking is administrator-only here, as it is from the container list and workspace.
+
+    Enforced by the endpoint, not only by hiding the button: a member's hand-made POST
+    gets the same 404 ``scm_team_admin_required`` gives everywhere else.
+    """
+
+    def setUp(self):
+        self.team = Team.objects.create(name="detail-stop-perm", slug="detail-stop-perm")
+        self.container = _container(self.team, owner_code="BBC", serial="327307", check_digit=0)
+        self.watch = get_or_create_container_subscription(
+            team=self.team,
+            container=self.container,
+            provider_code=VIZION_PROVIDER_CODE,
+            provider_name=VIZION_PROVIDER_NAME,
+            carrier_code="one",
+            carrier_name="ONE",
+            provider_reference="vizion-ref-1",
+        )
+        self.stop_url = reverse("tracking:stop", kwargs={"pk": self.watch.pk})
+        self.detail_url = reverse("tracking:detail", kwargs={"pk": self.watch.pk})
+
+    def _client(self, username, team, role):
+        user = CustomUser.objects.create_user(username=username, password="pass")
+        team.members.add(user, through_defaults={"role": role})
+        client = Client()
+        client.force_login(user)
+        return client
+
+    def _post(self, client):
+        vizion = FakeVizionClient()
+        with mock.patch("apps.scm.integrations.vizion.service.VizionClient.from_settings", return_value=vizion):
+            response = client.post(self.stop_url)
+        self.watch.refresh_from_db()
+        return response, vizion
+
+    def test_an_admin_sees_stop_and_may_use_it(self):
+        client = self._client("admin@perm.test", self.team, "admin")
+
+        self.assertContains(client.get(self.detail_url), self.stop_url)
+        response, vizion = self._post(client)
+
+        self.assertRedirects(response, self.detail_url)
+        self.assertEqual(vizion.released, ["vizion-ref-1"])
+        self.assertEqual(self.watch.status, TrackingSubscription.Status.CANCELLED)
+
+    def test_a_member_sees_no_stop_and_a_direct_post_is_refused(self):
+        client = self._client("member@perm.test", self.team, "member")
+
+        detail = client.get(self.detail_url)
+        self.assertEqual(detail.status_code, 200)
+        self.assertNotContains(detail, self.stop_url)
+        self.assertNotContains(detail, "Stop tracking")
+
+        response, vizion = self._post(client)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(vizion.released, [])
+        self.assertEqual(self.watch.status, TrackingSubscription.Status.ACTIVE)
+
+    def test_an_admin_of_another_team_gets_not_found(self):
+        other = Team.objects.create(name="detail-stop-other", slug="detail-stop-other")
+        client = self._client("other-admin@perm.test", other, "admin")
+
+        response, vizion = self._post(client)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(vizion.released, [])
+        self.assertEqual(self.watch.status, TrackingSubscription.Status.ACTIVE)
+
+    def test_an_anonymous_post_is_sent_to_login(self):
+        response, vizion = self._post(Client())
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("account_login"), response["Location"])
+        self.assertEqual(vizion.released, [])
+        self.assertEqual(self.watch.status, TrackingSubscription.Status.ACTIVE)
