@@ -336,27 +336,20 @@ class TraqoStopTest(TestCase):
         client.untrack_shipment.assert_called_once_with(CONTAINER_NUMBER)
         self.assertEqual(result.state, STOPPED)
 
-    def test_restarting_after_a_stop_resumes_the_same_watch(self):
-        """Start → Stop → Start, with the restart optimisation left as it was.
+    def test_restarting_after_a_stop_goes_back_to_traqo_rather_than_only_resuming(self):
+        """The shipment was untracked, so a restart has to re-add it — not flip the status.
 
-        Traqo's allowance counts references *added*, so a re-add spends a slot. Resuming
-        the existing watch and re-fetching it is the cheap path, and it is the path this
-        keeps: one watch, and the sealine still on it.
+        Covered end to end, including failure and quota, in ``test_tracking_restart.py``.
         """
         self._stop()
 
-        from apps.scm.tracking.manual_refresh import RefreshResult
-
-        with mock.patch(
-            "apps.scm.tracking.manual_refresh.refresh_container_tracking",
-            return_value=RefreshResult(level="success", message="Tracking updated.", tracked=True),
-        ):
+        with mock.patch("apps.scm.tracking.activation.activate_tracking_route") as activate:
+            activate.return_value = mock.Mock(sync_run=None, state="unavailable", route=None)
             start_container_tracking(team=self.team, container=self.container)
 
-        self.assertEqual(TrackingSubscription.objects.filter(team=self.team, container=self.container).count(), 1)
+        activate.assert_called_once()
         self.subscription.refresh_from_db()
-        self.assertEqual(self.subscription.status, TrackingSubscription.Status.ACTIVE)
-        self.assertEqual(self.subscription.provider_reference, "ONEY")
+        self.assertEqual(self.subscription.status, TrackingSubscription.Status.CANCELLED)
 
 
 # The 402 the live sandbox returns, reproduced from ``integrations/traqo/errors.py``. Its

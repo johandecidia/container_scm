@@ -39,7 +39,9 @@ The three subscription statuses this module moves between, and what each means:
     same fact: kept, not polled.
 ``CANCELLED``
     Fully stopped — locally and, where the provider has one, externally. Its events,
-    payloads, positions and carrier evidence all remain; only the watch is over.
+    payloads, positions and carrier evidence all remain; only the watch is over. On a
+    provider that holds a subscription of its own, that subscription is gone, so Start
+    re-establishes it through activation rather than by flipping the status back.
 
 Stop never deletes anything. A stopped container still shows its whole journey in the
 workspace, and can be started again later.
@@ -144,15 +146,15 @@ def start_container_tracking(*, team: Team, container: Container, actor=None) ->
     function already asks the two questions a start has to ask in the right order:
     does this container have a proved source to refresh, or does one have to be found?
 
-    Three things happen here and nowhere else.
+    Four things happen here and nowhere else.
 
     **Already tracked is a success, not a second subscription.** A container with a live
     watch returns immediately with :data:`ALREADY_ACTIVE`. No provider is called, so a
     double click, a stale page or an import that lists the same box twice costs nothing
     and creates nothing.
 
-    **A stopped watch is resumed before anything is fetched.** Stop leaves the watch
-    ``CANCELLED``, and a cancelled watch is excluded from
+    **A stopped watch that holds nothing at a provider is resumed before anything is
+    fetched.** Stop leaves the watch ``CANCELLED``, and a cancelled watch is excluded from
     :func:`~apps.scm.tracking.selectors.get_verified_container_subscriptions` — which is
     what carrier resolution reads as trusted knowledge. Starting without resuming would
     therefore re-run discovery on a container whose carrier we already proved, spending
@@ -164,6 +166,15 @@ def start_container_tracking(*, team: Team, container: Container, actor=None) ->
     fetch-before-write rule protects: it creates no source and asserts nothing new. It
     restores a watch that already returned this container's own events.
 
+    **A watch whose provider resource Stop released is not resumed.** For those rows the
+    status is the only thing a resume could restore — the Vizion reference is
+    unsubscribed, the Traqo shipment untracked — and a refresh does not necessarily
+    re-create them: Vizion is never polled at all, so a resumed Vizion watch would read
+    ACTIVE with nothing subscribed. Such a restart goes through activation instead, from
+    the carrier the released watch recorded, so no discovery is spent either. Activation
+    fetches before it writes, so the row becomes live only once a provider has actually
+    taken the container on again, and stays ``CANCELLED`` when none did.
+
     **Never raises.** Every provider failure is classified by the sync engine or the
     probe, so the result is always something the UI can show and an import can log.
     """
@@ -173,10 +184,12 @@ def start_container_tracking(*, team: Team, container: Container, actor=None) ->
     if live:
         return _already_active(live)
 
-    resumed = _resume_stopped_watches(team=team, container=container)
-    result = refresh_container_tracking(team=team, container=container)
+    released = _released_watches(team=team, container=container)
+    resumed = _resume_stopped_watches(team=team, container=container, exclude=released)
+    reactivated = None if resumed else _reactivate_released_watches(team=team, container=container, released=released)
+    result = reactivated or refresh_container_tracking(team=team, container=container)
 
-    _log_start(team=team, container=container, actor=actor, result=result, resumed=resumed)
+    _log_start(team=team, container=container, actor=actor, result=result, resumed=resumed, released=released)
     if result.tracked:
         return _replace_state(result, STARTED)
     return result
@@ -197,7 +210,89 @@ def _already_active(live: list[TrackingSubscription]) -> RefreshResult:
     )
 
 
-def _resume_stopped_watches(*, team: Team, container: Container) -> list[TrackingSubscription]:
+def _released_watches(*, team: Team, container: Container) -> list[TrackingSubscription]:
+    """The cancelled watches on this container whose provider resource Stop has given up.
+
+    ``CANCELLED`` on a provider that holds a subscription of its own — see
+    :func:`~apps.scm.tracking.sources.holds_provider_subscription`. ``PAUSED`` is never
+    one of them: a pause is exactly what Stop leaves when the release failed, and what a
+    superseded watch is left in, so its provider resource is still there to resume.
+    Newest first, the order trusted knowledge reads verified sources in.
+    """
+    from .sources import holds_provider_subscription
+
+    cancelled = (
+        TrackingSubscription.objects.filter(
+            team=team,
+            container=container,
+            status=TrackingSubscription.Status.CANCELLED,
+        )
+        .select_related("provider")
+        .order_by("-created_at")
+    )
+    return [subscription for subscription in cancelled if holds_provider_subscription(subscription.provider.code)]
+
+
+def _reactivate_released_watches(
+    *, team: Team, container: Container, released: list[TrackingSubscription]
+) -> RefreshResult | None:
+    """Start tracking again through activation, from the carrier a released watch recorded.
+
+    The source_switch pattern: carrier from evidence already held → routing → activation,
+    with no provider asked to work out the carrier. The evidence is the released watch
+    itself, which trusted knowledge cannot see because it is cancelled.
+
+    Activation decides who is asked, so the restarted source is whichever provider routing
+    picks today. For a Traqo watch that is normally Traqo again, and the same row is made
+    live through ``get_or_create`` only after Traqo answered. A Vizion watch stays
+    cancelled: Vizion is not a provider routing activates, so the container is tracked
+    again through the one that is.
+
+    None when no released watch recorded a carrier, which leaves the ordinary refresh —
+    and so first-time discovery — to start the container.
+    """
+    from apps.scm.integrations.carriers.carrier_resolution import (
+        FOUND,
+        STEP_TRUSTED,
+        CarrierResolution,
+        ResolutionStep,
+    )
+    from apps.scm.integrations.carriers.http import interactive_carrier_requests
+
+    from .activation import activate_tracking_route
+    from .manual_refresh import describe_activation
+    from .models import CarrierSource
+
+    watch = next((subscription for subscription in released if subscription.carrier_code), None)
+    if watch is None:
+        return None
+
+    source = watch.carrier_source or CarrierSource.EXISTING_VERIFIED_SOURCE
+    resolution = CarrierResolution(
+        container_number=container.container_id,
+        carrier_code=watch.carrier_code,
+        carrier_name=watch.carrier_name,
+        source=source,
+        verified=True,
+        steps=(ResolutionStep(step=STEP_TRUSTED, outcome=FOUND, carrier_code=watch.carrier_code, detail=source),),
+    )
+    with interactive_carrier_requests():
+        activation = activate_tracking_route(team=team, container=container, resolution=resolution)
+
+    logger.info(
+        "Restart of %s after an external release: watch %s (%s) re-routed for carrier %s, activation %s.",
+        container.container_id,
+        watch.pk,
+        watch.provider.code,
+        watch.carrier_code,
+        activation.state,
+    )
+    return describe_activation(resolution, activation, reference=container.container_id)
+
+
+def _resume_stopped_watches(
+    *, team: Team, container: Container, exclude: Iterable[TrackingSubscription] = ()
+) -> list[TrackingSubscription]:
     """Return every stopped watch on this container to ACTIVE. Returns the ones changed.
 
     ``next_sync_at`` is cleared rather than kept, for the reason
@@ -207,14 +302,20 @@ def _resume_stopped_watches(*, team: Team, container: Container) -> list[Trackin
 
     Paused watches are resumed too. A paused watch is one nothing is fetching — whether
     it was superseded by another provider or left behind by a stop whose external
-    release failed — and "start tracking this container" means all of them.
+    release failed — and "start tracking this container" means all of them. Its
+    provider resource was never released, so resuming it creates no duplicate.
+
+    ``exclude`` is the watches whose provider resource was released; see
+    :func:`_released_watches` for why resuming them would be wrong.
     """
     stopped = list(
         TrackingSubscription.objects.filter(
             team=team,
             container=container,
             status__in=[TrackingSubscription.Status.CANCELLED, TrackingSubscription.Status.PAUSED],
-        ).select_related("provider")
+        )
+        .exclude(pk__in=[subscription.pk for subscription in exclude])
+        .select_related("provider")
     )
     for subscription in stopped:
         subscription.status = TrackingSubscription.Status.ACTIVE
@@ -480,7 +581,9 @@ def _describe_stop(
 # ---------------------------------------------------------------------------
 
 
-def _log_start(*, team: Team, container: Container, actor, result: RefreshResult, resumed: list) -> None:
+def _log_start(
+    *, team: Team, container: Container, actor, result: RefreshResult, resumed: list, released: list
+) -> None:
     from apps.scm.audit_log.models import SCMAuditLog
     from apps.scm.audit_log.services import log_scm_action
 
@@ -496,6 +599,9 @@ def _log_start(*, team: Team, container: Container, actor, result: RefreshResult
             "state": result.state,
             "carrier_code": result.carrier_code,
             "resumed_subscriptions": [subscription.pk for subscription in resumed],
+            # Not resumed: their provider resource was released, so the restart went
+            # through activation instead.
+            "released_subscriptions": [subscription.pk for subscription in released],
         },
     )
 

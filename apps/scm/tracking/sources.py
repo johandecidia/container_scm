@@ -360,6 +360,18 @@ def usage_reporting_provider_codes() -> tuple[str, ...]:
     return tuple(code for code, source in _NON_CARRIER_SOURCES.items() if source.reports_usage)
 
 
+def holds_provider_subscription(provider_code: str) -> bool:
+    """Whether a watch on this provider stands for a resource held *at* the provider.
+
+    True exactly where :func:`release_provider_subscription` has something to release, so
+    a cancelled watch on such a provider is one whose external resource Stop has given up.
+    Resuming that row alone would restore nothing at the provider; the lifecycle asks this
+    to know when a restart has to go through activation instead.
+    """
+    source = get_non_carrier_source(provider_code)
+    return source is not None and source.requires_external_stop
+
+
 def release_provider_subscription(subscription: TrackingSubscription) -> ProviderStopOutcome:
     """Tell ``subscription``'s provider to stop watching, where it has to be told.
 
