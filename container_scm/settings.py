@@ -245,8 +245,13 @@ else:
 # streaming behaviour — a large `.iterator()` against a direct endpoint should not have
 # to buffer. Neon marks pooled endpoints in the host name; `DJANGO_DATABASE_POOLED`
 # forces it for any other pooler that does not.
+#
+# A per-connection option, not a top-level setting: Django reads it from
+# ``connections[alias].settings_dict``, so it only has an effect inside the DATABASES entry.
 _database_host = DATABASES["default"].get("HOST") or ""
-DISABLE_SERVER_SIDE_CURSORS = env.bool("DJANGO_DATABASE_POOLED", default="-pooler." in _database_host)
+DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = env.bool(
+    "DJANGO_DATABASE_POOLED", default="-pooler." in _database_host
+)
 
 # Auth and Login
 
