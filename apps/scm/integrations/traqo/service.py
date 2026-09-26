@@ -221,11 +221,21 @@ def release_traqo_shipment(subscription: TrackingSubscription, *, client=None) -
         logger.info("Traqo shipment %s was already untracked.", reference)
         return ProviderStopOutcome(state=STOP_RELEASED, detail="Traqo no longer holds this shipment.")
     except CarrierError as exc:
-        # Traqo's own message, which its error classifier keeps free of credentials. It
-        # is what makes a retry actionable, and the lifecycle parks the watch rather than
-        # closing it so the retry is possible at all.
-        logger.warning("Untracking Traqo shipment %s failed: %s (%s).", reference, type(exc).__name__, exc)
-        return ProviderStopOutcome(state=STOP_FAILED, detail=f"{type(exc).__name__}: {exc}")
+        # Traqo's own message is logged and kept on ``detail``, never stored for the team:
+        # it can carry our account's plan and allowance. The lifecycle parks the watch
+        # rather than closing it so the retry is possible at all.
+        logger.warning(
+            "Untracking Traqo shipment %s failed: %s (%s).",
+            reference,
+            type(exc).__name__,
+            exc,
+            extra={"provider_detail": exc.provider_detail},
+        )
+        return ProviderStopOutcome(
+            state=STOP_FAILED,
+            detail=f"{type(exc).__name__}: {exc}",
+            safe_message=exc.safe_message,
+        )
 
     return ProviderStopOutcome(state=STOP_RELEASED, detail=f"Traqo shipment {reference} untracked.")
 

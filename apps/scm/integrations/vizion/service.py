@@ -267,10 +267,20 @@ def release_vizion_reference(subscription: TrackingSubscription, *, client=None)
         logger.info("Vizion reference %s was already released.", reference_id)
         return ProviderStopOutcome(state=STOP_RELEASED, detail="The Vizion reference was already released.")
     except CarrierError as exc:
-        # The provider's own message. Vizion's error classifier keeps the API key out of
-        # it, and it is what makes a retry actionable.
-        logger.warning("Releasing Vizion reference %s failed: %s (%s).", reference_id, type(exc).__name__, exc)
-        return ProviderStopOutcome(state=STOP_FAILED, detail=f"{type(exc).__name__}: {exc}")
+        # The provider's own message is logged and kept on ``detail``, never stored for
+        # the team; only the error's ``safe_message`` is.
+        logger.warning(
+            "Releasing Vizion reference %s failed: %s (%s).",
+            reference_id,
+            type(exc).__name__,
+            exc,
+            extra={"provider_detail": exc.provider_detail},
+        )
+        return ProviderStopOutcome(
+            state=STOP_FAILED,
+            detail=f"{type(exc).__name__}: {exc}",
+            safe_message=exc.safe_message,
+        )
 
     return ProviderStopOutcome(state=STOP_RELEASED, detail=f"Vizion reference {reference_id} unsubscribed.")
 

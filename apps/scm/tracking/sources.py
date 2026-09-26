@@ -72,6 +72,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from apps.scm.integrations.carriers.dcsa.schemas import NormalisedTrackingEvent
+from apps.scm.integrations.carriers.exceptions import CarrierError
 from apps.scm.integrations.traqo import PROVIDER_CODE as TRAQO_PROVIDER_CODE
 from apps.scm.integrations.traqo import PROVIDER_NAME as TRAQO_PROVIDER_NAME
 from apps.scm.integrations.traqo.mapper import map_traqo_container_payload
@@ -109,9 +110,13 @@ class ProviderStopOutcome:
     """What one attempt to release a provider's own subscription achieved."""
 
     state: str
-    # For the log and for the watch's ``last_error_message``. Providers' own messages,
-    # which their error classifiers keep free of credentials.
+    # For the log only. Providers' own messages: free of credentials, but not of
+    # everything else — Traqo's can carry our account's plan, allowance and billing.
     detail: str = ""
+    # What may be stored on the watch's ``last_error_message``, which team-facing pages
+    # render. The failing error's own ``safe_message`` — the same boundary the sync
+    # engine persists through — and never derived from ``detail``.
+    safe_message: str = CarrierError.safe_message_template
 
     @property
     def released(self) -> bool:

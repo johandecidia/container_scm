@@ -403,10 +403,11 @@ def _stop_one_subscription(subscription: TrackingSubscription, *, container: Con
     outcome = release_provider_subscription(subscription)
     if outcome.state == STOP_FAILED:
         pause_tracking_subscription(subscription)
-        # The provider's own words, which the release path keeps free of credentials.
-        # Recorded on the watch so the next Stop — and anybody reading the row — can
-        # see why it is parked rather than closed.
-        subscription.last_error_message = outcome.detail
+        # The sanitised sentence, never ``outcome.detail``: ``last_error_message`` is
+        # rendered on team-facing pages, and a provider's own text can carry our account's
+        # plan, allowance or billing. The detail goes to the log below and nowhere else —
+        # the same split ``sync.outcome_for_carrier_error`` makes for a failed fetch.
+        subscription.last_error_message = outcome.safe_message
         subscription.save(update_fields=["last_error_message", "updated_at"])
         logger.warning(
             "Tracking for %s: %s could not release its subscription (%s). Watch %s paused for retry.",

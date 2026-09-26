@@ -399,10 +399,28 @@ class VizionStopTest(TestCase):
         self.assertEqual(list(get_due_tracking_subscriptions(self.team)), [])
 
     def test_a_failed_release_records_why_on_the_watch(self):
-        self._stop(FakeVizionClient(error=CarrierServerError("502 from Vizion")))
+        """The sanitised sentence is stored; the provider's own text only reaches the log."""
+        with self.assertLogs("apps.scm.tracking.lifecycle", level="WARNING") as logs:
+            self._stop(FakeVizionClient(error=CarrierServerError("502 from Vizion: raw body")))
 
         self.subscription.refresh_from_db()
-        self.assertIn("CarrierServerError", self.subscription.last_error_message)
+        self.assertEqual(self.subscription.last_error_message, CarrierServerError.safe_message_template)
+        self.assertNotIn("raw body", self.subscription.last_error_message)
+        self.assertNotIn("CarrierServerError", self.subscription.last_error_message)
+        self.assertIn("502 from Vizion: raw body", "\n".join(logs.output))
+
+    def test_an_unexpected_release_crash_stores_only_the_generic_sentence(self):
+        from apps.scm.integrations.carriers.exceptions import CarrierError
+
+        with mock.patch(
+            "apps.scm.integrations.vizion.service.VizionClient.from_settings",
+            side_effect=RuntimeError("secret internal state"),
+        ):
+            stop_container_tracking(team=self.team, container=self.container)
+
+        self.subscription.refresh_from_db()
+        self.assertEqual(self.subscription.status, TrackingSubscription.Status.PAUSED)
+        self.assertEqual(self.subscription.last_error_message, CarrierError.safe_message_template)
 
     def test_pressing_stop_again_retries_the_release(self):
         self._stop(FakeVizionClient(error=CarrierServerError("502 from Vizion")))

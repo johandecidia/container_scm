@@ -357,3 +357,97 @@ class TraqoStopTest(TestCase):
         self.subscription.refresh_from_db()
         self.assertEqual(self.subscription.status, TrackingSubscription.Status.ACTIVE)
         self.assertEqual(self.subscription.provider_reference, "ONEY")
+
+
+# The 402 the live sandbox returns, reproduced from ``integrations/traqo/errors.py``. Its
+# message and ``data`` describe our account — plan, allowance, billing link — and none of
+# it may reach a team.
+QUOTA_402 = {
+    "success": False,
+    "statusCode": 402,
+    "message": "Shipment limit reached (20 of 20). Add more slots or upgrade your professional plan.",
+    "data": {
+        "error": "shipment_limit_reached",
+        "limit": 20,
+        "used": 20,
+        "plan": "professional",
+        "manageUrl": "https://traqocontainer.com/billing",
+    },
+}
+_ACCOUNT_FRAGMENTS = ("20 of 20", "professional", "slots", "billing", "limit", "Traqo", "402")
+
+
+@override_settings(**TRAQO_LIVE)
+class TraqoStopErrorSanitisationTest(TestCase):
+    """A failed untrack keeps Traqo's own words in the log, never on the watch.
+
+    ``last_error_message`` is rendered on team-facing pages. The Traqo account's plan and
+    usage are superuser-only, so a stop that fails with them must store only the error's
+    ``safe_message`` — the same boundary a failed fetch goes through.
+    """
+
+    def setUp(self):
+        self.team = Team.objects.create(name="stop-leak", slug="traqo-stop-leak")
+        self.container = _container(self.team)
+        self.subscription = _traqo_watch(self.team, self.container)
+
+    def _stop_with_402(self):
+        session = DeleteSession(FakeResponse(402, QUOTA_402))
+        client = TraqoClient(base_url="https://traqocontainer.com/api/v1", api_key="k", session=session)
+        with mock.patch("apps.scm.integrations.traqo.service.TraqoClient.from_settings", return_value=client):
+            return stop_container_tracking(team=self.team, container=self.container)
+
+    def test_the_provider_detail_never_reaches_last_error_message(self):
+        from apps.scm.integrations.carriers.exceptions import CarrierProviderQuotaError
+
+        with self.assertLogs("apps.scm.integrations.traqo.service", level="WARNING"):
+            result = self._stop_with_402()
+
+        self.assertEqual(result.state, STOP_INCOMPLETE)
+        self.subscription.refresh_from_db()
+        self.assertEqual(self.subscription.status, TrackingSubscription.Status.PAUSED)
+        self.assertEqual(self.subscription.last_error_message, CarrierProviderQuotaError.safe_message_template)
+        for fragment in _ACCOUNT_FRAGMENTS:
+            self.assertNotIn(fragment, self.subscription.last_error_message)
+
+    def test_the_provider_detail_stays_in_the_log(self):
+        with self.assertLogs("apps.scm.integrations.traqo.service", level="WARNING") as logs:
+            self._stop_with_402()
+
+        record = next(record for record in logs.records if "Untracking Traqo shipment" in record.getMessage())
+        self.assertIn("Shipment limit reached (20 of 20)", record.getMessage())
+        self.assertEqual(record.provider_detail.get("plan"), "professional")
+        self.assertEqual(record.provider_detail.get("used"), 20)
+
+    def test_the_outcome_keeps_detail_for_the_log_and_a_safe_sentence_for_the_team(self):
+        session = DeleteSession(FakeResponse(402, QUOTA_402))
+        client = TraqoClient(base_url="https://traqocontainer.com/api/v1", api_key="k", session=session)
+
+        outcome = release_traqo_shipment(self.subscription, client=client)
+
+        self.assertEqual(outcome.state, STOP_FAILED)
+        self.assertIn("20 of 20", outcome.detail)
+        self.assertNotIn("20 of 20", outcome.safe_message)
+        self.assertNotIn("professional", outcome.safe_message)
+
+    def test_team_admin_pages_show_no_account_detail(self):
+        """The container workspace and the tracking detail page, as a team admin sees them."""
+        from django.test import Client
+        from django.urls import reverse
+
+        from apps.users.models import CustomUser
+
+        self._stop_with_402()
+        admin = CustomUser.objects.create_user(username="admin@traqo-stop-leak.test", password="pass")
+        self.team.members.add(admin, through_defaults={"role": "admin"})
+        client = Client()
+        client.force_login(admin)
+
+        pages = [
+            client.get(reverse("containers:detail", kwargs={"container_id": self.container.pk})),
+            client.get(reverse("tracking:detail", kwargs={"pk": self.subscription.pk})),
+        ]
+        for response in pages:
+            self.assertEqual(response.status_code, 200)
+            for fragment in ("20 of 20", "professional", "traqocontainer.com/billing", "shipment_limit_reached"):
+                self.assertNotContains(response, fragment)
