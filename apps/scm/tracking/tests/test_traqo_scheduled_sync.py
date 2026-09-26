@@ -586,6 +586,8 @@ class TraqoScheduledErrorSemanticsTest(TraqoScheduledSyncTestCase):
         self.assertEqual(run.status, TrackingSyncRun.Status.FAILED)
         self.assertEqual(run.error_type, TrackingSyncRun.ErrorType.INVALID_RESPONSE)
         self.assertEqual(TrackingEvent.objects.filter(team=self.team).count(), self.baseline_events)
+        # The reference Traqo named is provider data: logged, never stored for the team.
+        self.assertNotIn("MSCU1234567", run.error_message)
 
 
 @override_settings(**TRAQO_LIVE)

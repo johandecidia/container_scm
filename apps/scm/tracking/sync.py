@@ -222,12 +222,15 @@ def _run_sync(subscription: TrackingSubscription) -> TrackingSyncRun:
     )
     try:
         outcome = _fetch_normalise_and_store(subscription)
-    except Exception as exc:  # noqa: BLE001 — an unexpected bug must still close the run cleanly
+    except Exception:  # noqa: BLE001 — an unexpected bug must still close the run cleanly
+        # The traceback is logged here and nowhere else. ``error_message`` reaches the
+        # run and the subscription's ``last_error_message``, both team-facing, and an
+        # arbitrary exception's text is ours to read — see ``outcome_for_carrier_error``.
         logger.exception("Unexpected error syncing subscription %s.", subscription.pk)
         outcome = SyncOutcome(
             status=TrackingSyncRun.Status.FAILED,
             error_type=_ErrorType.UNEXPECTED,
-            error_message=f"{type(exc).__name__}: {exc}",
+            error_message=CarrierError.safe_message_template,
         )
 
     apply_sync_outcome(subscription, sync_run, outcome)
@@ -271,10 +274,12 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
         client = build_carrier_client(provider_code, team=subscription.team)
         parser = build_carrier_parser(provider_code)
     except UnknownCarrierError as exc:
+        # The registry's message lists every carrier we support; it is for the log.
+        logger.warning("No carrier adapter for subscription %s: %s", subscription.pk, exc)
         return SyncOutcome(
             status=TrackingSyncRun.Status.SKIPPED,
             error_type=_ErrorType.NOT_CONFIGURED,
-            error_message=str(exc),
+            error_message=CarrierConfigurationError.safe_message_template,
         )
 
     # 2. Work out which reference to ask by.
@@ -317,20 +322,27 @@ def _fetch_normalise_and_store(subscription: TrackingSubscription) -> SyncOutcom
     try:
         normalised_events = parser.parse_tracking_events(raw_payload)
     except CarrierNotImplementedError as exc:
+        logger.warning(
+            "Parser for provider %s is not implemented (subscription %s): %s", provider_code, subscription.pk, exc
+        )
         return SyncOutcome(
             status=TrackingSyncRun.Status.SKIPPED,
             error_type=_ErrorType.NOT_IMPLEMENTED,
-            error_message=str(exc),
+            error_message=exc.safe_message,
             raw_payloads_created=1,
         )
     except Exception as exc:  # noqa: BLE001 — a parser bug must not lose the payload
+        # The technical text stays on the raw payload — internal diagnostics, kept beside
+        # the response it describes so a corrected parser can be checked against it —
+        # and in the log. A parser error can quote the payload, so the team sees only
+        # the sanitised sentence.
         message = f"{type(exc).__name__}: {exc}"
         mark_raw_payload_parsed(raw_payload_record, success=False, error_message=message)
         logger.warning("Parser error for provider %s (subscription %s): %s", provider_code, subscription.pk, message)
         return SyncOutcome(
             status=TrackingSyncRun.Status.FAILED,
             error_type=_ErrorType.PARSE_ERROR,
-            error_message=message,
+            error_message=CarrierInvalidResponseError.safe_message_template,
             raw_payloads_created=1,
         )
 
