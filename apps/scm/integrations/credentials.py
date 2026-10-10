@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 _SECRET_PATTERN = re.compile(r"(key|secret|token|password|credential)", re.IGNORECASE)
 
 
+def is_sensitive_field(name: str) -> bool:
+    """True when a field name looks like it holds a secret (key, token, password, …)."""
+    return bool(_SECRET_PATTERN.search(name or ""))
+
+
 def mask_secret(value: str) -> str:
     """Return a masked version of a secret string for logging/display.
 
