@@ -567,8 +567,9 @@ SCHEDULED_TASKS: dict[str, Any] = {
         "expire_seconds": 60 * 60,
     },
     # Business Central PO sync dispatcher — runs often; the task itself decides
-    # which integrations are actually due per their configured interval. Can be
-    # paused with SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False.
+    # which integrations are actually due per their configured interval. Only
+    # integrations with config scheduled_sync_enabled=true are ever queued; the
+    # whole dispatcher can be paused with SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False.
     "dispatch-business-central-po-sync": {
         "task": "apps.scm.integrations.tasks.sync_enabled_business_central_integrations_task",
         "schedule": timedelta(minutes=5),

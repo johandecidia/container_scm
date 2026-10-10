@@ -114,3 +114,68 @@ class MonitoringUITest(TestCase):
             resp = self.client.post(reverse("integrations:sync_now", args=[self.integration.pk]))
         self.assertEqual(resp.status_code, 404)
         delay.assert_not_called()
+
+
+class IntegrationPermissionTest(TestCase):
+    """Members may view integration health; only administrators may act on integrations."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.team = Team.objects.create(name="perm", slug="perm")
+        cls.admin = _member(cls.team, "perm-admin@example.com")
+        cls.member = CustomUser.objects.create_user(username="perm-m", email="perm-m@example.com", password="pw")
+        Membership.objects.create(team=cls.team, user=cls.member, role="member")
+        cls.integration = _bc_integration(cls.team)
+
+    def _login(self, user):
+        self.client.force_login(user)
+        session = self.client.session
+        session["team"] = self.team.pk
+        session.save()
+
+    def test_member_can_view_detail_without_actions(self):
+        self._login(self.member)
+        resp = self.client.get(reverse("integrations:detail", args=[self.integration.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context["can_manage_integrations"])
+        self.assertNotContains(resp, reverse("integrations:sync_now", args=[self.integration.pk]))
+        self.assertNotContains(resp, reverse("integrations:test_connection", args=[self.integration.pk]))
+
+    def test_admin_sees_actions(self):
+        self._login(self.admin)
+        resp = self.client.get(reverse("integrations:detail", args=[self.integration.pk]))
+        self.assertTrue(resp.context["can_manage_integrations"])
+        self.assertContains(resp, reverse("integrations:sync_now", args=[self.integration.pk]))
+
+    def test_member_cannot_sync_now(self):
+        self._login(self.member)
+        with mock.patch("apps.scm.integrations.views.sync_business_central_purchase_orders_task.delay") as delay:
+            resp = self.client.post(reverse("integrations:sync_now", args=[self.integration.pk]))
+        self.assertEqual(resp.status_code, 404)
+        delay.assert_not_called()
+
+    def test_member_cannot_test_connection(self):
+        self._login(self.member)
+        with mock.patch("apps.scm.integrations.views.test_business_central_connection_task.delay") as delay:
+            resp = self.client.post(reverse("integrations:test_connection", args=[self.integration.pk]))
+        self.assertEqual(resp.status_code, 404)
+        delay.assert_not_called()
+
+    def test_configuration_endpoints_are_admin_only(self):
+        urls = [
+            reverse("integrations:create"),
+            reverse("integrations:update", args=[self.integration.pk]),
+            reverse("integrations:delete", args=[self.integration.pk]),
+        ]
+        self._login(self.member)
+        for url in urls:
+            with self.subTest(url=url, role="member"):
+                self.assertEqual(self.client.get(url).status_code, 404)
+        self._login(self.admin)
+        for url in urls:
+            with self.subTest(url=url, role="admin"):
+                self.assertEqual(self.client.get(url).status_code, 501)
+
+    def test_anonymous_redirected_from_configuration(self):
+        resp = self.client.get(reverse("integrations:create"))
+        self.assertEqual(resp.status_code, 302)

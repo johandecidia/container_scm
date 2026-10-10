@@ -25,12 +25,13 @@ from dataclasses import dataclass
 
 from django.utils import timezone
 
-from apps.scm.integrations.models import Integration
+from apps.scm.integrations.models import Integration, IntegrationSyncRun
 from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderSource
 
 from .client import BusinessCentralClient
+from .exceptions import BusinessCentralConfigurationError
 from .locks import purchase_order_lock_name, sync_lock
-from .sync import _line_identifier, _validate_integration
+from .sync import _line_identifier, _validate_integration, check_source_binding
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +49,29 @@ def reconcile_purchase_orders(
 ) -> ReconcileResult:
     """Full source scan: soft-delete BC purchase orders/lines absent from the source.
 
-    Raises the same validation / lock errors as the sync.
+    Raises the same validation / lock errors as the sync. Because a scan of the
+    wrong environment would soft-delete every order it does not see, it only
+    runs against the source this integration has already imported from.
     """
     _validate_integration(integration, client)
+    if client is None:
+        client = BusinessCentralClient(integration=integration)
     with sync_lock(purchase_order_lock_name(integration)):
+        source = client.source_identity()
+        check_source_binding(integration, source)
+        if not IntegrationSyncRun.objects.filter(
+            integration=integration,
+            status=IntegrationSyncRun.Status.COMPLETED,
+            metadata__source=source,
+        ).exists():
+            raise BusinessCentralConfigurationError(
+                "reconciliation needs a completed purchase order sync from this Business Central source first"
+            )
         return _reconcile(integration, client)
 
 
-def _reconcile(integration: Integration, client: BusinessCentralClient | None) -> ReconcileResult:
+def _reconcile(integration: Integration, client: BusinessCentralClient) -> ReconcileResult:
     team = integration.team
-    if client is None:
-        client = BusinessCentralClient(integration=integration)
 
     # Full scan (no modified-since filter).
     raw_pos = client.fetch_purchase_orders()

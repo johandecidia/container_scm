@@ -92,7 +92,9 @@ def sync_business_central_purchase_orders_task(self, integration_id: int, trigge
     """Run a Business Central purchase-order sync for a single integration.
 
     Permanent problems (config, or a sync already running) are logged and skipped;
-    transient Business Central errors are retried with backoff.
+    transient Business Central errors are retried with backoff. A *scheduled* run
+    is re-checked against the integration's ``scheduled_sync_enabled`` opt-in
+    when it executes, so a task queued before the opt-in was withdrawn does nothing.
     """
     from .business_systems.business_central.exceptions import (
         BusinessCentralConfigurationError,
@@ -101,6 +103,7 @@ def sync_business_central_purchase_orders_task(self, integration_id: int, trigge
     )
     from .business_systems.business_central.sync import sync_purchase_orders_from_business_central
     from .models import Integration
+    from .services import is_business_central_scheduled_sync_enabled
 
     try:
         integration = Integration.objects.get(pk=integration_id, is_active=True)
@@ -108,6 +111,10 @@ def sync_business_central_purchase_orders_task(self, integration_id: int, trigge
         logger.info(
             "sync_business_central_purchase_orders_task: integration %s not found/inactive — skipping.", integration_id
         )
+        return
+
+    if trigger_type == "scheduled" and not is_business_central_scheduled_sync_enabled(integration):
+        logger.info("BC PO sync task: integration=%s scheduled sync not enabled — skipping.", integration_id)
         return
 
     try:
@@ -168,9 +175,10 @@ def sync_enabled_business_central_integrations_task() -> dict:
     in-progress, enabled/active) decides which integrations are actually queued.
     One task is enqueued per integration, keeping teams isolated.
 
-    Set ``SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False`` to pause scheduled Business
-    Central syncing without removing the schedule or the implementation. Manual and
-    per-integration syncs still work.
+    Only integrations with ``scheduled_sync_enabled: true`` in their config are
+    considered (opt-in; default off). Set ``SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False``
+    to pause scheduled Business Central syncing globally without removing the
+    schedule or the implementation. Manual and per-integration syncs still work.
     """
     from django.conf import settings
 

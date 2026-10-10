@@ -13,6 +13,9 @@ def sync_purchase_orders_from_bc(self, team_id: int) -> None:
     incremental sync. Permanent configuration problems (no integration, disabled
     sync, missing credentials) are logged and skipped; transient failures are
     retried. The full per-integration scheduled task + dispatcher is milestone 2.
+
+    This is a background entry point, so it honours the same
+    ``scheduled_sync_enabled`` opt-in as the dispatcher.
     """
     from apps.scm.integrations.business_systems.business_central.exceptions import (
         BusinessCentralConfigurationError,
@@ -23,6 +26,7 @@ def sync_purchase_orders_from_bc(self, team_id: int) -> None:
         sync_purchase_orders_from_business_central,
     )
     from apps.scm.integrations.models import Integration
+    from apps.scm.integrations.services import is_business_central_scheduled_sync_enabled
     from apps.teams.models import Team
 
     try:
@@ -39,6 +43,9 @@ def sync_purchase_orders_from_bc(self, team_id: int) -> None:
     ).first()
     if integration is None:
         logger.info("sync_purchase_orders_from_bc: team %s has no active BC integration — skipping.", team.slug)
+        return
+    if not is_business_central_scheduled_sync_enabled(integration):
+        logger.info("sync_purchase_orders_from_bc: team %s scheduled sync not enabled — skipping.", team.slug)
         return
 
     try:
