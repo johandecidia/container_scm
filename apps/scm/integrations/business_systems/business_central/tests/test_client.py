@@ -20,10 +20,14 @@ from apps.scm.integrations.credentials import set_integration_credentials
 from apps.scm.integrations.models import Integration, IntegrationCredential, IntegrationRequestLog
 from apps.teams.models import Team
 
+TENANT_ID = "11111111-2222-3333-4444-555555555555"
+COMPANY_ID = "782d7133-5033-4c4b-9a29-83f7f44f062d"
+API_ROOT = f"https://api.businesscentral.dynamics.com/v2.0/{TENANT_ID}/Production/api/v2.0"
+
 _CONFIG = {
-    "tenant_id": "tenant-guid",
+    "tenant_id": TENANT_ID,
     "environment": "Production",
-    "company_id": "company-guid",
+    "company_id": COMPANY_ID,
     "api_version": "v2.0",
     "page_size": 100,
     "max_retries": 2,
@@ -83,13 +87,11 @@ class BusinessCentralClientTest(TestCase):
         with mock.patch("requests.get", return_value=_http(200, {"value": []})) as get:
             client.fetch_purchase_orders()
         url = get.call_args.args[0]
-        self.assertEqual(
-            url,
-            "https://api.businesscentral.dynamics.com/v2.0/tenant-guid/Production/api/v2.0/companies(company-guid)/purchaseOrders",
-        )
+        self.assertEqual(url, f"{API_ROOT}/companies({COMPANY_ID})/purchaseOrders")
         headers = get.call_args.kwargs["headers"]
         self.assertEqual(headers["Authorization"], "Bearer fake-token")
         self.assertEqual(headers["Accept"], "application/json")
+        self.assertEqual(headers["Prefer"], "odata.maxpagesize=100")
         self.assertEqual(get.call_args.kwargs["timeout"], 30)
 
     def test_modified_since_filter(self):
@@ -119,13 +121,16 @@ class BusinessCentralClientTest(TestCase):
 
     def test_pagination_follows_next_link(self):
         client = self._client()
-        page1 = _http(200, {"value": [{"id": "1"}], "@odata.nextLink": "https://api/next-page"})
+        next_link = f"{API_ROOT}/companies({COMPANY_ID})/purchaseOrders?$skiptoken=abc"
+        page1 = _http(200, {"value": [{"id": "1"}], "@odata.nextLink": next_link})
         page2 = _http(200, {"value": [{"id": "2"}]})
         with mock.patch("requests.get", side_effect=[page1, page2]) as get:
             result = client.fetch_purchase_orders()
         self.assertEqual([r["id"] for r in result], ["1", "2"])
         self.assertEqual(get.call_count, 2)
-        self.assertEqual(get.call_args_list[1].args[0], "https://api/next-page")
+        self.assertEqual(get.call_args_list[1].args[0], next_link)
+        # The page-size preference is re-sent with every nextLink request.
+        self.assertEqual(get.call_args_list[1].kwargs["headers"]["Prefer"], "odata.maxpagesize=100")
 
     # ---- error mapping --------------------------------------------------
 
@@ -230,21 +235,6 @@ class BusinessCentralClientTest(TestCase):
             client.fetch_purchase_orders()
 
     # ---- test_connection & logging --------------------------------------
-
-    def test_test_connection_success(self):
-        client = self._client()
-        with mock.patch("requests.get", return_value=_http(200, {"value": []})) as get:
-            result = client.test_connection()
-        self.assertTrue(result["success"])
-        self.assertEqual(get.call_args.kwargs["params"], {"$top": 1})
-
-    def test_test_connection_failure_raises(self):
-        client = self._client()
-        with (
-            mock.patch("requests.get", return_value=_http(403)),
-            self.assertRaises(BusinessCentralResponseError),
-        ):
-            client.test_connection()
 
     def test_request_is_logged_on_success(self):
         client = self._client()

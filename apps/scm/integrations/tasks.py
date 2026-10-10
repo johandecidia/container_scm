@@ -155,7 +155,7 @@ def test_business_central_connection_task(integration_id: int) -> dict:
         mark_integration_success(integration)
         return result
     except BusinessCentralError as exc:
-        message = f"{type(exc).__name__}: {exc}"
+        message = f"{exc.category}: {exc}"
         mark_integration_error(integration, message)
         return {"success": False, "message": message}
 

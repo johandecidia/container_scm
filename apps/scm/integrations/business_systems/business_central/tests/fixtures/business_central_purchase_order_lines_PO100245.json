@@ -3,7 +3,8 @@
     {
       "id": "bc-line-id-001",
       "sequence": 10000,
-      "itemNumber": "40HC-NEW",
+      "lineType": "Item",
+      "lineObjectNumber": "40HC-NEW",
       "description": "40HC New Container",
       "quantity": 25,
       "unitOfMeasureCode": "PCS",
