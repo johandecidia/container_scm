@@ -4,6 +4,8 @@ Usage:
     python manage.py bc_sync_purchase_orders --integration <id>
     python manage.py bc_sync_purchase_orders --integration <id> --dummy
 
+Requires ``sync_enabled`` on the integration (see
+setup_business_central_integration --enable-sync); independent of scheduled sync.
 For a limited first sync against a live sandbox, set ``initial_sync_days`` in the
 integration config so only recently modified orders are pulled.
 """
@@ -15,7 +17,10 @@ from apps.scm.integrations.business_systems.business_central.exceptions import B
 from apps.scm.integrations.business_systems.business_central.sync import (
     sync_purchase_orders_from_business_central,
 )
-from apps.scm.integrations.models import Integration
+from apps.scm.integrations.management.commands.bc_test_connection import (
+    describe_target,
+    get_business_central_integration,
+)
 
 
 class Command(BaseCommand):
@@ -30,16 +35,15 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        try:
-            integration = Integration.objects.get(pk=options["integration"])
-        except Integration.DoesNotExist as exc:
-            raise CommandError(f"Integration {options['integration']} not found") from exc
+        integration = get_business_central_integration(options["integration"])
+        mode = "dummy fixtures" if options["dummy"] else "live API"
+        self.stdout.write(f"Syncing purchase orders for {describe_target(integration)} from the {mode}…")
 
         client = BusinessCentralClient(use_dummy=True) if options["dummy"] else None
         try:
             run = sync_purchase_orders_from_business_central(integration, client=client, trigger_type="manual")
         except BusinessCentralError as exc:
-            raise CommandError(f"{type(exc).__name__}: {exc}") from exc
+            raise CommandError(f"{exc.category}: {exc}") from exc
 
         self.stdout.write(
             self.style.SUCCESS(

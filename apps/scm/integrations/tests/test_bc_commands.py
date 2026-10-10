@@ -171,3 +171,84 @@ class InspectCommandTest(_CommandCase):
         ):
             self._run("bc_inspect_purchase_orders")
         self.assertEqual(get.call_count, 1)
+
+
+class SetupCommandTest(TestCase):
+    _ENV = {"BC_CLIENT_ID": "client-id-value", "BC_CLIENT_SECRET": _SECRET}
+
+    def setUp(self):
+        self.team = Team.objects.create(name="bc-setup", slug="bc-setup")
+
+    def _setup(self, *extra, env=None, environment="Sandbox_eligra_261002"):
+        out = StringIO()
+        args = [
+            "--team",
+            "bc-setup",
+            "--tenant-id",
+            "609e5a65-e2b8-49d7-85d4-5cdadf170d85",
+            "--environment",
+            environment,
+            "--company-id",
+            COMPANY_ID,
+            *extra,
+        ]
+        with mock.patch.dict("os.environ", env if env is not None else self._ENV, clear=False):
+            call_command("setup_business_central_integration", *args, stdout=out)
+        return out.getvalue()
+
+    def test_creates_safe_integration_and_encrypted_credentials(self):
+        from apps.scm.integrations.credentials import get_integration_credentials
+
+        output = self._setup()
+        integration = Integration.objects.get(team=self.team, provider_code="business_central")
+        self.assertEqual(integration.provider_family, Integration.ProviderFamily.BUSINESS_SYSTEM)
+        self.assertEqual(integration.config["environment"], "Sandbox_eligra_261002")
+        self.assertIs(integration.config["sync_enabled"], False)
+        self.assertIs(integration.config["scheduled_sync_enabled"], False)
+        self.assertNotIn(_SECRET, str(integration.config))
+        cred = IntegrationCredential.objects.get(integration=integration)
+        self.assertNotIn(_SECRET, cred.encrypted_data)
+        self.assertEqual(get_integration_credentials(integration)["client_secret"], _SECRET)
+        self.assertNotIn(_SECRET, output)
+        self.assertNotIn("client-id-value", output)
+
+    def test_enable_sync_never_enables_schedule(self):
+        self._setup("--enable-sync", "--initial-sync-days", "30")
+        config = Integration.objects.get(team=self.team).config
+        self.assertIs(config["sync_enabled"], True)
+        self.assertIs(config["scheduled_sync_enabled"], False)
+        self.assertEqual(config["initial_sync_days"], 30)
+
+    def test_rerun_without_secret_keeps_credentials(self):
+        from apps.scm.integrations.credentials import get_integration_credentials
+
+        self._setup()
+        output = self._setup("--enable-sync", env={"BC_CLIENT_ID": "", "BC_CLIENT_SECRET": ""})
+        self.assertIn("Credentials: unchanged", output)
+        integration = Integration.objects.get(team=self.team)
+        self.assertEqual(get_integration_credentials(integration)["client_secret"], _SECRET)
+
+    def test_missing_credentials_on_create(self):
+        with self.assertRaisesMessage(CommandError, "BC_CLIENT_SECRET"):
+            self._setup(env={"BC_CLIENT_ID": "x", "BC_CLIENT_SECRET": ""})
+        self.assertFalse(Integration.objects.filter(team=self.team).exists())
+
+    def test_refuses_to_repoint_team_to_another_environment(self):
+        self._setup()
+        with self.assertRaisesMessage(CommandError, "separate Team"):
+            self._setup(environment="Production")
+        self.assertEqual(Integration.objects.get(team=self.team).config["environment"], "Sandbox_eligra_261002")
+
+    def test_rejects_non_guid_company(self):
+        with self.assertRaisesMessage(CommandError, "GUID"):
+            call_command(
+                "setup_business_central_integration",
+                "--team",
+                "bc-setup",
+                "--tenant-id",
+                "t",
+                "--environment",
+                "Sandbox",
+                "--company-id",
+                "CRONUS",
+            )
