@@ -1,5 +1,5 @@
 # Container selectors — all read/query operations.
-from django.db.models import Count, Exists, OuterRef, Q, QuerySet, Subquery
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q, QuerySet, Subquery
 
 from apps.teams.models import Team
 
@@ -96,19 +96,65 @@ def get_team_containers(team: Team) -> QuerySet[Container]:
     return (
         Container.objects.filter(team=team)
         .select_related("equipment_type", "current_location", "condition")
-        .annotate(**_tracking_annotations())
+        .annotate(**_tracking_annotations(), **_supplier_annotations())
+        .prefetch_related(_tracking_watches_prefetch(team))
     )
 
 
+def _tracking_watches_prefetch(team: Team) -> Prefetch:
+    """The container's non-cancelled watches, newest first, for its Carrier and Source cells.
+
+    Prefetched rather than annotated because the carrier is not a column: it is the rule
+    :class:`~apps.scm.tracking.selectors.TrackingProvenance` owns — the recorded carrier,
+    else the provider only where the provider *is* a registered carrier, else unknown.
+    Restating that in SQL would be a second copy of it, and the one place it must never
+    drift is an aggregator with no carrier established reading as "Traqo". One query for
+    the whole page, not one per row; ordered like the annotations below so the first
+    watch is the same one the Tracking cell speaks for.
+    """
+    from apps.scm.tracking.models import TrackingSubscription
+
+    return Prefetch(
+        "tracking_subscriptions",
+        queryset=TrackingSubscription.objects.filter(team=team)
+        .exclude(status=TrackingSubscription.Status.CANCELLED)
+        .select_related("provider")
+        .order_by("-created_at"),
+        to_attr="list_tracking_watches",
+    )
+
+
+def _supplier_annotations() -> dict:
+    """Who the container was bought from: its acquisition's purchase order supplier.
+
+    :class:`~apps.scm.procurement.models.ContainerAcquisition` is the one record that
+    says "this box *is* the purchase", and it deliberately copies no supplier, so the
+    name is read through the PO. Not ``ContainerLoad``: goods loaded into a box say who
+    sold the goods, not the box. Every hop is held to the container's team.
+    """
+    from apps.scm.procurement.models import ContainerAcquisition
+
+    acquisition = ContainerAcquisition.objects.filter(
+        team=OuterRef("team"),
+        container=OuterRef("pk"),
+        purchase_order_line__purchase_order__team=OuterRef("team"),
+    )
+    return {
+        "acquisition_supplier_name": Subquery(
+            acquisition.values("purchase_order_line__purchase_order__supplier_name")[:1]
+        ),
+    }
+
+
 def _tracking_annotations() -> dict:
-    """Carrier and tracking state for a list of containers, in a few subqueries.
+    """Tracking state for a list of containers, in a few subqueries.
 
     Annotated rather than followed per row: the list renders 25 containers and must
     not issue a query each for their subscriptions. Cancelled watches are ignored so
     a container someone stopped tracking reads as untracked, not as a stale carrier.
 
     ``tracking_live`` is the one the Start/Stop control is rendered from, and it is a
-    different question from the other three. They describe the container's most recent
+    different question from the other two. They describe the container's most recent
     watch; this one asks whether *anything* is still being run for it — the same
     question :data:`~apps.scm.tracking.selectors.LIVE_SUBSCRIPTION_STATUSES` answers
     for the Control Tower and
@@ -130,7 +176,6 @@ def _tracking_annotations() -> dict:
         status__in=LIVE_SUBSCRIPTION_STATUSES,
     )
     return {
-        "tracking_carrier_name": Subquery(latest.values("provider__name")[:1]),
         "tracking_watch_status": Subquery(latest.values("status")[:1]),
         "tracking_carrier_status": Subquery(latest.values("tracking_status")[:1]),
         "tracking_live": Exists(live),
