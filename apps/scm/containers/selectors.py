@@ -130,10 +130,16 @@ def _tracking_annotations() -> dict:
         status__in=LIVE_SUBSCRIPTION_STATUSES,
     )
     return {
-        "tracking_carrier_name": Subquery(latest.values("provider__name")[:1]),
+        "tracking_carrier_name": Subquery(latest.values("carrier_name")[:1]),
+        "tracking_source_name": Subquery(latest.values("provider__name")[:1]),
         "tracking_watch_status": Subquery(latest.values("status")[:1]),
         "tracking_carrier_status": Subquery(latest.values("tracking_status")[:1]),
         "tracking_live": Exists(live),
+        "supplier_name": Subquery(
+            Container.objects.filter(pk=OuterRef("pk")).values(
+                "acquisition__purchase_order_line__purchase_order__supplier_name"
+            )[:1]
+        ),
     }
 
 
