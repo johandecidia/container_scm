@@ -116,7 +116,6 @@ def _tracking_annotations() -> dict:
     for the workspace. Asking it separately is what keeps a container with one paused
     and one active watch reading as tracked in the list and on its own page alike.
     """
-    from apps.scm.procurement.models import ContainerAcquisition
     from apps.scm.tracking.models import TrackingSubscription
     from apps.scm.tracking.selectors import LIVE_SUBSCRIPTION_STATUSES
 
@@ -131,15 +130,10 @@ def _tracking_annotations() -> dict:
         status__in=LIVE_SUBSCRIPTION_STATUSES,
     )
     return {
-        "tracking_carrier_name": Subquery(latest.values("carrier_name")[:1]),
-        "tracking_source_name": Subquery(latest.values("provider__name")[:1]),
+        "tracking_carrier_name": Subquery(latest.values("provider__name")[:1]),
         "tracking_watch_status": Subquery(latest.values("status")[:1]),
         "tracking_carrier_status": Subquery(latest.values("tracking_status")[:1]),
         "tracking_live": Exists(live),
-        "supplier_name": Subquery(
-            ContainerAcquisition.objects.filter(team=OuterRef("team"), container_id=OuterRef("pk"))
-            .values("purchase_order_line__purchase_order__supplier_name")[:1]
-        ),
     }
 
 
