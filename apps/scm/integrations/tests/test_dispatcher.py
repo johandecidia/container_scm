@@ -12,9 +12,12 @@ from apps.scm.integrations.tasks import sync_enabled_business_central_integratio
 from apps.teams.models import Team
 
 _DISPATCH_TARGET = "apps.scm.integrations.tasks.sync_business_central_purchase_orders_task.delay"
+_SYNC_TARGET = "apps.scm.integrations.business_systems.business_central.sync.sync_purchase_orders_from_business_central"
 
 
-def _integration(slug, *, active=True, sync_enabled=True, interval=30, provider="business_central", family=None):
+def _integration(
+    slug, *, active=True, sync_enabled=True, scheduled=True, interval=30, provider="business_central", family=None
+):
     team = Team.objects.create(name=slug, slug=slug)
     family = family if family is not None else Integration.ProviderFamily.BUSINESS_SYSTEM
     return Integration.objects.create(
@@ -23,7 +26,11 @@ def _integration(slug, *, active=True, sync_enabled=True, interval=30, provider=
         provider_code=provider,
         provider_family=family,
         is_active=active,
-        config={"sync_enabled": sync_enabled, "purchase_order_sync_interval_minutes": interval},
+        config={
+            "sync_enabled": sync_enabled,
+            "scheduled_sync_enabled": scheduled,
+            "purchase_order_sync_interval_minutes": interval,
+        },
     )
 
 
@@ -105,3 +112,56 @@ class DispatcherTaskTest(TestCase):
             result = sync_enabled_business_central_integrations_task()
         self.assertEqual(result["queued"], 1)
         delay.assert_called_once_with(due.id, "scheduled")
+
+
+class ScheduledOptInTest(TestCase):
+    """Scheduled sync is opt-in per integration; manual sync and testing are not affected."""
+
+    def test_integration_without_opt_in_is_never_due(self):
+        integration = _integration("o-default")
+        integration.config.pop("scheduled_sync_enabled")
+        integration.save()
+        self.assertNotIn(integration, get_due_business_central_integrations())
+
+    def test_explicit_false_is_never_due(self):
+        integration = _integration("o-false", scheduled=False)
+        self.assertNotIn(integration, get_due_business_central_integrations())
+
+    def test_truthy_string_is_not_an_opt_in(self):
+        integration = _integration("o-string", scheduled="yes")
+        self.assertNotIn(integration, get_due_business_central_integrations())
+
+    def test_dispatcher_queues_nothing_without_opt_in(self):
+        _integration("o-dispatch", scheduled=False)
+        with mock.patch(_DISPATCH_TARGET) as delay:
+            result = sync_enabled_business_central_integrations_task()
+        self.assertEqual(result["queued"], 0)
+        delay.assert_not_called()
+
+    def test_queued_scheduled_task_rechecks_opt_in(self):
+        from apps.scm.integrations.tasks import sync_business_central_purchase_orders_task
+
+        integration = _integration("o-recheck", scheduled=False)
+        with mock.patch(_SYNC_TARGET) as sync:
+            sync_business_central_purchase_orders_task.run(integration.id, "scheduled")
+        sync.assert_not_called()
+
+    def test_manual_task_runs_without_opt_in(self):
+        from apps.scm.integrations.tasks import sync_business_central_purchase_orders_task
+
+        integration = _integration("o-manual", scheduled=False)
+        with mock.patch(_SYNC_TARGET) as sync:
+            sync_business_central_purchase_orders_task.run(integration.id, "manual")
+        sync.assert_called_once()
+        self.assertEqual(sync.call_args.kwargs["trigger_type"], "manual")
+
+    def test_connection_test_runs_without_opt_in(self):
+        from apps.scm.integrations.tasks import test_business_central_connection_task
+
+        integration = _integration("o-test", scheduled=False)
+        with mock.patch(
+            "apps.scm.integrations.business_systems.business_central.client.BusinessCentralClient"
+        ) as client_cls:
+            client_cls.return_value.test_connection.return_value = {"success": True, "message": "ok"}
+            result = test_business_central_connection_task(integration.id)
+        self.assertTrue(result["success"])

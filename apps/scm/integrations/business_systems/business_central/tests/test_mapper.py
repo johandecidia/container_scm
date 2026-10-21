@@ -16,7 +16,7 @@ _RAW_PO = {
     "orderDate": "2026-06-18",
     "expectedReceiptDate": "2026-08-15",
     "currencyCode": "USD",
-    "status": "Open",
+    "status": "Draft",
     "totalAmountExcludingTax": 48500.0,
 }
 
@@ -34,8 +34,22 @@ _RAW_LINE = {
 
 
 class NormalizeStatusTest(SimpleTestCase):
-    def test_open(self):
-        self.assertEqual(_normalize_status("Open"), "open")
+    # API v2.0 enum: "Draft" (UI Open), "In Review" (UI Pending Approval), "Open" (UI Released).
+    def test_api_draft_is_open(self):
+        self.assertEqual(_normalize_status("Draft"), "open")
+
+    def test_api_in_review_is_open(self):
+        self.assertEqual(_normalize_status("In Review"), "open")
+
+    def test_api_open_is_released(self):
+        self.assertEqual(_normalize_status("Open"), "released")
+
+    def test_fully_received_flag_wins(self):
+        self.assertEqual(_normalize_status("Open", fully_received=True), "fully_received")
+
+    def test_missing_status_is_open(self):
+        self.assertEqual(_normalize_status(None), "open")
+        self.assertEqual(_normalize_status(""), "open")
 
     def test_released(self):
         self.assertEqual(_normalize_status("Released"), "released")
@@ -53,7 +67,7 @@ class NormalizeStatusTest(SimpleTestCase):
         self.assertEqual(_normalize_status("SomeUnknownStatus"), "open")
 
     def test_case_insensitive(self):
-        self.assertEqual(_normalize_status("OPEN"), "open")
+        self.assertEqual(_normalize_status("DRAFT"), "open")
         self.assertEqual(_normalize_status("released"), "released")
 
 

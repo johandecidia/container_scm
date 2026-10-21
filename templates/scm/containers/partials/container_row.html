@@ -19,7 +19,15 @@
     </span>
   </td>
   <td>{% include "scm/components/status_badge.html" with status=container.status %}</td>
-  <td class="text-sm text-base-content/60">{{ container.tracking_carrier_name|default:"—" }}</td>
+  {% comment %}
+    Carrier is who moves the box; Source is whose API we read it from. For a Traqo
+    watch under Hapag-Lloyd they are two names, and an unknown carrier stays "—"
+    rather than borrowing the aggregator's — see TrackingProvenance.
+  {% endcomment %}
+  {% with provenance=container.list_tracking_watches.0.provenance %}
+    <td class="text-sm text-base-content/60">{{ provenance.carrier_name|default:"—" }}</td>
+    <td class="text-sm text-base-content/60">{{ provenance.provider_name|default:"—" }}</td>
+  {% endwith %}
   {% comment %}
     Whether this box is tracked, and the action that changes it.
 
@@ -77,7 +85,14 @@
   <td class="text-sm">{{ container.condition|default:"—" }}</td>
   <td class="text-sm text-base-content/60 whitespace-nowrap">{{ container.color_display|default:"—" }}</td>
   <td class="text-sm text-base-content/60">{{ container.current_location.name|default:"—" }}</td>
-  <td class="text-sm text-base-content/60">{{ container.manufacturer|default:"—" }}</td>
+  <td class="text-sm text-base-content/60">
+    <span
+      class="block max-w-[180px] truncate"
+      title="{{ container.acquisition_supplier_name|default:'—' }}"
+    >
+      {{ container.acquisition_supplier_name|default:"—" }}
+    </span>
+  </td>
   <td class="text-right">
     <div class="flex justify-end gap-1">
       <button

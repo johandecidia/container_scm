@@ -249,6 +249,8 @@ def _upsert_single_purchase_order(
     }
 
     existing = PurchaseOrder.objects.filter(team=team, external_id=external_id).first()
+    if existing is not None:
+        _check_ownership(existing, source_system=source_system, source_company_id=source_company_id)
     if existing is None:
         po = PurchaseOrder.objects.create(
             team=team, external_id=external_id, last_synced_at=now, **defaults, **source_meta
@@ -274,6 +276,23 @@ def _upsert_single_purchase_order(
     _upsert_lines(team=team, purchase_order=existing, lines_data=lines_data, now=now)
     result.updated += 1
     return existing
+
+
+def _check_ownership(existing: PurchaseOrder, *, source_system: str, source_company_id: str) -> None:
+    """Refuse to overwrite a purchase order that another source or company owns.
+
+    A matching ``external_id`` alone is not proof that the incoming record is the
+    same order: it must come from the same source system and, where both sides
+    know it, the same source company. The record then fails in isolation.
+    """
+    if existing.source_system != source_system:
+        raise ValueError(f"purchase order is owned by source '{existing.source_system}', not '{source_system}'")
+    if (
+        existing.source_company_id
+        and source_company_id
+        and existing.source_company_id.lower() != source_company_id.lower()
+    ):
+        raise ValueError("purchase order belongs to a different source company")
 
 
 def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[str, Any]]) -> list[PurchaseOrder]:

@@ -16,19 +16,21 @@
     {% endfor %}
   {% endif %}
 
-  {# Actions — POST + CSRF; queue Celery tasks, never a live call in-request. #}
-  <div class="flex gap-2 mb-6">
-    <form method="post" action="{% url 'integrations:test_connection' integration.pk %}">
-      {% csrf_token %}
-      <button type="submit" class="btn btn-outline btn-sm">{% translate "Test connection" %}</button>
-    </form>
-    <form method="post" action="{% url 'integrations:sync_now' integration.pk %}">
-      {% csrf_token %}
-      <button type="submit" class="btn btn-primary btn-sm" {% if in_progress %}disabled{% endif %}>
-        {% translate "Sync purchase orders now" %}
-      </button>
-    </form>
-  </div>
+  {# Actions — POST + CSRF; queue Celery tasks, never a live call in-request. Administrators only. #}
+  {% if can_manage_integrations %}
+    <div class="flex gap-2 mb-6">
+      <form method="post" action="{% url 'integrations:test_connection' integration.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-outline btn-sm">{% translate "Test connection" %}</button>
+      </form>
+      <form method="post" action="{% url 'integrations:sync_now' integration.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary btn-sm" {% if in_progress %}disabled{% endif %}>
+          {% translate "Sync purchase orders now" %}
+        </button>
+      </form>
+    </div>
+  {% endif %}
 
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
     <section class="app-card">

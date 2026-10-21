@@ -54,12 +54,26 @@ def _is_business_central_sync_due(integration: Integration, now: datetime) -> bo
     return reference + gap <= now
 
 
-def get_due_business_central_integrations(now: datetime | None = None) -> list[Integration]:
-    """Return active, sync-enabled BC integrations whose PO sync is due.
+def is_business_central_scheduled_sync_enabled(integration: Integration) -> bool:
+    """True only when a BC integration has explicitly opted in to *scheduled* syncing.
 
-    Skips integrations that are inactive, have sync disabled, are not yet due per
-    their configured interval, are backing off after a failure, or have a sync in
-    progress.
+    Two config switches, deliberately separate:
+      - ``sync_enabled`` (default True) allows any purchase-order sync, manual or
+        scheduled;
+      - ``scheduled_sync_enabled`` (default False) additionally lets Celery Beat
+        run it. A new integration — e.g. a sandbox under test — is never synced
+        in the background until someone sets this to true.
+    """
+    config = integration.config or {}
+    return bool(config.get("sync_enabled", True)) and config.get("scheduled_sync_enabled") is True
+
+
+def get_due_business_central_integrations(now: datetime | None = None) -> list[Integration]:
+    """Return active BC integrations, opted in to scheduled sync, whose PO sync is due.
+
+    Skips integrations that are inactive, have sync or scheduled sync disabled, are
+    not yet due per their configured interval, are backing off after a failure, or
+    have a sync in progress.
     """
     now = now or timezone.now()
     integrations = Integration.objects.filter(
@@ -69,7 +83,7 @@ def get_due_business_central_integrations(now: datetime | None = None) -> list[I
     )
     due = []
     for integration in integrations:
-        if not (integration.config or {}).get("sync_enabled", True):
+        if not is_business_central_scheduled_sync_enabled(integration):
             continue
         if _is_business_central_sync_due(integration, now):
             due.append(integration)
@@ -79,23 +93,24 @@ def get_due_business_central_integrations(now: datetime | None = None) -> list[I
 # ── Sync run watermark ──────────────────────────────────────────────────────
 
 
-def get_last_successful_watermark(integration: Integration, resource_type: str):
+def get_last_successful_watermark(integration: Integration, resource_type: str, *, source: dict | None = None):
     """Return the watermark_to of the most recent fully completed sync run.
 
     Only ``COMPLETED`` runs advance the watermark — a failed or partially
-    completed run must not move it forward, so those are excluded here. Returns
-    None when there is no completed run yet (first sync).
+    completed run must not move it forward, so those are excluded here. With
+    ``source`` (the data source recorded in ``metadata["source"]``), only runs
+    that read that same source count, so a watermark from one environment is
+    never reused for another. Returns None when there is no such run (first sync).
     """
-    run = (
-        IntegrationSyncRun.objects.filter(
-            integration=integration,
-            resource_type=resource_type,
-            status=IntegrationSyncRun.Status.COMPLETED,
-            watermark_to__isnull=False,
-        )
-        .order_by("-watermark_to")
-        .first()
+    runs = IntegrationSyncRun.objects.filter(
+        integration=integration,
+        resource_type=resource_type,
+        status=IntegrationSyncRun.Status.COMPLETED,
+        watermark_to__isnull=False,
     )
+    if source is not None:
+        runs = runs.filter(metadata__source=source)
+    run = runs.order_by("-watermark_to").first()
     return run.watermark_to if run else None
 
 

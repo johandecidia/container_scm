@@ -186,17 +186,20 @@ class TrackingProvenance:
     @property
     def carrier_name(self) -> str:
         """The carrier, or "" when none has been established for this watch."""
-        if self.subscription.carrier_code:
-            return self.subscription.carrier_label
+        if self.subscription.carrier_code and self.subscription.carrier_name:
+            return self.subscription.carrier_name
         code = self.carrier_code
         if not code:
             return ""
         # The registry's name rather than the provider row's, so the carrier is spelled
-        # the same way everywhere however a provider row happened to be labelled.
+        # the same way everywhere however a provider row happened to be labelled — and so
+        # a carrier recorded by code alone reads as "Hapag-Lloyd", not "hapag_lloyd".
         try:
             return get_carrier_definition(code).name
-        except UnknownCarrierError:  # pragma: no cover — the code came from the registry
-            return self.provider_name
+        except UnknownCarrierError:
+            # A recorded code the registry has no adapter for is still the carrier; the
+            # provider's name never stands in for it.
+            return code
 
     @property
     def carrier_known(self) -> bool:

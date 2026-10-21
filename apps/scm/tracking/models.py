@@ -298,6 +298,16 @@ class TrackingSubscription(BaseTeamModel):
         """
         return self.carrier_name or self.carrier_code
 
+    @property
+    def provenance(self):
+        """Carrier and data source read through the one rule — for templates, which cannot construct it.
+
+        See :class:`~apps.scm.tracking.selectors.TrackingProvenance`.
+        """
+        from .selectors import TrackingProvenance
+
+        return TrackingProvenance(self)
+
 
 class TrackingEvent(BaseTeamModel):
     """Stores normalised tracking events from any provider.

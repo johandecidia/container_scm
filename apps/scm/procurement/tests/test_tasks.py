@@ -20,14 +20,14 @@ def _team(slug="task-team"):
     return Team.objects.create(name=slug, slug=slug)
 
 
-def _integration(team):
+def _integration(team, *, scheduled=True):
     return Integration.objects.create(
         team=team,
         name="BC",
         provider_code="business_central",
         provider_family=Integration.ProviderFamily.BUSINESS_SYSTEM,
         is_active=True,
-        config={"sync_enabled": True},
+        config={"sync_enabled": True, "scheduled_sync_enabled": scheduled},
     )
 
 
@@ -44,6 +44,13 @@ class SyncTaskTest(TestCase):
         with mock.patch(_SYNC_PATH, return_value=fake_run) as sync:
             sync_purchase_orders_from_bc(team.id)
         sync.assert_called_once_with(integration)
+
+    def test_without_scheduled_opt_in_is_skipped(self):
+        team = _team("task-team-no-opt-in")
+        _integration(team, scheduled=False)
+        with mock.patch(_SYNC_PATH) as sync:
+            sync_purchase_orders_from_bc(team.id)
+        sync.assert_not_called()
 
     def test_missing_team_is_skipped(self):
         with mock.patch(_SYNC_PATH) as sync:

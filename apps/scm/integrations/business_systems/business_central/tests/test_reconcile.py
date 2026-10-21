@@ -45,6 +45,7 @@ def _integration(team):
 def _subset_client():
     client = mock.Mock()
     client.use_dummy = True
+    client.source_identity.return_value = {"mode": "dummy"}
     client.fetch_purchase_orders.return_value = _ONLY_FIRST_PO
     client.fetch_purchase_order_lines.side_effect = lambda ident: _FIRST_PO_LINES.get(ident, [])
     return client
@@ -106,9 +107,7 @@ class ReconcileTest(TestCase):
 
     def test_removed_line_is_soft_deleted(self):
         # PO100245 present but with no lines at source → its line is deactivated.
-        client = mock.Mock()
-        client.use_dummy = True
-        client.fetch_purchase_orders.return_value = _ONLY_FIRST_PO
+        client = _subset_client()
         client.fetch_purchase_order_lines.side_effect = lambda ident: []
         result = reconcile_purchase_orders(self.integration, client=client)
         self.assertGreaterEqual(result.deactivated_lines, 1)
