@@ -99,12 +99,14 @@ class MonitoringUITest(TestCase):
             self.client.post(reverse("integrations:sync_now", args=[self.integration.pk]))
         delay.assert_not_called()
 
-    def test_test_connection_queues_task(self):
+    def test_test_connection_runs_in_request(self):
         self._login()
-        with mock.patch("apps.scm.integrations.views.test_business_central_connection_task.delay") as delay:
+        with mock.patch(
+            "apps.scm.integrations.views.test_business_central_connection", return_value={"success": True}
+        ) as test:
             resp = self.client.post(reverse("integrations:test_connection", args=[self.integration.pk]))
         self.assertEqual(resp.status_code, 302)
-        delay.assert_called_once_with(self.integration.id)
+        test.assert_called_once_with(self.integration)
 
     def test_other_team_cannot_trigger_sync(self):
         other = Team.objects.create(name="mon-x", slug="mon-x")
@@ -154,25 +156,26 @@ class IntegrationPermissionTest(TestCase):
 
     def test_member_cannot_test_connection(self):
         self._login(self.member)
-        with mock.patch("apps.scm.integrations.views.test_business_central_connection_task.delay") as delay:
+        with mock.patch("apps.scm.integrations.views.test_business_central_connection") as test:
             resp = self.client.post(reverse("integrations:test_connection", args=[self.integration.pk]))
         self.assertEqual(resp.status_code, 404)
-        delay.assert_not_called()
+        test.assert_not_called()
 
     def test_configuration_endpoints_are_admin_only(self):
-        urls = [
-            reverse("integrations:create"),
-            reverse("integrations:update", args=[self.integration.pk]),
-            reverse("integrations:delete", args=[self.integration.pk]),
-        ]
+        urls = {
+            reverse("integrations:create"): 200,
+            reverse("integrations:update", args=[self.integration.pk]): 200,
+            # Deletion is not supported.
+            reverse("integrations:delete", args=[self.integration.pk]): 501,
+        }
         self._login(self.member)
         for url in urls:
             with self.subTest(url=url, role="member"):
                 self.assertEqual(self.client.get(url).status_code, 404)
         self._login(self.admin)
-        for url in urls:
+        for url, status in urls.items():
             with self.subTest(url=url, role="admin"):
-                self.assertEqual(self.client.get(url).status_code, 501)
+                self.assertEqual(self.client.get(url).status_code, status)
 
     def test_anonymous_redirected_from_configuration(self):
         resp = self.client.get(reverse("integrations:create"))

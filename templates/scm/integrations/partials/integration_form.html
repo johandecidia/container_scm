@@ -1,0 +1,65 @@
+{% load i18n %}
+
+{% comment %}
+  Add or edit the team's Business Central integration.
+
+  The client secret is never sent back to this form: the field is always empty, and on
+  edit a blank value keeps the stored secret. A rejected form comes back into this
+  modal with its errors; a saved one replaces `#integrations-panel` and empties the modal.
+{% endcomment %}
+
+<div class="modal modal-open">
+  <div class="modal-box max-w-xl">
+    <h3 class="font-bold text-lg">
+      {% if integration %}{% translate "Edit integration" %}{% else %}{% translate "Add integration" %}{% endif %}
+    </h3>
+    <p class="text-sm text-base-content/60 mt-1 mb-4">
+      {% translate "The client secret is stored encrypted and never shown again after saving." %}
+    </p>
+
+    <form
+      method="post"
+      action="{{ form_action }}"
+      hx-post="{{ form_action }}"
+      hx-target="#modal-container"
+      hx-swap="innerHTML"
+      hx-disabled-elt="find button[type=submit]"
+    >
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div role="alert" class="alert alert-error mb-4 text-sm">
+          <i class="fa fa-circle-exclamation"></i>
+          <span>{{ form.non_field_errors|join:" " }}</span>
+        </div>
+      {% endif %}
+
+      <div class="space-y-3">
+        {% for field in form %}
+          {% if field.name == "is_active" %}
+            <label class="flex items-center gap-3 cursor-pointer pt-2">
+              {{ field }}
+              <span class="label-text">{{ field.label }}</span>
+            </label>
+          {% else %}
+            <div class="form-control">
+              <label class="label" for="{{ field.id_for_label }}">
+                <span class="label-text">{{ field.label }}</span>
+              </label>
+              {{ field }}
+              {% if field.help_text %}<p class="text-xs text-base-content/60 mt-1">{{ field.help_text }}</p>{% endif %}
+              {% if field.errors %}<p class="text-error text-xs mt-1">{{ field.errors|join:" " }}</p>{% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      <div class="modal-action">
+        <button type="button" class="btn btn-ghost" onclick="this.closest('.modal').remove()">
+          {% translate "Cancel" %}
+        </button>
+        <button type="submit" class="btn btn-primary">{% translate "Save" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

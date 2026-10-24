@@ -1,0 +1,129 @@
+{% load i18n %}
+
+{% comment %}
+  The team's Business Central integrations. Credentials are never in this template's
+  context. The root id is the HTMX target for save, test and activate/deactivate.
+
+  `close_modal` empties the modal container out-of-band after a successful save.
+{% endcomment %}
+
+<div id="integrations-panel">
+  <div class="mb-6 flex items-center justify-between gap-3">
+    <h2 class="text-lg font-semibold">{% translate "Business Central integrations" %}</h2>
+    {% if can_add %}
+      <button
+        class="btn btn-primary btn-sm"
+        hx-get="{% url 'integrations:create' %}"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+      >
+        <i class="fa fa-plus"></i>
+        {% translate "Add Integration" %}
+      </button>
+    {% endif %}
+  </div>
+
+  {% if notice %}
+    <div role="alert" class="alert alert-{{ notice_level|default:'info' }} alert-soft mb-4 items-start">
+      <i class="fa fa-circle-info mt-0.5"></i>
+      <span class="text-sm break-words">{{ notice }}</span>
+    </div>
+  {% endif %}
+
+  {% if rows %}
+    <div class="overflow-x-auto app-card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>{% translate "Name" %}</th>
+            <th>{% translate "Provider" %}</th>
+            <th>{% translate "Environment" %}</th>
+            <th>{% translate "Connection" %}</th>
+            <th>{% translate "Active" %}</th>
+            <th>{% translate "Last successful test" %}</th>
+            <th>{% translate "Last sync" %}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% with integration=row.integration %}
+              <tr>
+                <td>
+                  <a class="link link-primary font-medium" href="{% url 'integrations:detail' integration.pk %}">
+                    {{ integration.name }}
+                  </a>
+                </td>
+                <td>{% translate "Business Central" %}</td>
+                <td>{{ row.environment|default:"—" }}</td>
+                <td>
+                  <span class="badge badge-sm badge-soft {% if integration.status == 'active' %}badge-success{% elif integration.status == 'error' %}badge-error{% else %}badge-ghost{% endif %}">
+                    {{ integration.get_status_display }}
+                  </span>
+                </td>
+                <td>
+                  {% if integration.is_active %}
+                    <span class="badge badge-sm badge-success badge-soft">{% translate "Active" %}</span>
+                  {% else %}
+                    <span class="badge badge-sm badge-ghost">{% translate "Inactive" %}</span>
+                  {% endif %}
+                </td>
+                <td>{{ integration.last_success_at|date:"d M Y H:i"|default:"—" }}</td>
+                <td>
+                  {% if row.in_progress %}
+                    <span class="badge badge-info badge-sm">{% translate "Running" %}</span>
+                  {% elif row.latest_run %}
+                    {{ row.latest_run.get_status_display }}
+                  {% else %}—{% endif %}
+                </td>
+                <td>
+                  <div class="flex justify-end gap-1">
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      hx-get="{% url 'integrations:update' integration.pk %}"
+                      hx-target="#modal-container"
+                      hx-swap="innerHTML"
+                    >
+                      {% translate "Edit" %}
+                    </button>
+                    <form
+                      hx-post="{% url 'integrations:test_connection' integration.pk %}"
+                      hx-target="#integrations-panel"
+                      hx-swap="outerHTML"
+                      hx-disabled-elt="find button"
+                    >
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-outline btn-xs">
+                        <span class="loading loading-spinner loading-xs htmx-request-show"></span>
+                        <span class="htmx-request-hide">{% translate "Test connection" %}</span>
+                        <span class="htmx-request-show">{% translate "Testing…" %}</span>
+                      </button>
+                    </form>
+                    <form
+                      hx-post="{% url 'integrations:toggle' integration.pk %}"
+                      hx-target="#integrations-panel"
+                      hx-swap="outerHTML"
+                    >
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-ghost btn-xs">
+                        {% if integration.is_active %}{% translate "Deactivate" %}{% else %}{% translate "Activate" %}{% endif %}
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="app-card">
+      <p class="text-base-content/60">{% translate "No Business Central integrations configured." %}</p>
+    </div>
+  {% endif %}
+</div>
+
+{% if close_modal %}
+  <div id="modal-container" hx-swap-oob="true"></div>
+{% endif %}

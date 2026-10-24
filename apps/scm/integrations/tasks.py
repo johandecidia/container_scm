@@ -142,12 +142,8 @@ def test_business_central_connection_task(integration_id: int) -> dict:
     Updates the integration's health fields (last_tested_at + success/error) and
     returns a sanitised {"success", "message"}. Never exposes credentials.
     """
-    from django.utils import timezone
-
-    from .business_systems.business_central.client import BusinessCentralClient
-    from .business_systems.business_central.exceptions import BusinessCentralError
+    from .business_systems.business_central.configuration import test_business_central_connection
     from .models import Integration
-    from .services import mark_integration_error, mark_integration_success
 
     try:
         integration = Integration.objects.get(pk=integration_id)
@@ -155,16 +151,7 @@ def test_business_central_connection_task(integration_id: int) -> dict:
         logger.warning("test_business_central_connection_task: integration %s not found.", integration_id)
         return {"success": False, "message": "Integration not found"}
 
-    integration.last_tested_at = timezone.now()
-    integration.save(update_fields=["last_tested_at", "updated_at"])
-    try:
-        result = BusinessCentralClient(integration=integration).test_connection()
-        mark_integration_success(integration)
-        return result
-    except BusinessCentralError as exc:
-        message = f"{exc.category}: {exc}"
-        mark_integration_error(integration, message)
-        return {"success": False, "message": message}
+    return test_business_central_connection(integration)
 
 
 @shared_task
