@@ -24,6 +24,7 @@ from apps.scm.integrations.models import Integration, IntegrationCredential
 from apps.scm.integrations.services import mark_integration_error, mark_integration_success
 from apps.teams.models import Team
 
+from .diagnostics import failure_diagnostic
 from .exceptions import BusinessCentralError
 
 logger = logging.getLogger(__name__)
@@ -100,15 +101,21 @@ def test_business_central_connection(integration: Integration) -> dict:
     and a purchase-order read. Returns a sanitised ``{"success", "message", ...}``:
     messages come from the typed client exceptions, which never carry tokens,
     secrets or response bodies.
+
+    On failure ``diagnostic`` describes the failed request and, for a 403, the
+    denied Business Central object (see ``diagnostics.failure_diagnostic``). It is
+    for Team Administrators only and is not stored on the integration.
     """
     from .client import BusinessCentralClient
 
     integration.last_tested_at = timezone.now()
     integration.save(update_fields=["last_tested_at", "updated_at"])
+    diagnostic: dict = {}
     try:
         result = BusinessCentralClient(integration=integration).test_connection()
     except BusinessCentralError as exc:
         message = f"{exc.category}: {exc}"
+        diagnostic = failure_diagnostic(exc)
     except CredentialDecryptionError as exc:
         message = f"Configuration error: {exc}"
     else:
@@ -117,4 +124,4 @@ def test_business_central_connection(integration: Integration) -> dict:
 
     mark_integration_error(integration, message)
     logger.warning("Business Central connection test failed for integration %s: %s", integration.pk, message)
-    return {"success": False, "message": message}
+    return {"success": False, "message": message, "diagnostic": diagnostic}

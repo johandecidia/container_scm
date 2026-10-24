@@ -89,6 +89,21 @@ class TestConnectionCommandTest(_CommandCase):
         ):
             self._run("bc_test_connection")
 
+    def test_permission_failure_names_request_and_denied_object(self):
+        body = {
+            "error": {
+                "code": "Internal_ServerError",
+                "message": "(TableData 38 Purchase Header Read: Base Application)",
+            }
+        }
+        with (
+            mock.patch("requests.get", side_effect=[_connection_responses()[0], _http(403, body)]),
+            self.assertRaises(CommandError) as ctx,
+        ):
+            self._run("bc_test_connection")
+        self.assertIn(f"GET companies({COMPANY_ID})/purchaseOrders (HTTP 403)", str(ctx.exception))
+        self.assertIn('TableData 38 "Purchase Header": Read', str(ctx.exception))
+
     def test_invalid_environment_is_categorised(self):
         with (
             mock.patch("requests.get", return_value=_http(404)),

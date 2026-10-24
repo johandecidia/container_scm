@@ -265,6 +265,31 @@ class ConnectionTestTest(_LiveClientCase):
         ):
             self._client().test_connection()
 
+    def test_403_reports_failed_endpoint_and_denied_object(self):
+        message = (
+            "Sorry, the current permissions prevented the action. "
+            "(TableData 5496 Purchase Order Entity Buffer Read: Base Application) Bearer fake-token super-secret-value"
+        )
+        body = {"error": {"code": "Internal_ServerError", "message": message}}
+        with (
+            mock.patch("requests.get", side_effect=[_companies(COMPANY_ID), _http(403, body)]),
+            self.assertRaises(BusinessCentralPermissionError) as ctx,
+        ):
+            self._client().test_connection()
+        exc = ctx.exception
+        self.assertEqual(exc.endpoint, f"companies({COMPANY_ID})/purchaseOrders")
+        self.assertEqual(exc.permission["object_id"], "5496")
+        self.assertEqual(exc.permission["permission"], "Read")
+        # The exception text — shown to everyone and stored on the integration — is unchanged.
+        self.assertNotIn("Purchase Order Entity Buffer", str(exc))
+        self.assertNotIn("fake-token", str(exc.permission))
+
+        log = IntegrationRequestLog.objects.get(integration=self.integration, status_code=403)
+        self.assertIn(f"GET companies({COMPANY_ID})/purchaseOrders (HTTP 403)", log.error_message)
+        self.assertIn('TableData 5496 "Purchase Order Entity Buffer": Read', log.error_message)
+        self.assertNotIn("fake-token", log.error_message)
+        self.assertNotIn("super-secret-value", log.error_message)
+
     def test_network_error(self):
         with (
             mock.patch.object(client_module.time, "sleep"),

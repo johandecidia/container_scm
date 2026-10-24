@@ -12,6 +12,10 @@ Usage:
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.scm.integrations.business_systems.business_central.client import BusinessCentralClient
+from apps.scm.integrations.business_systems.business_central.diagnostics import (
+    failure_diagnostic,
+    format_diagnostic,
+)
 from apps.scm.integrations.business_systems.business_central.exceptions import BusinessCentralError
 from apps.scm.integrations.models import Integration
 
@@ -48,7 +52,8 @@ class Command(BaseCommand):
             result = BusinessCentralClient(integration=integration).test_connection()
         except BusinessCentralError as exc:
             # Messages are sanitised at the source (no tokens, secrets or response bodies).
-            raise CommandError(f"{exc.category}: {exc}") from exc
+            details = format_diagnostic(failure_diagnostic(exc))
+            raise CommandError(f"{exc.category}: {exc}" + (f"\n  {details}" if details else "")) from exc
 
         for check in result.get("checks", []):
             self.stdout.write(f"  OK  {check}")

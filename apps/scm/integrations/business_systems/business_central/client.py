@@ -28,6 +28,7 @@ import requests
 from apps.scm.integrations.business_systems.base import BaseBusinessSystemClient, BusinessSystemCapability
 
 from .auth import BusinessCentralAuth
+from .diagnostics import failure_diagnostic, format_diagnostic, parse_permission_error
 from .exceptions import (
     BusinessCentralAuthenticationError,
     BusinessCentralCompanyNotFoundError,
@@ -161,13 +162,19 @@ def _resolve_config(config: dict) -> BusinessCentralConfig:
     )
 
 
-def _error_code(response) -> str:
-    """Business Central's ``error.code`` from an error body, or "" (never the message)."""
+def _error_field(response, field: str) -> str:
+    """A string field of the ``error`` object in a Business Central error body, or ""."""
     try:
-        code = (response.json().get("error") or {}).get("code") or ""
+        value = (response.json().get("error") or {}).get(field) or ""
     except ValueError, AttributeError, TypeError:
         return ""
-    return code if isinstance(code, str) and _ERROR_CODE_PATTERN.match(code) else ""
+    return value if isinstance(value, str) else ""
+
+
+def _error_code(response) -> str:
+    """Business Central's ``error.code`` from an error body, or "" (never the message)."""
+    code = _error_field(response, "code")
+    return code if _ERROR_CODE_PATTERN.match(code) else ""
 
 
 def _with_code(message: str, code: str) -> str:
@@ -460,17 +467,23 @@ class BusinessCentralClient(BaseBusinessSystemClient):
 
                 # Permanent client/other errors (400, 403, 404, ...).
                 code = _error_code(response)
+                error_kwargs = {"status_code": status_code, "error_code": code, "endpoint": log_endpoint}
                 if status_code == 403:
+                    # Only allowlisted fields of BC's message are kept — never the message itself.
+                    permission = parse_permission_error(_error_field(response, "message"))
                     error_message = _with_code(
                         "Business Central denied access (403). The app needs read permission sets in Business Central",
                         code,
                     )
-                    raise BusinessCentralPermissionError(error_message, status_code=status_code, error_code=code)
+                    exc = BusinessCentralPermissionError(error_message, permission=permission, **error_kwargs)
+                    # The request log is admin-only, so it records what was denied.
+                    error_message = f"{error_message}. {format_diagnostic(failure_diagnostic(exc))}"
+                    raise exc
                 if status_code == 404:
                     error_message = _with_code("Business Central returned HTTP 404 (not found)", code)
-                    raise BusinessCentralNotFoundError(error_message, status_code=status_code, error_code=code)
+                    raise BusinessCentralNotFoundError(error_message, **error_kwargs)
                 error_message = _with_code(f"Business Central returned HTTP {status_code}", code)
-                raise BusinessCentralResponseError(error_message, status_code=status_code, error_code=code)
+                raise BusinessCentralResponseError(error_message, **error_kwargs)
         finally:
             self._log_request(
                 log_endpoint=log_endpoint,

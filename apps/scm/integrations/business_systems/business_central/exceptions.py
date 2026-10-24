@@ -85,20 +85,33 @@ class BusinessCentralResponseError(BusinessCentralError):
     4xx permanent); the client sets ``status_code`` so callers can decide.
     ``error_code`` is Business Central's own error code (e.g.
     ``Authorization_InsufficientPermissions``) when the body carried one.
+    ``endpoint`` is the relative API path that failed (no host, query or token).
     """
 
     category = "Unexpected API response"
 
-    def __init__(self, message: str = "", *, status_code: int | None = None, error_code: str = "") -> None:
+    def __init__(
+        self, message: str = "", *, status_code: int | None = None, error_code: str = "", endpoint: str = ""
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.error_code = error_code
+        self.endpoint = endpoint
 
 
 class BusinessCentralPermissionError(BusinessCentralResponseError):
-    """HTTP 403 — authenticated, but the app lacks Business Central permissions."""
+    """HTTP 403 — authenticated, but the app lacks Business Central permissions.
+
+    ``permission`` holds the denied object and permission parsed from Business
+    Central's message (see ``diagnostics.parse_permission_error``); empty when the
+    message did not name one. It is kept out of the exception text on purpose.
+    """
 
     category = "Missing Business Central permissions"
+
+    def __init__(self, message: str = "", *, permission: dict[str, str] | None = None, **kwargs) -> None:
+        super().__init__(message, **kwargs)
+        self.permission = permission or {}
 
 
 class BusinessCentralNotFoundError(BusinessCentralResponseError):

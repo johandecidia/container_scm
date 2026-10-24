@@ -20,6 +20,7 @@ from .business_systems.business_central.configuration import (
     save_business_central_integration,
     test_business_central_connection,
 )
+from .business_systems.business_central.diagnostics import format_diagnostic
 from .forms import BusinessCentralIntegrationForm
 from .selectors import (
     get_integration_monitoring_context,
@@ -142,6 +143,9 @@ def integration_test_connection(request, pk: int):
     else:
         # Sanitised at the source: typed client errors never carry tokens, secrets or response bodies.
         notice, level = _("Connection test failed — {reason}").format(reason=result.get("message")), "error"
+        # Only Team Administrators reach this view; the diagnostic is built from allowlisted fields.
+        if details := format_diagnostic(result.get("diagnostic") or {}):
+            notice = f"{notice} {details}"
     if request.POST.get("next") == "detail":
         return _respond(request, notice, level, redirect_to="integrations:detail", pk=integration.pk)
     return _respond(request, notice, level)

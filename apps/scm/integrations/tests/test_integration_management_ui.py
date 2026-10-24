@@ -353,6 +353,22 @@ class ConnectionTestTest(_LoginMixin, TestCase):
         self.assertContains(resp, "Missing Business Central permissions")
         self._assert_no_secrets(resp)
 
+    def test_missing_permissions_shows_admin_diagnostic(self):
+        companies = _response(200, {"value": [{"id": COMPANY_ID, "name": "CRONUS"}]})
+        message = (
+            "Sorry, the current permissions prevented the action. "
+            f"(TableData 5496 Purchase Order Entity Buffer Read: Base Application) {TOKEN} {SECRET}"
+        )
+        forbidden = _response(403, {"error": {"code": "Internal_ServerError", "message": message}})
+        resp, _, _ = self._post(_token_ok(), [companies, forbidden])
+
+        self.assertContains(resp, "Missing Business Central permissions")
+        self.assertContains(resp, f"GET companies({COMPANY_ID})/purchaseOrders (HTTP 403)")
+        self.assertContains(resp, "TableData 5496 &quot;Purchase Order Entity Buffer&quot;: Read (Base Application)")
+        self._assert_no_secrets(resp)
+        # The stored error (visible outside this admin action) keeps the general message.
+        self.assertNotIn("Purchase Order Entity Buffer", self.integration.last_error_message)
+
     def test_timeout(self):
         resp, _, _ = self._post(_token_ok(), requests.Timeout("boom"))
         self.assertContains(resp, "Network error")
