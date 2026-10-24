@@ -93,11 +93,11 @@ class PrimaryNavigationTest(NavigationFixture):
     def test_supplier_deliveries_is_no_longer_a_primary_entry(self):
         self.assertNotIn(reverse("supplier_deliveries:list"), self.nav_html())
 
-    def test_imports_and_integrations_are_still_reachable_from_the_shell(self):
-        """Moved to Settings, not removed: they are how data gets in."""
+    def test_imports_and_integrations_are_no_longer_sidebar_entries(self):
+        """They are Team Settings tabs now — see apps/scm/team_settings/tests/test_settings_tabs.py."""
         html = self.nav_html()
-        self.assertIn(reverse("imports:list"), html)
-        self.assertIn(reverse("integrations:list"), html)
+        self.assertNotIn(reverse("imports:list"), html)
+        self.assertNotIn(reverse("integrations:list"), html)
 
     def test_the_navigation_renders_on_mobile_too(self):
         """One include feeds both the desktop sidebar and the mobile drawer.
@@ -128,14 +128,16 @@ class HomeRoutingTest(NavigationFixture):
 
 
 class RoutesKeptAfterLeavingTheMenuTest(NavigationFixture):
-    """Move and hide before delete. Every one of these still answers."""
+    """Move and hide before delete. Every one of these still answers.
+
+    Imports and Integrations are not in this list: they still answer, but only to
+    administrators, and test_settings_tabs.py pins that.
+    """
 
     def test_routes_removed_from_the_menu_still_resolve(self):
         for name in (
             "tracking:list",
             "containers:discovery_dashboard",
-            "imports:list",
-            "integrations:list",
             "supplier_deliveries:list",
             "supplier_deliveries:dashboard",
             "chat:chat_home",

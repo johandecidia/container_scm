@@ -4,7 +4,7 @@ from django.shortcuts import redirect, render
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
-from apps.scm.decorators import scm_login_required
+from apps.scm.decorators import scm_team_admin_required
 
 from .forms import ImportUploadForm
 from .models import ImportJob
@@ -12,14 +12,14 @@ from .selectors import get_import_errors, get_import_rows, get_job_summary, get_
 from .services import confirm_import_job, create_import_job, parse_import_job, validate_import_job
 
 
-@scm_login_required
+@scm_team_admin_required
 def import_list(request):
     team = request.default_team
     jobs = get_team_import_jobs(team)
     return render(request, "scm/imports/pages/import_list.html", {"jobs": jobs})
 
 
-@scm_login_required
+@scm_team_admin_required
 def import_upload(request):
     team = request.default_team
     if request.method == "POST":
@@ -41,7 +41,7 @@ def import_upload(request):
     return render(request, "scm/imports/pages/import_upload.html", {"form": form})
 
 
-@scm_login_required
+@scm_team_admin_required
 def import_detail(request, pk):
     team = request.default_team
     from apps.scm.tracking.preferences import get_team_auto_start_tracking
@@ -69,7 +69,7 @@ def import_detail(request, pk):
     return render(request, "scm/imports/pages/import_detail.html", context)
 
 
-@scm_login_required
+@scm_team_admin_required
 @require_POST
 def import_parse(request, pk):
     team = request.default_team
@@ -87,7 +87,7 @@ def import_parse(request, pk):
     return redirect("imports:detail", pk=pk)
 
 
-@scm_login_required
+@scm_team_admin_required
 @require_POST
 def import_validate(request, pk):
     team = request.default_team
@@ -105,7 +105,7 @@ def import_validate(request, pk):
     return redirect("imports:detail", pk=pk)
 
 
-@scm_login_required
+@scm_team_admin_required
 @require_POST
 def import_confirm(request, pk):
     team = request.default_team

@@ -1,5 +1,6 @@
 {% extends "scm/base.html" %}
 {% load i18n %}
+{% load team_tags %}
 
 {% block app %}
   <div class="flex items-center justify-between mb-6">
@@ -20,12 +21,15 @@
             {% translate "Create" %}
           </a>
         </li>
-        <li>
-          <a href="{% url 'imports:upload' %}?import_type=purchase_orders">
-            <i class="fa fa-upload w-4 h-4"></i>
-            {% translate "New Import" %}
-          </a>
-        </li>
+        {# Imports is a Team Settings area, so only administrators are offered it. #}
+        {% if request.user|is_admin_of:request.default_team %}
+          <li>
+            <a href="{% url 'imports:upload' %}?import_type=purchase_orders">
+              <i class="fa fa-upload w-4 h-4"></i>
+              {% translate "New Import" %}
+            </a>
+          </li>
+        {% endif %}
       </ul>
     </div>
   </div>

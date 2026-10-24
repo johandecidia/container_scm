@@ -2,6 +2,8 @@
 {% load i18n %}
 
 {% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="imports" %}
+
   <section class="app-card">
     {# Header #}
     <div class="flex items-center justify-between mb-4">

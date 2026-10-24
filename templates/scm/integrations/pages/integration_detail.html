@@ -2,11 +2,13 @@
 {% load i18n %}
 
 {% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
   <div class="mb-6">
     <a class="link link-neutral text-sm" href="{% url 'integrations:list' %}">
       &larr; {% translate "Integrations" %}
     </a>
-    <h1 class="text-2xl font-bold mt-2">{{ integration.name }}</h1>
+    <h2 class="text-xl font-semibold mt-2">{{ integration.name }}</h2>
     <p class="text-sm text-base-content/60 mt-1">{{ integration.provider_code }}</p>
   </div>
 
@@ -16,21 +18,19 @@
     {% endfor %}
   {% endif %}
 
-  {# Actions — POST + CSRF; queue Celery tasks, never a live call in-request. Administrators only. #}
-  {% if can_manage_integrations %}
-    <div class="flex gap-2 mb-6">
-      <form method="post" action="{% url 'integrations:test_connection' integration.pk %}">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-outline btn-sm">{% translate "Test connection" %}</button>
-      </form>
-      <form method="post" action="{% url 'integrations:sync_now' integration.pk %}">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-primary btn-sm" {% if in_progress %}disabled{% endif %}>
-          {% translate "Sync purchase orders now" %}
-        </button>
-      </form>
-    </div>
-  {% endif %}
+  {# Actions — POST + CSRF; queue Celery tasks, never a live call in-request. The page itself is admin-only. #}
+  <div class="flex gap-2 mb-6">
+    <form method="post" action="{% url 'integrations:test_connection' integration.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-outline btn-sm">{% translate "Test connection" %}</button>
+    </form>
+    <form method="post" action="{% url 'integrations:sync_now' integration.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary btn-sm" {% if in_progress %}disabled{% endif %}>
+        {% translate "Sync purchase orders now" %}
+      </button>
+    </form>
+  </div>
 
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
     <section class="app-card">

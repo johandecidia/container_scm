@@ -104,34 +104,22 @@
 </li>
 
 {% comment %}
-  Settings: data plumbing and the Pegasus team-level pages. Administrative rather
-  than operational, so it sits below the work.
+  Settings: the Pegasus team-level pages. Administrative rather than operational,
+  so it sits below the work.
 {% endcomment %}
 <li class="menu-title">
   <span>{% translate "Settings" %}</span>
 </li>
-<li>
-  <a href="{% url 'imports:list' %}" {% if '/scm/imports/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-file-import h-4 w-4"></i>
-    {% translate "Imports" %}
-  </a>
-</li>
-<li>
-  <a href="{% url 'integrations:list' %}" {% if '/scm/integrations/' in request.path %}class="menu-active"{% endif %}>
-    <i class="fa fa-plug h-4 w-4"></i>
-    {% translate "Integrations" %}
-  </a>
-</li>
 {% comment %}
   Team Settings is administrator-only, and so is everything inside it — Members,
-  Tracking integrations and Container settings (the team's grading vocabulary, which
-  used to have its own entry here and is now a tab in there). The check keeps the
-  link out of a member's sidebar; what actually closes the area is
-  `@scm_team_admin_required` on every view behind it.
+  Tracking, Container settings, Integrations and Imports. The last three used to
+  have their own entries here and are now tabs in there, on their original routes.
+  The check keeps the link out of a member's sidebar; what actually closes the area
+  is `@scm_team_admin_required` on every view behind it.
 {% endcomment %}
 {% if request.user|is_admin_of:request.default_team %}
 <li>
-  <a href="{% url 'team_settings:members' %}" {% if '/scm/settings/' in request.path or '/scm/containers/conditions/' in request.path %}class="menu-active"{% endif %}>
+  <a href="{% url 'team_settings:members' %}" {% if '/scm/settings/' in request.path or '/scm/containers/conditions/' in request.path or '/scm/imports/' in request.path or '/scm/integrations/' in request.path %}class="menu-active"{% endif %}>
     <i class="fa fa-gear h-4 w-4"></i>
     {% translate "Team Settings" %}
   </a>

@@ -2,8 +2,10 @@
 {% load i18n %}
 
 {% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
   <div class="mb-6">
-    <h1 class="text-2xl font-bold">{% translate "Business Central integrations" %}</h1>
+    <h2 class="text-lg font-semibold">{% translate "Business Central integrations" %}</h2>
   </div>
 
   {% if rows %}

@@ -1,5 +1,6 @@
 {% extends "scm/base.html" %}
 {% load i18n %}
+{% load team_tags %}
 
 {% block app %}
   {# Page header #}
@@ -290,20 +291,30 @@
       {% endif %}
     </section>
 
-    {# Latest Imports #}
+    {% comment %}
+      Latest Imports. Every member sees the list; only administrators get links into
+      it, because Imports lives in Team Settings and is closed to everybody else.
+    {% endcomment %}
+    {% with can_open_imports=request.user|is_admin_of:request.default_team %}
     <section class="app-card">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold">{% translate "Latest Imports" %}</h2>
-        <a href="{% url 'imports:list' %}" class="btn btn-ghost btn-xs">{% translate "View all" %}</a>
+        {% if can_open_imports %}
+          <a href="{% url 'imports:list' %}" class="btn btn-ghost btn-xs">{% translate "View all" %}</a>
+        {% endif %}
       </div>
       {% if live_stats.recent_imports %}
         <ul class="divide-y divide-base-200">
           {% for job in live_stats.recent_imports %}
             <li class="py-2 flex items-center justify-between gap-2">
               <div class="min-w-0">
-                <a href="{% url 'imports:detail' job.pk %}" class="text-sm font-medium link link-hover truncate block">
-                  {{ job.original_filename|default:job.pk }}
-                </a>
+                {% if can_open_imports %}
+                  <a href="{% url 'imports:detail' job.pk %}" class="text-sm font-medium link link-hover truncate block">
+                    {{ job.original_filename|default:job.pk }}
+                  </a>
+                {% else %}
+                  <span class="text-sm font-medium truncate block">{{ job.original_filename|default:job.pk }}</span>
+                {% endif %}
                 <p class="text-xs text-base-content/50">{{ job.created_at|date:"Y-m-d H:i" }}</p>
               </div>
               <span class="badge badge-sm shrink-0
@@ -316,9 +327,12 @@
             </li>
           {% endfor %}
         </ul>
-      {% else %}
+      {% elif can_open_imports %}
         {% include "scm/components/empty_state.html" with icon="fa-file-import" title=_("No imports yet") message=_("Import data from CSV or Excel files.") action_url="/scm/imports/upload/" action_label=_("Upload file") %}
+      {% else %}
+        {% include "scm/components/empty_state.html" with icon="fa-file-import" title=_("No imports yet") message=_("Import data from CSV or Excel files.") %}
       {% endif %}
     </section>
+    {% endwith %}
   </div>
 {% endblock %}

@@ -26,4 +26,16 @@
      class="tab {% if active == 'containers' %}tab-active{% endif %}">
     <i class="fa fa-box mr-2"></i>{% translate "Container settings" %}
   </a>
+  {% comment %}
+    Integrations and Imports, likewise, keep the routes they have always had
+    (/scm/integrations/, /scm/imports/). The tabs point at them; nothing moved.
+  {% endcomment %}
+  <a role="tab" href="{% url 'integrations:list' %}"
+     class="tab {% if active == 'integrations' %}tab-active{% endif %}">
+    <i class="fa fa-plug mr-2"></i>{% translate "Integrations" %}
+  </a>
+  <a role="tab" href="{% url 'imports:list' %}"
+     class="tab {% if active == 'imports' %}tab-active{% endif %}">
+    <i class="fa fa-file-import mr-2"></i>{% translate "Imports" %}
+  </a>
 </div>

@@ -117,7 +117,7 @@ class MonitoringUITest(TestCase):
 
 
 class IntegrationPermissionTest(TestCase):
-    """Members may view integration health; only administrators may act on integrations."""
+    """Integrations is a Team Settings area: administrators only, for viewing as well as acting."""
 
     @classmethod
     def setUpTestData(cls):
@@ -133,19 +133,17 @@ class IntegrationPermissionTest(TestCase):
         session["team"] = self.team.pk
         session.save()
 
-    def test_member_can_view_detail_without_actions(self):
+    def test_member_cannot_view_list_or_detail(self):
         self._login(self.member)
-        resp = self.client.get(reverse("integrations:detail", args=[self.integration.pk]))
-        self.assertEqual(resp.status_code, 200)
-        self.assertFalse(resp.context["can_manage_integrations"])
-        self.assertNotContains(resp, reverse("integrations:sync_now", args=[self.integration.pk]))
-        self.assertNotContains(resp, reverse("integrations:test_connection", args=[self.integration.pk]))
+        for url in (reverse("integrations:list"), reverse("integrations:detail", args=[self.integration.pk])):
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 404)
 
     def test_admin_sees_actions(self):
         self._login(self.admin)
         resp = self.client.get(reverse("integrations:detail", args=[self.integration.pk]))
-        self.assertTrue(resp.context["can_manage_integrations"])
         self.assertContains(resp, reverse("integrations:sync_now", args=[self.integration.pk]))
+        self.assertContains(resp, reverse("integrations:test_connection", args=[self.integration.pk]))
 
     def test_member_cannot_sync_now(self):
         self._login(self.member)
