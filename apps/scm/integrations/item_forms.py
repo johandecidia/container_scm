@@ -15,11 +15,14 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.scm.containers.models import EquipmentType
 
+from .business_systems.business_central.container_creation import CREATION_MODES
 from .models import BusinessCentralItemLedgerEntry, BusinessCentralItemRule, Integration
 
 # Business Central item numbers and variant codes are Code[20] / Code[10].
 _ITEM_NO = re.compile(r"^[A-Z0-9_.\-/]{1,20}$")
 _VARIANT = re.compile(r"^[A-Z0-9_.\-/]{1,10}$")
+# Shape only; the ISO 6346 check digit is verified when the container is created.
+_SERIAL = re.compile(r"^[A-Z]{4}\d{7}$")
 
 
 class ItemRuleForm(forms.ModelForm):
@@ -77,3 +80,29 @@ class ItemRuleForm(forms.ModelForm):
         if commit:
             rule.save()
         return rule
+
+
+class ContainerCreationModeForm(forms.Form):
+    mode = forms.ChoiceField(label=_("Container creation"), choices=CREATION_MODES)
+
+
+class ApproveCandidatesForm(forms.Form):
+    """The serial numbers an administrator approved; each is re-checked by the service."""
+
+    MAX_SERIALS = 500
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.serials: list[str] = []
+
+    def clean(self):
+        cleaned = super().clean()
+        serials = [s.strip().upper() for s in self.data.getlist("serials") if s.strip()]
+        if not serials:
+            raise forms.ValidationError(_("Select at least one container to create."))
+        if len(serials) > self.MAX_SERIALS:
+            raise forms.ValidationError(_("Approve at most %(max)s containers at a time.") % {"max": self.MAX_SERIALS})
+        if any(not _SERIAL.match(s) for s in serials):
+            raise forms.ValidationError(_("Only ISO 6346 container numbers can be approved."))
+        self.serials = serials
+        return cleaned

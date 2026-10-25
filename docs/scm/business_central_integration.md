@@ -583,6 +583,29 @@ The status is the entry's current state (no duplicates across passes). A deleted
 container leaves its entries with `container = NULL`; commercial history is never
 deleted. The BC sync never writes these fields.
 
+### Controlled container creation (operation B)
+
+*Settings → Integrations → Business Central → Containers* (`/scm/integrations/<id>/containers/`,
+team admins only) shows the link-status counts (click one to list its entries), a
+**Run matching** button (queues operation A) and the creation mode, stored as
+`config.resources.item_ledger_entries.container_creation`:
+
+| Mode | Behaviour |
+| --- | --- |
+| `match_only` (default) | Link to existing containers only; no candidates shown |
+| `review` | Candidates listed, nothing can be created |
+| `create_approved` | Admin selects candidates and creates them |
+
+A candidate is a serial number with `container_not_found` entries whose current rules
+map to exactly one equipment type (several types → shown as *types disagree*, not
+creatable). `container_creation.create_approved_containers` re-matches the approved
+serials first, re-checks every one, and creates through
+`containers.intake.create_or_get_container` with the mapped type only — no carrier
+(no tracking), no location (no movement), default status. An existing container
+(also one created concurrently) is reused and never changed; the entries are then
+re-matched. Refused serials are reported with the reason. No sync or matching pass
+ever creates a container, and nothing is created from BC stock status.
+
 ## Technical debt left after stage 0
 
 - `schemas.NormalizedCustomerOrder(Line)` (plain dataclasses) and

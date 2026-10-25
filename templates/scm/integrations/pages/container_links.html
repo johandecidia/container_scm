@@ -1,0 +1,171 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Settings → Integrations → Business Central → Containers. Team Administrators only.
+  Matching only links entries to containers that already exist. Containers are
+  created only for serial numbers an administrator approves, and only in
+  "create approved" mode — never by a sync or a matching pass. Creating a
+  container starts no tracking and records no movement or receipt.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'integrations:detail' integration.pk %}">&larr; {{ integration.name }}</a>
+    <h2 class="text-xl font-semibold mt-2">{% translate "Containers from Business Central" %}</h2>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% blocktranslate trimmed %}
+        Entries are linked to containers by their ISO 6346 number only. Change the
+        item classification, then run matching again.
+      {% endblocktranslate %}
+      <a class="link" href="{% url 'integrations:item_rules' integration.pk %}">{% translate "Item classification" %}</a>
+    </p>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags|default:'info' }} alert-soft mb-4">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <section class="app-card">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold">{% translate "Link status" %}</h3>
+        <form method="post" action="{% url 'integrations:container_links_match' integration.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-primary btn-sm">{% translate "Run matching" %}</button>
+        </form>
+      </div>
+      {% if summary %}
+        <ul class="text-sm divide-y divide-base-200">
+          {% for code, label, count in summary %}
+            <li class="py-1.5 flex justify-between gap-2">
+              <a class="link link-hover {% if code == status %}font-semibold{% endif %}" href="?status={{ code }}">{{ label }}</a>
+              <span class="tabular-nums">{{ count }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-base-content/60">{% translate "No item ledger entries have been synced yet." %}</p>
+      {% endif %}
+    </section>
+
+    <section class="app-card">
+      <h3 class="font-semibold mb-3">{% translate "Container creation" %}</h3>
+      <form method="post" action="{% url 'integrations:container_links_mode' integration.pk %}" class="flex items-end gap-2">
+        {% csrf_token %}
+        <div class="form-control grow">
+          <label class="label" for="{{ mode_form.mode.id_for_label }}"><span class="label-text">{{ mode_form.mode.label }}</span></label>
+          {{ mode_form.mode }}
+        </div>
+        <button type="submit" class="btn btn-outline btn-sm">{% translate "Save" %}</button>
+      </form>
+      <p class="text-xs text-base-content/60 mt-2">
+        {% blocktranslate trimmed %}
+          Default is match only. Review lists candidates; only "create approved" lets you
+          create the containers you select below.
+        {% endblocktranslate %}
+      </p>
+    </section>
+  </div>
+
+  {% if status %}
+    <section class="app-card mb-6">
+      <h3 class="font-semibold mb-3">{% translate "Entries" %} — {{ status }}</h3>
+      {% if entries %}
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>{% translate "Entry no." %}</th>
+                <th>{% translate "Item no." %}</th>
+                <th>{% translate "Serial no. (BC)" %}</th>
+                <th>{% translate "Document" %}</th>
+                <th>{% translate "Posting date" %}</th>
+                <th>{% translate "Container" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for entry in entries %}
+                <tr>
+                  <td class="tabular-nums">{{ entry.entry_no }}</td>
+                  <td class="font-mono">{{ entry.item_no }}</td>
+                  <td class="font-mono">{{ entry.serial_no_raw|default:"—" }}</td>
+                  <td>{{ entry.document_no|default:"—" }}</td>
+                  <td>{{ entry.posting_date|default:"—" }}</td>
+                  <td class="font-mono">{{ entry.container|default:"—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="text-sm text-base-content/60">{% translate "No entries with this status." %}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if mode != "match_only" %}
+    <section class="app-card">
+      <h3 class="font-semibold mb-1">{% translate "Creation candidates" %}</h3>
+      <p class="text-xs text-base-content/60 mb-3">
+        {% blocktranslate trimmed count counter=candidate_count %}
+          {{ counter }} valid container number not in Pegasus, most recently posted first.
+        {% plural %}
+          {{ counter }} valid container numbers not in Pegasus, most recently posted first.
+        {% endblocktranslate %}
+      </p>
+      {% if candidates %}
+        <form method="post" action="{% url 'integrations:container_links_create' integration.pk %}">
+          {% csrf_token %}
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>{% translate "Container no." %}</th>
+                  <th>{% translate "Equipment type" %}</th>
+                  <th>{% translate "Items" %}</th>
+                  <th class="text-right">{% translate "Entries" %}</th>
+                  <th>{% translate "Last posting" %}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for candidate in candidates %}
+                  <tr>
+                    <td>
+                      {% if can_create and not candidate.ambiguous %}
+                        <input type="checkbox" class="checkbox checkbox-sm" name="serials" value="{{ candidate.serial_no }}">
+                      {% endif %}
+                    </td>
+                    <td class="font-mono">{{ candidate.serial_no }}</td>
+                    <td>
+                      {% if candidate.ambiguous %}
+                        <span class="badge badge-warning badge-soft badge-sm">{% translate "Types disagree" %}</span>
+                      {% else %}
+                        {{ candidate.equipment_type }}
+                      {% endif %}
+                    </td>
+                    <td class="font-mono text-xs">{{ candidate.item_nos|join:", " }}</td>
+                    <td class="text-right tabular-nums">{{ candidate.entries }}</td>
+                    <td>{{ candidate.last_posting_date|default:"—" }} {{ candidate.last_document_no }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% if can_create %}
+            <button type="submit" class="btn btn-primary btn-sm mt-3">{% translate "Create selected containers" %}</button>
+          {% else %}
+            <p class="text-xs text-base-content/60 mt-3">{% translate "Switch to “create approved” to create containers." %}</p>
+          {% endif %}
+        </form>
+      {% else %}
+        <p class="text-sm text-base-content/60">{% translate "No candidates. Run matching after changing the item classification." %}</p>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

@@ -34,6 +34,9 @@
     <a class="btn btn-ghost btn-sm" href="{% url 'integrations:item_rules' integration.pk %}">
       {% translate "Item classification" %}
     </a>
+    <a class="btn btn-ghost btn-sm" href="{% url 'integrations:container_links' integration.pk %}">
+      {% translate "Containers" %}
+    </a>
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
