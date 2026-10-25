@@ -30,8 +30,9 @@ from apps.scm.procurement.models import PurchaseOrder, PurchaseOrderLine, Purcha
 
 from .client import BusinessCentralClient
 from .exceptions import BusinessCentralConfigurationError
+from .lifecycle import check_source_binding, validate_integration
 from .locks import purchase_order_lock_name, sync_lock
-from .sync import _line_identifier, _validate_integration, check_source_binding
+from .sync import _line_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def reconcile_purchase_orders(
     wrong environment would soft-delete every order it does not see, it only
     runs against the source this integration has already imported from.
     """
-    _validate_integration(integration, client)
+    validate_integration(integration, client)
     if client is None:
         client = BusinessCentralClient(integration=integration)
     with sync_lock(purchase_order_lock_name(integration)):
@@ -61,6 +62,7 @@ def reconcile_purchase_orders(
         check_source_binding(integration, source)
         if not IntegrationSyncRun.objects.filter(
             integration=integration,
+            resource_type=IntegrationSyncRun.ResourceType.PURCHASE_ORDERS,
             status=IntegrationSyncRun.Status.COMPLETED,
             metadata__source=source,
         ).exists():

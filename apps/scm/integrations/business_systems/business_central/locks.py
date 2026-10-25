@@ -22,8 +22,13 @@ from .exceptions import BusinessCentralSyncInProgressError
 _LOCK_PREFIX = "bc_sync_lock"
 
 
+def sync_lock_name(integration, resource_type: str) -> str:
+    """One lock per integration *and* resource: different resources sync in parallel."""
+    return f"{integration.pk}:{resource_type}"
+
+
 def purchase_order_lock_name(integration) -> str:
-    return f"{integration.pk}:purchase_orders"
+    return sync_lock_name(integration, "purchase_orders")
 
 
 def cache_lock_key(name: str) -> str:

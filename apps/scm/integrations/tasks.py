@@ -87,40 +87,45 @@ def retry_failed_integration_request(self, integration_id: int) -> None:
     # TODO: implement per-carrier retry logic
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=300)
-def sync_business_central_purchase_orders_task(self, integration_id: int, trigger_type: str = "scheduled") -> None:
-    """Run a Business Central purchase-order sync for a single integration.
+def run_business_central_resource_sync_task(task, integration_id: int, resource_type: str, trigger_type: str) -> None:
+    """Shared body of the Business Central sync tasks (``task`` is the bound Celery task).
 
-    Permanent problems (config, or a sync already running) are logged and skipped;
-    transient Business Central errors are retried with backoff. A *scheduled* run
-    is re-checked against the integration's ``scheduled_sync_enabled`` opt-in
-    when it executes, so a task queued before the opt-in was withdrawn does nothing.
+    Permanent problems (config, unimplemented/disabled resource, or a sync already
+    running) are logged and skipped; transient Business Central errors are retried
+    with backoff. A *scheduled* run is re-checked when it executes — integration
+    opt-in, resource implemented and enabled — so a task queued before any of
+    those was withdrawn does nothing.
     """
     from .business_systems.business_central.exceptions import (
         BusinessCentralConfigurationError,
         BusinessCentralError,
         BusinessCentralSyncInProgressError,
     )
-    from .business_systems.business_central.sync import sync_purchase_orders_from_business_central
+    from .business_systems.business_central.resources import get_sync_function, is_resource_schedulable
     from .models import Integration
-    from .services import is_business_central_scheduled_sync_enabled
 
     try:
         integration = Integration.objects.get(pk=integration_id, is_active=True)
     except Integration.DoesNotExist:
+        logger.info("BC %s sync task: integration %s not found/inactive — skipping.", resource_type, integration_id)
+        return
+
+    if trigger_type == "scheduled" and not is_resource_schedulable(integration, resource_type):
         logger.info(
-            "sync_business_central_purchase_orders_task: integration %s not found/inactive — skipping.", integration_id
+            "BC %s sync task: integration=%s scheduled sync not enabled — skipping.", resource_type, integration_id
         )
         return
 
-    if trigger_type == "scheduled" and not is_business_central_scheduled_sync_enabled(integration):
-        logger.info("BC PO sync task: integration=%s scheduled sync not enabled — skipping.", integration_id)
+    sync = get_sync_function(resource_type)
+    if sync is None:
+        logger.info("BC %s sync task: no sync implementation — skipping.", resource_type)
         return
 
     try:
-        run = sync_purchase_orders_from_business_central(integration, trigger_type=trigger_type)
+        run = sync(integration, trigger_type=trigger_type)
         logger.info(
-            "BC PO sync task: integration=%s %s (created=%d updated=%d unchanged=%d failed=%d)",
+            "BC %s sync task: integration=%s %s (created=%d updated=%d unchanged=%d failed=%d)",
+            resource_type,
             integration_id,
             run.status,
             run.records_created,
@@ -129,10 +134,42 @@ def sync_business_central_purchase_orders_task(self, integration_id: int, trigge
             run.records_failed,
         )
     except (BusinessCentralConfigurationError, BusinessCentralSyncInProgressError) as exc:
-        logger.info("BC PO sync task: integration=%s skipped: %s", integration_id, exc)
+        logger.info("BC %s sync task: integration=%s skipped: %s", resource_type, integration_id, exc)
     except BusinessCentralError as exc:
-        logger.warning("BC PO sync task: integration=%s transient failure: %s", integration_id, exc)
-        raise self.retry(exc=exc) from exc
+        logger.warning("BC %s sync task: integration=%s transient failure: %s", resource_type, integration_id, exc)
+        raise task.retry(exc=exc) from exc
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def sync_business_central_resource_task(
+    self, integration_id: int, resource_type: str, trigger_type: str = "scheduled"
+) -> None:
+    """Run a Business Central sync of ``resource_type`` for a single integration."""
+    run_business_central_resource_sync_task(self, integration_id, resource_type, trigger_type)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def sync_business_central_purchase_orders_task(self, integration_id: int, trigger_type: str = "scheduled") -> None:
+    """Run a Business Central purchase-order sync for a single integration.
+
+    Kept as its own task (name unchanged) for purchase orders; it shares its body
+    with :func:`sync_business_central_resource_task`.
+    """
+    from .models import IntegrationSyncRun
+
+    run_business_central_resource_sync_task(
+        self, integration_id, IntegrationSyncRun.ResourceType.PURCHASE_ORDERS, trigger_type
+    )
+
+
+def queue_business_central_resource_sync(integration_id: int, resource_type: str, trigger_type: str) -> None:
+    """Queue one resource sync; purchase orders keep their dedicated task."""
+    from .models import IntegrationSyncRun
+
+    if resource_type == IntegrationSyncRun.ResourceType.PURCHASE_ORDERS:
+        sync_business_central_purchase_orders_task.delay(integration_id, trigger_type)
+    else:
+        sync_business_central_resource_task.delay(integration_id, resource_type, trigger_type)
 
 
 @shared_task
@@ -156,29 +193,31 @@ def test_business_central_connection_task(integration_id: int) -> dict:
 
 @shared_task
 def sync_enabled_business_central_integrations_task() -> dict:
-    """Dispatcher: queue a PO sync for every BC integration that is due.
+    """Dispatcher: queue a sync for every BC integration resource that is due.
 
     Runs on a fixed Celery Beat interval; the due check (interval, failure backoff,
-    in-progress, enabled/active) decides which integrations are actually queued.
-    One task is enqueued per integration, keeping teams isolated.
+    in-progress, enabled/active) decides what is actually queued. One task is
+    enqueued per integration and resource, keeping teams and resources isolated.
 
     Only integrations with ``scheduled_sync_enabled: true`` in their config are
-    considered (opt-in; default off). Set ``SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False``
-    to pause scheduled Business Central syncing globally without removing the
-    schedule or the implementation. Manual and per-integration syncs still work.
+    considered (opt-in; default off), and only resources that are implemented and
+    enabled (see ``business_central.resources``). Set
+    ``SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED=False`` to pause scheduled Business
+    Central syncing globally without removing the schedule or the implementation.
+    Manual and per-integration syncs still work.
     """
     from django.conf import settings
 
-    from .services import get_due_business_central_integrations
+    from .services import get_due_business_central_syncs
 
     if not getattr(settings, "SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED", True):
         logger.info("BC dispatcher: disabled by configuration — nothing queued.")
         return {"queued": 0, "disabled": True}
 
-    due = get_due_business_central_integrations()
-    for integration in due:
-        sync_business_central_purchase_orders_task.delay(integration.id, "scheduled")
-    logger.info("BC dispatcher: queued %d integration(s)", len(due))
+    due = get_due_business_central_syncs()
+    for integration, resource_type in due:
+        queue_business_central_resource_sync(integration.id, resource_type, "scheduled")
+    logger.info("BC dispatcher: queued %d resource sync(s)", len(due))
     return {"queued": len(due), "disabled": False}
 
 

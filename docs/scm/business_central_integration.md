@@ -16,8 +16,13 @@
 - `business_central/auth.py` — Entra ID OAuth2 client-credentials token.
 - `business_central/client.py` — read-only OData v2.0 client (dummy + live).
 - `business_central/mapper.py` + `schemas.py` — raw OData → normalised DTOs.
-- `business_central/sync.py` — orchestrates an incremental, locked sync and
-  records an `IntegrationSyncRun`.
+- `business_central/lifecycle.py` — the run lifecycle shared by every BC resource:
+  validation, per-resource lock, integration-wide source binding, the
+  `IntegrationSyncRun` record and safe sync markers. A resource supplies only a
+  step (fetch → map → validate → upsert) returning a `SyncOutcome`.
+- `business_central/resources.py` — which resources are *defined*,
+  *implemented* and *enabled*, and their intervals.
+- `business_central/sync.py` — the purchase-order step.
 - `procurement/services.py::upsert_purchase_orders` — idempotent write into
   `PurchaseOrder`/`PurchaseOrderLine` (the canonical write path for all sources).
 
@@ -56,11 +61,52 @@ hand.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `sync_enabled` | `true` (the setup command writes `false` unless `--enable-sync`) | Master switch: allows **any** PO sync, manual or scheduled. |
-| `scheduled_sync_enabled` | `false` | Opt-in for Celery Beat. Only `true` (a JSON boolean) counts. The setup command always writes `false`. |
+| `sync_enabled` | `true` (the setup command writes `false` unless `--enable-sync`) | Master switch: allows **any** sync of any resource, manual or scheduled. |
+| `scheduled_sync_enabled` | `false` | Opt-in for Celery Beat (all resources). Only `true` (a JSON boolean) counts. The setup command always writes `false`. |
+| `resources` | — | Per-resource settings, see *Resources* below. |
 | `initial_sync_days` | `0` (full) | First sync only pulls orders modified in the last N days. Older, unmodified orders are then never pulled by incremental syncs — prefer a full first sync if the order count is modest. |
 | `page_size` | `100` | Sent as `Prefer: odata.maxpagesize` (1–20000). Not `$top`. |
 | `api_version` | `v2.0` | Only the `/api/{version}` segment; the leading `/v2.0` service segment is fixed. |
+
+### Resources
+
+`IntegrationSyncRun.resource_type` knows `purchase_orders`, `sales_orders`,
+`purchase_receipts`, `sales_shipments` and `item_ledger_entries`. A resource is
+synced on a schedule only when all of these hold:
+
+1. it is **defined** (a `ResourceType`);
+2. it is **implemented** (registered in `resources._SYNC_IMPLEMENTATIONS` — today
+   only `purchase_orders`);
+3. it is **enabled** for the integration;
+4. the integration has `sync_enabled` and `scheduled_sync_enabled: true`.
+
+```json
+{
+  "resources": {
+    "purchase_orders": {"enabled": true, "interval_minutes": 30, "failure_backoff_minutes": 15},
+    "item_ledger_entries": {"enabled": false, "interval_minutes": 30}
+  }
+}
+```
+
+Without a `resources` entry, purchase orders are enabled and keep using
+`purchase_order_sync_interval_minutes` / `purchase_order_sync_failure_backoff_minutes`
+(a `resources.purchase_orders` value takes precedence). Every other resource is
+disabled unless its `enabled` is literally `true`, and an enabled resource without
+an implementation is never scheduled or run.
+
+**Sync markers.** `watermark_from`/`watermark_to` carry timestamp markers; integer
+markers (e.g. a ledger `entryNo`) go in `metadata["cursor_from"]`/`["cursor_to"]`
+(`services.get_last_successful_cursor`). Both advance only on a `COMPLETED` run.
+
+**Locks.** One lock per integration *and* resource (`{integration_id}:{resource}`,
+unchanged for purchase orders): the same resource never runs twice, different
+resources may run in parallel.
+
+**API paths.** The client reaches only allowlisted APIs: `standard`
+(`/api/{api_version}`) and `analytics` (`/api/microsoft/analytics/v1.0`).
+Endpoints must be relative; a `@odata.nextLink` must stay on the BC host *and*
+inside the API it was requested from. Only `GET` is ever sent.
 
 ### Credentials (secret — never in config)
 
@@ -171,11 +217,14 @@ GUIDs**, and `PurchaseOrder` has no environment column. Safeguards:
 1. **One Team per environment.** A team has at most one BC integration
    (`unique (team, provider_code)`), and the setup command refuses to re-point a team at
    another environment/company.
-2. **Source binding.** Every sync run stores `metadata["source"]` = tenant, environment,
-   company. Once an integration has imported anything (completed or partial run), a sync
-   or reconcile from any other source — including runs recorded before sources were
-   tracked, and the dummy client — is refused with *"Use a separate Team for this
-   environment."* Failed runs do not bind.
+2. **Source binding (integration-wide).** Every sync run stores `metadata["source"]` =
+   tenant, environment, company. Once an integration has imported anything (completed
+   or partial run of *any* resource), a sync or reconcile of any resource from another
+   source — including runs recorded before sources were tracked, and the dummy client —
+   is refused with *"Use a separate Team for this environment."* A run still in progress
+   (started < 2 h ago) binds too, and the check and the run claim happen together
+   under a row lock on the integration, so parallel resource syncs cannot read two
+   sources. Failed runs do not bind.
 3. **Watermarks per source.** Only completed runs of the same source supply a watermark.
 4. **Ownership on upsert.** An existing PO from another `source_system` or another
    `source_company_id` is never overwritten; that record fails instead.
@@ -317,7 +366,7 @@ Run it a second time: `created=0 … unchanged=N` (idempotent).
 | Invalid company | Company id wrong, or not visible to the app | Compare with the company GUID; NAB checks company access |
 | Network error | DNS/timeout/proxy | Retry; check outbound HTTPS to `api.businesscentral.dynamics.com` and `login.microsoftonline.com` |
 | Unexpected API response (HTTP 400) | Usually a `$select` property the environment does not expose | Report the `[code=…]`; compare with the v2.0 reference |
-| *already imported purchase orders from a different (or unrecorded) source* | Team previously synced another environment or dummy data | Use a fresh Team |
+| *already synced data from a different (or unrecorded) Business Central source* | Team previously synced another environment or dummy data | Use a fresh Team |
 
 > **Security note:** this document contains no secrets. Never commit a client secret
 > or a Fernet key, never pass secrets as command arguments, never paste them into
@@ -369,10 +418,11 @@ Run it a second time: `created=0 … unchanged=N` (idempotent).
 ### Scheduling & monitoring
 
 - Celery Beat runs `sync_enabled_business_central_integrations_task` every 5 minutes;
-  it queues one `sync_business_central_purchase_orders_task` per *due* integration
-  that has opted in with `scheduled_sync_enabled: true` (per-integration
-  `purchase_order_sync_interval_minutes`, failure backoff via
-  `purchase_order_sync_failure_backoff_minutes`, skipping in-progress runs).
+  it queues one task per *due* integration **and resource** that has opted in with
+  `scheduled_sync_enabled: true` (see *Resources*: interval, failure backoff,
+  skipping in-progress runs). Purchase orders keep
+  `sync_business_central_purchase_orders_task`; other resources would use
+  `sync_business_central_resource_task(integration_id, resource_type, trigger_type)`.
 - Monitoring UI at `/scm/integrations/`: per-integration health, latest run counts,
   watermark, and — for team administrators — **Test connection** / **Sync purchase
   orders now** buttons (POST + CSRF, team-scoped, queue Celery tasks, never display

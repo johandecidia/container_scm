@@ -134,6 +134,11 @@ class IntegrationSyncRun(BaseTeamModel):
     poll), not a single HTTP call — the individual HTTP calls are captured in
     IntegrationRequestLog. The successful run's ``watermark_to`` becomes the
     starting point for the next incremental run.
+
+    Sync markers: ``watermark_from``/``watermark_to`` hold timestamp markers
+    (source ``lastModifiedDateTime``). Integer markers (e.g. a ledger
+    ``entryNo``) are kept in ``metadata["cursor_from"]``/``metadata["cursor_to"]``.
+    Both are only set as the "to" marker on a fully completed run.
     """
 
     class Status(models.TextChoices):
@@ -150,6 +155,10 @@ class IntegrationSyncRun(BaseTeamModel):
 
     class ResourceType(models.TextChoices):
         PURCHASE_ORDERS = "purchase_orders", _("Purchase orders")
+        SALES_ORDERS = "sales_orders", _("Sales orders")
+        PURCHASE_RECEIPTS = "purchase_receipts", _("Purchase receipts")
+        SALES_SHIPMENTS = "sales_shipments", _("Sales shipments")
+        ITEM_LEDGER_ENTRIES = "item_ledger_entries", _("Item ledger entries")
 
     integration = models.ForeignKey(
         Integration,

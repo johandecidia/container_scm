@@ -21,7 +21,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 
@@ -51,6 +51,15 @@ _API_HOST = "https://api.businesscentral.dynamics.com"
 # Version of the Business Central *service endpoint* (the first path segment). It
 # is fixed by Microsoft and independent of the API version further down the path.
 _SERVICE_VERSION = "v2.0"
+
+# Business Central APIs this client may call, by name. ``standard`` is the
+# standard API at the configured ``api_version`` (``/api/v2.0``); every other API
+# is a fixed path under ``/api/``. Nothing outside this allowlist can be reached.
+API_STANDARD = "standard"
+API_ANALYTICS = "analytics"
+_API_PATHS = {
+    API_ANALYTICS: "microsoft/analytics/v1.0",
+}
 
 # HTTP statuses worth retrying (transient). 401 is handled separately (one refresh).
 _RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
@@ -121,9 +130,22 @@ class BusinessCentralConfig:
     @property
     def api_root(self) -> str:
         """``https://api.businesscentral.dynamics.com/v2.0/{tenant}/{environment}/api/{api_version}``."""
+        return self.api_root_for(API_STANDARD)
+
+    def api_path(self, api: str) -> str:
+        """The path after ``/api/`` for an allowlisted API name."""
+        if api == API_STANDARD:
+            return quote(self.api_version, safe="")
+        try:
+            return _API_PATHS[api]
+        except KeyError:
+            raise BusinessCentralConfigurationError(f"Business Central API '{api}' is not allowed") from None
+
+    def api_root_for(self, api: str) -> str:
+        """Root URL of an allowlisted API, e.g. ``…/{environment}/api/microsoft/analytics/v1.0``."""
         tenant = quote(self.tenant_id, safe="")
         environment = quote(self.environment, safe="")
-        return f"{_API_HOST}/{_SERVICE_VERSION}/{tenant}/{environment}/api/{quote(self.api_version, safe='')}"
+        return f"{_API_HOST}/{_SERVICE_VERSION}/{tenant}/{environment}/api/{self.api_path(api)}"
 
     @property
     def company_path(self) -> str:
@@ -179,6 +201,26 @@ def _error_code(response) -> str:
 
 def _with_code(message: str, code: str) -> str:
     return f"{message} [code={code}]" if code else message
+
+
+def _next_link_in_api(next_link: str, api_path: str) -> bool:
+    """True when a nextLink's path stays inside ``/{service}/{tenant}/{environment}/api/{api_path}/``.
+
+    Compared case-insensitively: Business Central echoes tenant and environment
+    back in its own casing.
+    """
+    parts = urlsplit(next_link)
+    segments = parts.path.lower().split("/")
+    # ['', 'v2.0', tenant, environment, 'api', *api_path, resource, ...]
+    expected = api_path.lower().split("/")
+    return (
+        parts.scheme == "https"
+        and len(segments) > 5 + len(expected)
+        and segments[1] == _SERVICE_VERSION
+        and segments[4] == "api"
+        and segments[5 : 5 + len(expected)] == expected
+        and ".." not in segments
+    )
 
 
 class BusinessCentralClient(BaseBusinessSystemClient):
@@ -353,16 +395,26 @@ class BusinessCentralClient(BaseBusinessSystemClient):
     # Internal helpers — HTTP
     # ------------------------------------------------------------------
 
-    def _build_url(self, endpoint: str) -> str:
+    def _build_url(self, endpoint: str, *, api: str = API_STANDARD) -> str:
         cfg = self._require_config()
-        return f"{cfg.api_root}/{endpoint.lstrip('/')}"
+        if "://" in endpoint or endpoint.startswith("//"):
+            # Endpoints are relative to an allowlisted API root, never a URL of their own.
+            raise BusinessCentralConfigurationError("Business Central endpoint must be a relative path")
+        return f"{cfg.api_root_for(api)}/{endpoint.lstrip('/')}"
 
-    def _get(self, endpoint: str, *, params: dict | None = None) -> dict:
+    def _get(self, endpoint: str, *, params: dict | None = None, api: str = API_STANDARD) -> dict:
         """Perform a single GET against a relative endpoint and return parsed JSON."""
-        return self._request(self._build_url(endpoint), params=params, log_endpoint=endpoint)
+        return self._request(self._build_url(endpoint, api=api), params=params, log_endpoint=endpoint)
 
-    def _fetch_all_pages(self, endpoint: str, *, params: dict | None = None, limit: int | None = None) -> list[dict]:
-        """Fetch an OData collection, following @odata.nextLink.
+    def _fetch_all_pages(
+        self,
+        endpoint: str,
+        *,
+        params: dict | None = None,
+        limit: int | None = None,
+        api: str = API_STANDARD,
+    ) -> list[dict]:
+        """Fetch an OData collection of an allowlisted ``api``, following @odata.nextLink.
 
         Page size is requested with ``Prefer: odata.maxpagesize`` (re-sent on every
         page). ``$top`` is *not* a page size in OData — it caps the whole result
@@ -375,7 +427,9 @@ class BusinessCentralClient(BaseBusinessSystemClient):
         headers = {"Prefer": f"odata.maxpagesize={cfg.page_size}"}
 
         results: list[dict] = []
-        payload = self._request(self._build_url(endpoint), params=query, log_endpoint=endpoint, headers=headers)
+        payload = self._request(
+            self._build_url(endpoint, api=api), params=query, log_endpoint=endpoint, headers=headers
+        )
         pages = 0
         while True:
             pages += 1
@@ -390,9 +444,12 @@ class BusinessCentralClient(BaseBusinessSystemClient):
                 break
             if pages >= _MAX_PAGES:
                 raise BusinessCentralResponseError(f"Pagination exceeded {_MAX_PAGES} pages for {endpoint}")
-            # The bearer token is only ever sent to the Business Central API host.
+            # The bearer token is only ever sent to the Business Central API host,
+            # and a page of one API may not continue into another.
             if not str(next_link).startswith(f"{_API_HOST}/"):
                 raise BusinessCentralResponseError("Business Central returned a nextLink outside the API host")
+            if not _next_link_in_api(str(next_link), cfg.api_path(api)):
+                raise BusinessCentralResponseError("Business Central returned a nextLink outside the requested API")
             # nextLink is an absolute URL that already carries the query state.
             payload = self._request(next_link, params=None, log_endpoint=endpoint, headers=headers)
         return results[:limit] if limit else results

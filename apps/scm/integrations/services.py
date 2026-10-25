@@ -2,37 +2,30 @@
 import logging
 from datetime import datetime, timedelta
 
+from django.db.models import BigIntegerField
+from django.db.models.fields.json import KT
+from django.db.models.functions import Cast
 from django.utils import timezone
 
 from apps.teams.models import Team
 
+from .business_systems.business_central import resources as bc_resources
 from .models import Integration, IntegrationRequestLog, IntegrationSyncRun
 
 logger = logging.getLogger(__name__)
 
 _BC_PROVIDER_CODE = "business_central"
-_DEFAULT_SYNC_INTERVAL_MINUTES = 30
-_DEFAULT_FAILURE_BACKOFF_MINUTES = 15
 # A run stuck in "running" longer than this is treated as crashed (the advisory
 # lock, released on crash, is the real concurrency guard).
-_STALE_RUNNING_HOURS = 2
+STALE_RUNNING_HOURS = 2
 
 
-def _is_business_central_sync_due(integration: Integration, now: datetime) -> bool:
-    """True when this BC integration's purchase-order sync is due to run again."""
-    config = integration.config or {}
-    interval = timedelta(
-        minutes=int(config.get("purchase_order_sync_interval_minutes") or _DEFAULT_SYNC_INTERVAL_MINUTES)
-    )
-    backoff = timedelta(
-        minutes=int(config.get("purchase_order_sync_failure_backoff_minutes") or _DEFAULT_FAILURE_BACKOFF_MINUTES)
-    )
+def _is_resource_sync_due(integration: Integration, resource_type: str, now: datetime) -> bool:
+    """True when this BC integration's sync of ``resource_type`` is due to run again."""
+    settings = bc_resources.get_resource_settings(integration, resource_type)
 
     latest = (
-        IntegrationSyncRun.objects.filter(
-            integration=integration,
-            resource_type=IntegrationSyncRun.ResourceType.PURCHASE_ORDERS,
-        )
+        IntegrationSyncRun.objects.filter(integration=integration, resource_type=resource_type)
         .order_by("-started_at")
         .first()
     )
@@ -43,14 +36,14 @@ def _is_business_central_sync_due(integration: Integration, now: datetime) -> bo
     if (
         latest.status == IntegrationSyncRun.Status.RUNNING
         and latest.started_at
-        and latest.started_at > now - timedelta(hours=_STALE_RUNNING_HOURS)
+        and latest.started_at > now - timedelta(hours=STALE_RUNNING_HOURS)
     ):
         return False
 
     reference = latest.finished_at or latest.started_at
     if reference is None:
         return True
-    gap = interval if latest.status == IntegrationSyncRun.Status.COMPLETED else backoff
+    gap = settings.interval if latest.status == IntegrationSyncRun.Status.COMPLETED else settings.failure_backoff
     return reference + gap <= now
 
 
@@ -58,22 +51,24 @@ def is_business_central_scheduled_sync_enabled(integration: Integration) -> bool
     """True only when a BC integration has explicitly opted in to *scheduled* syncing.
 
     Two config switches, deliberately separate:
-      - ``sync_enabled`` (default True) allows any purchase-order sync, manual or
-        scheduled;
+      - ``sync_enabled`` (default True) allows any sync, manual or scheduled;
       - ``scheduled_sync_enabled`` (default False) additionally lets Celery Beat
         run it. A new integration — e.g. a sandbox under test — is never synced
         in the background until someone sets this to true.
+
+    Each resource must in addition be implemented and enabled — see
+    ``business_central.resources.is_resource_schedulable``.
     """
-    config = integration.config or {}
-    return bool(config.get("sync_enabled", True)) and config.get("scheduled_sync_enabled") is True
+    return bc_resources.is_scheduled_sync_enabled(integration)
 
 
-def get_due_business_central_integrations(now: datetime | None = None) -> list[Integration]:
-    """Return active BC integrations, opted in to scheduled sync, whose PO sync is due.
+def get_due_business_central_syncs(now: datetime | None = None) -> list[tuple[Integration, str]]:
+    """Return ``(integration, resource_type)`` pairs whose scheduled sync is due.
 
-    Skips integrations that are inactive, have sync or scheduled sync disabled, are
-    not yet due per their configured interval, are backing off after a failure, or
-    have a sync in progress.
+    A pair is only considered when the integration is an active BC integration
+    opted in to scheduled sync and the resource is implemented and enabled; it is
+    skipped when not yet due per its interval, backing off after a failure, or
+    already in progress.
     """
     now = now or timezone.now()
     integrations = Integration.objects.filter(
@@ -83,9 +78,17 @@ def get_due_business_central_integrations(now: datetime | None = None) -> list[I
     )
     due = []
     for integration in integrations:
-        if not is_business_central_scheduled_sync_enabled(integration):
-            continue
-        if _is_business_central_sync_due(integration, now):
+        for resource_type in bc_resources.schedulable_resources(integration):
+            if _is_resource_sync_due(integration, resource_type, now):
+                due.append((integration, resource_type))
+    return due
+
+
+def get_due_business_central_integrations(now: datetime | None = None) -> list[Integration]:
+    """Return the BC integrations that have at least one resource sync due."""
+    due: list[Integration] = []
+    for integration, _resource_type in get_due_business_central_syncs(now):
+        if integration not in due:
             due.append(integration)
     return due
 
@@ -112,6 +115,30 @@ def get_last_successful_watermark(integration: Integration, resource_type: str, 
         runs = runs.filter(metadata__source=source)
     run = runs.order_by("-watermark_to").first()
     return run.watermark_to if run else None
+
+
+def get_last_successful_cursor(integration: Integration, resource_type: str, *, source: dict | None = None):
+    """Return the highest integer ``metadata["cursor_to"]`` of a fully completed run, or None.
+
+    The integer counterpart of :func:`get_last_successful_watermark` (e.g. a
+    ledger ``entryNo``), with the same rules: only ``COMPLETED`` runs, and with
+    ``source`` only runs that read that same source.
+    """
+    runs = IntegrationSyncRun.objects.filter(
+        integration=integration,
+        resource_type=resource_type,
+        status=IntegrationSyncRun.Status.COMPLETED,
+        metadata__has_key="cursor_to",
+    )
+    if source is not None:
+        runs = runs.filter(metadata__source=source)
+    cursor = (
+        runs.annotate(_cursor=Cast(KT("metadata__cursor_to"), BigIntegerField()))
+        .order_by("-_cursor")
+        .values_list("_cursor", flat=True)
+        .first()
+    )
+    return cursor
 
 
 # ── Integration lifecycle ─────────────────────────────────────────────────────
