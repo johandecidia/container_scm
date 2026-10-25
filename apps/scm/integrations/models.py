@@ -506,3 +506,57 @@ class BusinessCentralLocationMapping(BaseTeamModel):
             and self.pegasus_location_id is not None
             and self.auto_receive_after_entry_no is not None
         )
+
+
+class BusinessCentralPurchaseReceipt(BaseTeamModel):
+    """A local copy of one posted purchase receipt (standard API v2.0 ``purchaseReceipts``).
+
+    Header fields are columns; the lines (``purchaseReceiptLines``, expanded) stay in
+    ``raw_payload["purchaseReceiptLines"]``. A separate line model is not needed: BC's
+    receipt lines carry no location, variant, serial or ledger reference, so the only
+    use of a line is the item quantity a receipt must reconcile with its serial-numbered
+    item ledger entries (``receipt_resolution``).
+
+    One row per BC source and receipt number — posted receipt numbers are unique within
+    a BC company, and the item ledger entries reference the receipt by that number.
+    The sync never creates a container, a movement or a receive.
+    """
+
+    integration = models.ForeignKey(
+        Integration,
+        on_delete=models.CASCADE,
+        related_name="purchase_receipts",
+        verbose_name=_("integration"),
+    )
+    company_id = models.CharField(_("BC company ID"), max_length=64)
+    bc_document_id = models.CharField(_("BC document ID"), max_length=64, blank=True)
+    receipt_no = models.CharField(_("receipt no."), max_length=50)
+    posting_date = models.DateField(_("posting date"), null=True, blank=True)
+    vendor_no = models.CharField(_("vendor no."), max_length=50, blank=True)
+    vendor_name = models.CharField(_("vendor name"), max_length=200, blank=True)
+    order_no = models.CharField(_("order no."), max_length=50, blank=True)
+    line_count = models.PositiveIntegerField(_("lines"), default=0)
+    bc_last_modified = models.DateTimeField(_("BC last modified"), null=True, blank=True)
+    raw_payload = models.JSONField(_("raw payload"), default=dict, blank=True)
+    sync_hash = models.CharField(_("sync hash"), max_length=64)
+    synced_at = models.DateTimeField(_("synced at"))
+
+    class Meta:
+        ordering = ["integration", "-posting_date", "-receipt_no"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["integration", "company_id", "receipt_no"], name="uniq_bc_purchase_receipt_per_source"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["team", "receipt_no"]),
+            models.Index(fields=["integration", "posting_date"]),
+        ]
+
+    def __str__(self):
+        return f"Receipt {self.receipt_no} ({self.posting_date or '—'})"
+
+    @property
+    def lines(self) -> list[dict]:
+        lines = (self.raw_payload or {}).get("purchaseReceiptLines")
+        return [line for line in lines if isinstance(line, dict)] if isinstance(lines, list) else []

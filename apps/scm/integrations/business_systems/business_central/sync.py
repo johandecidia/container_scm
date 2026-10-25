@@ -67,7 +67,7 @@ def _sync_step(context: SyncContext) -> SyncOutcome:
     from apps.scm.procurement.services import upsert_purchase_orders
 
     integration, client, source = context.integration, context.client, context.source
-    modified_since = _modified_since(integration, context.watermark_from, context.started)
+    modified_since = modified_since_filter(integration, context.watermark_from, context.started)
 
     raw_pos = client.fetch_purchase_orders(modified_since=modified_since)
     normalized_data = []
@@ -106,7 +106,7 @@ def _sync_step(context: SyncContext) -> SyncOutcome:
     )
 
 
-def _modified_since(integration: Integration, watermark_from, started) -> str | None:
+def modified_since_filter(integration: Integration, watermark_from, started) -> str | None:
     """Build the OData modified-since filter value (ISO-8601 UTC) or None for full sync."""
     if watermark_from:
         return _isoformat_z(watermark_from - _WATERMARK_OVERLAP)

@@ -108,6 +108,21 @@ _PO_LINE_SELECT = [
 ]
 
 
+# Standard API v2.0 purchaseReceipt / purchaseReceiptLine (verified, stage 2). Neither
+# carries a location code, variant or serial number; those come from the item
+# ledger entries the receipt posted (documentType "Purchase Receipt", documentNo).
+_RECEIPT_SELECT = ["id", "number", "postingDate", "vendorNumber", "vendorName", "orderNumber", "lastModifiedDateTime"]
+_RECEIPT_LINE_SELECT = [
+    "id",
+    "sequence",
+    "lineType",
+    "lineObjectNumber",
+    "description",
+    "unitOfMeasureCode",
+    "quantity",
+]
+
+
 def require_item_prefix(value: str) -> str:
     """Return ``value`` if it is safe to place inside an OData ``startswith`` filter."""
     if not isinstance(value, str) or not _ITEM_PREFIX_PATTERN.match(value):
@@ -256,7 +271,8 @@ class BusinessCentralClient(BaseBusinessSystemClient):
 
     system_code = "business_central"
     # What this client actually implements today — not what Business Central offers.
-    # Only purchase orders are fetched; no BC webhook processor exists (polling only).
+    # Purchase orders, posted purchase receipts and item ledger entries are fetched;
+    # no BC webhook processor exists (polling only).
     capabilities = BusinessSystemCapability(
         supports_purchase_orders=True,
         supports_polling=True,
@@ -427,6 +443,29 @@ class BusinessCentralClient(BaseBusinessSystemClient):
             params["$filter"] = " and ".join(clauses)
         endpoint = f"{cfg.company_path}/itemLedgerEntries"
         yield from self._iter_pages(endpoint, params=params, api=API_ANALYTICS)
+
+    def iter_purchase_receipt_pages(self, *, modified_since: str | None = None) -> Iterator[list[dict]]:
+        """Yield pages of posted purchase receipts, each with its ``purchaseReceiptLines`` expanded.
+
+        ``modified_since`` (ISO-8601 UTC) filters on ``lastModifiedDateTime``. In
+        dummy mode reads ``business_central_purchase_receipts.json``.
+        """
+        if self.use_dummy:
+            records = self._load_fixture("business_central_purchase_receipts.json")
+            if modified_since:
+                records = [r for r in records if str(r.get("lastModifiedDateTime", "")) > modified_since]
+            for start in range(0, len(records), _DUMMY_PAGE_SIZE):
+                yield records[start : start + _DUMMY_PAGE_SIZE]
+            return
+
+        cfg = self._require_config()
+        params: dict[str, Any] = {
+            "$select": ",".join(_RECEIPT_SELECT),
+            "$expand": f"purchaseReceiptLines($select={','.join(_RECEIPT_LINE_SELECT)})",
+        }
+        if modified_since:
+            params["$filter"] = f"lastModifiedDateTime gt {modified_since}"
+        yield from self._iter_pages(f"{cfg.company_path}/purchaseReceipts", params=params)
 
     def _dummy_item_ledger_pages(
         self, after_entry_no: int | None, prefixes: list[str], serial_only: bool

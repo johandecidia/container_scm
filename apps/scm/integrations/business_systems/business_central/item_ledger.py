@@ -54,23 +54,23 @@ def map_item_ledger_entry(raw: dict) -> dict[str, Any]:
     entry_no = raw.get("entryNo")
     if isinstance(entry_no, bool) or not isinstance(entry_no, int):
         raise ValueError(f"Business Central item ledger entry has no integer 'entryNo': {entry_no!r}")
-    serial_raw = _text(raw, "serialNo")
+    serial_raw = text_value(raw, "serialNo")
     serial_no, serial_status = classify_serial(serial_raw)
     return {
         "entry_no": entry_no,
-        "item_no": _text(raw, "itemNo"),
+        "item_no": text_value(raw, "itemNo"),
         "serial_no_raw": serial_raw,
         "serial_no": serial_no,
         "serial_status": serial_status,
-        "lot_no": _text(raw, "lotNo"),
-        "entry_type": _text(raw, "entryType"),
-        "document_type": _text(raw, "documentType").strip(),
-        "document_no": _text(raw, "documentNo"),
-        "posting_date": _date(raw.get("postingDate")),
+        "lot_no": text_value(raw, "lotNo"),
+        "entry_type": text_value(raw, "entryType"),
+        "document_type": text_value(raw, "documentType").strip(),
+        "document_no": text_value(raw, "documentNo"),
+        "posting_date": date_value(raw.get("postingDate")),
         "quantity": _decimal(raw.get("quantity")),
-        "location_code": _text(raw, "locationCode"),
-        "source_type": _text(raw, "sourceType"),
-        "source_no": _text(raw, "sourceNo"),
+        "location_code": text_value(raw, "locationCode"),
+        "source_type": text_value(raw, "sourceType"),
+        "source_no": text_value(raw, "sourceNo"),
         "raw_payload": raw,
         "sync_hash": compute_sync_hash(raw),
     }
@@ -82,12 +82,12 @@ def compute_sync_hash(raw: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def _text(raw: dict, key: str) -> str:
+def text_value(raw: dict, key: str) -> str:
     value = raw.get(key)
     return value if isinstance(value, str) else ("" if value is None else str(value))
 
 
-def _date(value: Any) -> date | None:
+def date_value(value: Any) -> date | None:
     if not isinstance(value, str) or not value or value.startswith(_BC_BLANK_DATE):
         return None
     try:

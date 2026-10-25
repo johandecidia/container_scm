@@ -1,0 +1,57 @@
+{
+  "value": [
+    {
+      "@odata.etag": "W/\"JzE5OzQxMjY1ODkwMzI3MTEwNjkyMTYxOzAwOyc=\"",
+      "id": "24a82ea3-0b08-ea11-add2-2818788789a9",
+      "number": "IN10000",
+      "postingDate": "2019-09-04",
+      "vendorNumber": "1027",
+      "vendorName": "Energy supplier",
+      "orderNumber": "",
+      "lastModifiedDateTime": "0001-01-01T00:00:00Z",
+      "purchaseReceiptLines": []
+    },
+    {
+      "@odata.etag": "W/\"JzIwOzE0MDM2MjUyMzkzNjI2NDI3MzY4MTswMDsn\"",
+      "id": "b1c0a197-eec3-f111-a056-6045bdfb84a6",
+      "number": "IN27576",
+      "postingDate": "2026-08-03",
+      "vendorNumber": "1203",
+      "vendorName": "Flex-Box",
+      "orderNumber": "100017",
+      "lastModifiedDateTime": "2026-08-03T10:12:00Z",
+      "purchaseReceiptLines": [
+        {"id": "b1c0a197-0001", "sequence": 10000, "lineType": "Item", "lineObjectNumber": "CON22G1", "description": "20' dry van", "unitOfMeasureCode": "ST", "quantity": 1},
+        {"id": "b1c0a197-0002", "sequence": 20000, "lineType": "Item", "lineObjectNumber": "CON22G1", "description": "20' dry van", "unitOfMeasureCode": "ST", "quantity": 1}
+      ]
+    },
+    {
+      "@odata.etag": "W/\"JzIwOzE0MDM2MjUyMzkzNjI2NDI3MzY4MjswMDsn\"",
+      "id": "c2d0a197-eec3-f111-a056-6045bdfb84a6",
+      "number": "IN27608",
+      "postingDate": "2026-08-10",
+      "vendorNumber": "1203",
+      "vendorName": "Flex-Box",
+      "orderNumber": "100017",
+      "lastModifiedDateTime": "2026-08-10T09:00:00Z",
+      "purchaseReceiptLines": [
+        {"id": "c2d0a197-0001", "sequence": 10000, "lineType": "Item", "lineObjectNumber": "CON22G1", "description": "20' dry van", "unitOfMeasureCode": "ST", "quantity": 2},
+        {"id": "c2d0a197-0002", "sequence": 20000, "lineType": "Item", "lineObjectNumber": "CON22G1", "description": "20' dry van", "unitOfMeasureCode": "ST", "quantity": 1},
+        {"id": "c2d0a197-0003", "sequence": 30000, "lineType": "Item", "lineObjectNumber": "ART20020", "description": "Handling", "unitOfMeasureCode": "ST", "quantity": 1}
+      ]
+    },
+    {
+      "@odata.etag": "W/\"JzIwOzE0MDM2MjUyMzkzNjI2NDI3MzY4MzswMDsn\"",
+      "id": "d375a197-eec3-f111-a056-6045bdfb84a6",
+      "number": "IN28168",
+      "postingDate": "2026-10-09",
+      "vendorNumber": "1203",
+      "vendorName": "Flex-Box",
+      "orderNumber": "100047",
+      "lastModifiedDateTime": "2026-10-09T14:34:54.89Z",
+      "purchaseReceiptLines": [
+        {"id": "df75a197-eec3-f111-a056-6045bdfb84a6", "sequence": 10000, "lineType": "Item", "lineObjectNumber": "CON45G1", "description": "40' high cube", "unitOfMeasureCode": "ST", "quantity": 1}
+      ]
+    }
+  ]
+}

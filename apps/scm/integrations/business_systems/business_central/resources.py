@@ -43,6 +43,10 @@ _SYNC_IMPLEMENTATIONS: dict[str, str] = {
     ResourceType.PURCHASE_ORDERS: (
         "apps.scm.integrations.business_systems.business_central.sync.sync_purchase_orders_from_business_central"
     ),
+    ResourceType.PURCHASE_RECEIPTS: (
+        "apps.scm.integrations.business_systems.business_central.receipt_sync."
+        "sync_purchase_receipts_from_business_central"
+    ),
     ResourceType.ITEM_LEDGER_ENTRIES: (
         "apps.scm.integrations.business_systems.business_central.item_ledger_sync."
         "sync_item_ledger_entries_from_business_central"
