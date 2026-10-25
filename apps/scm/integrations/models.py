@@ -583,6 +583,30 @@ class BusinessCentralPurchaseReceipt(BaseTeamModel):
         return [line for line in lines if isinstance(line, dict)] if isinstance(lines, list) else []
 
 
+class ReceiveStatus(models.TextChoices):
+    PENDING = "pending", _("Not processed yet")
+    RECEIVED = "received", _("Received")
+    ALREADY_RECEIVED = "already_received", _("Already received")
+    NOT_RECEIVED = "not_received", _("Not received")
+
+
+class ReceiveReason(models.TextChoices):
+    """Why a serial on a posted receipt was not received automatically."""
+
+    UNKNOWN_LOCATION = "unknown_location", _("Unknown BC location")
+    LOCATION_INACTIVE = "location_inactive", _("BC location inactive")
+    NOT_PHYSICAL = "not_physical", _("Not a physical Pegasus location")
+    AUTO_RECEIVE_DISABLED = "auto_receive_disabled", _("Automatic receive disabled")
+    HISTORICAL = "historical", _("Historical receipt")
+    RECEIPT_UNRESOLVED = "receipt_unresolved", _("Receipt not resolved")
+    SERIAL_UNRESOLVED = "serial_unresolved", _("Serial number not resolved")
+    INVALID_SERIAL = "invalid_serial", _("Invalid serial")
+    MISSING_EQUIPMENT_TYPE = "missing_equipment_type", _("Missing equipment type")
+    CONTAINER_NOT_FOUND = "container_not_found", _("Container not found")
+    CONTAINER_CREATION_FAILED = "container_creation_failed", _("Container could not be created")
+    RECEIVE_FAILED = "receive_failed", _("Receive failed")
+
+
 class BusinessCentralReceiptContainer(BaseTeamModel):
     """One serial number on one posted purchase receipt — the unit a receive is made for.
 
@@ -618,6 +642,25 @@ class BusinessCentralReceiptContainer(BaseTeamModel):
     )
     resolved_at = models.DateTimeField(_("resolved at"), null=True, blank=True)
 
+    # Set by ``receipt_receive``. RECEIVED and ALREADY_RECEIVED are final: the row is
+    # never processed again, which is what makes a receipt read twice receive once.
+    receive_status = models.CharField(
+        _("receive"), max_length=20, choices=ReceiveStatus.choices, default=ReceiveStatus.PENDING
+    )
+    receive_reason = models.CharField(_("reason"), max_length=30, choices=ReceiveReason.choices, blank=True)
+    movement = models.ForeignKey(
+        "scm_containers.ContainerMovement",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name=_("movement"),
+    )
+    container_created = models.BooleanField(_("container created"), default=False)
+    tracking_result = models.CharField(_("tracking"), max_length=20, blank=True)
+    received_at = models.DateTimeField(_("received at"), null=True, blank=True)
+    receive_checked_at = models.DateTimeField(_("receive checked at"), null=True, blank=True)
+
     class Meta:
         ordering = ["receipt", "serial_no"]
         constraints = [
@@ -626,6 +669,7 @@ class BusinessCentralReceiptContainer(BaseTeamModel):
         indexes = [
             models.Index(fields=["team", "serial_no"]),
             models.Index(fields=["team", "resolution_status"]),
+            models.Index(fields=["team", "receive_status"]),
         ]
 
     def __str__(self):

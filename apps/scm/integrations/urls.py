@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import item_views, location_views, views, webhooks
+from . import item_views, location_views, receipt_views, views, webhooks
 
 app_name = "integrations"
 
@@ -31,6 +31,8 @@ urlpatterns = [
         location_views.location_mapping_delete,
         name="location_mapping_delete",
     ),
+    path("<int:pk>/receipts/", receipt_views.receipts, name="receipts"),
+    path("<int:pk>/receipts/process/", receipt_views.receipts_process, name="receipts_process"),
 ]
 
 # Webhook URLs are added to team_urlpatterns (require team_slug) via the SCM app router.

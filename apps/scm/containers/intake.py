@@ -237,7 +237,7 @@ def preview_containers(*, team: Team, entries: list[tuple[str, str]]) -> IntakeP
 def create_or_get_container(
     *,
     team: Team,
-    user: CustomUser,
+    user: CustomUser | None,
     number: str,
     carrier: str = "",
     attributes: dict | None = None,

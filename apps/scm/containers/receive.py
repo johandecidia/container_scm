@@ -396,26 +396,29 @@ def _provenance(row: BulkReceiveRow, zone: LocationTimezone) -> str:
 
 
 def _stop_tracking(*, team: Team, container: Container, row: BulkReceiveRow, actor) -> None:
+    row.tracking, row.tracking_message = stop_tracking_after_receive(
+        team=team, container=container, actor=actor, label=row.container_number
+    )
+
+
+def stop_tracking_after_receive(*, team: Team, container: Container, actor=None, label: str = "") -> tuple[str, str]:
     """Stop tracking a container just received. Never raises; the receive stands.
 
-    Called with the receive already committed and outside any transaction of ours, the
-    way the Stop button calls it: a provider release is an HTTP call, and holding a
-    database transaction open across it would gain nothing.
+    Returns ``(TRACKING_*, message)``. Called with the receive already committed and
+    outside any transaction of ours, the way the Stop button calls it: a provider
+    release is an HTTP call, and holding a database transaction open across it would
+    gain nothing. Shared by every receive path (pasted reports, Business Central).
     """
     from apps.scm.tracking.lifecycle import ALREADY_STOPPED, STOPPED, stop_container_tracking
 
     try:
         stop = stop_container_tracking(team=team, container=container, actor=actor)
     except Exception:  # noqa: BLE001 — a tracking bug must not undo or hide a receive
-        logger.exception("Stopping tracking after receiving %s raised unexpectedly.", row.container_number)
-        row.tracking = TRACKING_STOP_FAILED
-        row.tracking_message = str(_("An unexpected error prevented tracking from stopping."))
-        return
+        logger.exception("Stopping tracking after receiving %s raised unexpectedly.", label or container.pk)
+        return TRACKING_STOP_FAILED, str(_("An unexpected error prevented tracking from stopping."))
 
     if stop.state == STOPPED:
-        row.tracking = TRACKING_STOPPED
-    elif stop.state == ALREADY_STOPPED:
-        row.tracking = TRACKING_NOT_ACTIVE
-    else:
-        row.tracking = TRACKING_STOP_FAILED
-    row.tracking_message = str(stop.message)
+        return TRACKING_STOPPED, str(stop.message)
+    if stop.state == ALREADY_STOPPED:
+        return TRACKING_NOT_ACTIVE, str(stop.message)
+    return TRACKING_STOP_FAILED, str(stop.message)

@@ -12,7 +12,7 @@ from .models import Container, ContainerLocation, ContainerMovement, LocationAli
 from .movements import record_container_movement
 
 
-def create_container(team: Team, user: CustomUser, data: dict) -> Container:
+def create_container(team: Team, user: CustomUser | None, data: dict) -> Container:
     """Create a new container belonging to the given team.
 
     A container created with a location gets a ``CREATED`` movement for it, so the

@@ -1,0 +1,158 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Settings → Integrations → Business Central → Receipts. Team Administrators only.
+  Posted purchase receipts, the containers they were resolved to, and why each was
+  or was not received. Review only: nothing here changes Business Central, and a
+  receive only ever happens through a location configured for automatic receive.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'integrations:detail' integration.pk %}">&larr; {{ integration.name }}</a>
+    <h2 class="text-xl font-semibold mt-2">{% translate "Purchase receipts" %}</h2>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% blocktranslate trimmed %}
+        A receipt's containers are the serial numbers Business Central posted with it. Receipts posted before
+        automatic receive was switched on for a location are history and are never received.
+      {% endblocktranslate %}
+      <a class="link" href="{% url 'integrations:location_mappings' integration.pk %}">{% translate "Locations" %}</a>
+    </p>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags|default:'info' }} alert-soft mb-4">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <section class="app-card">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold">{% translate "Overview" %}</h3>
+        <form method="post" action="{% url 'integrations:receipts_process' integration.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-primary btn-sm">{% translate "Process now" %}</button>
+        </form>
+      </div>
+      <dl class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+        <dt class="text-base-content/60">{% translate "Receipts synced" %}</dt>
+        <dd class="tabular-nums text-right">{{ summary.receipts }}</dd>
+        <dt class="text-base-content/60">{% translate "Receipt lines" %}</dt>
+        <dd class="tabular-nums text-right">{{ summary.lines }}</dd>
+        <dt class="text-base-content/60">{% translate "Serial numbers" %}</dt>
+        <dd class="tabular-nums text-right">{{ summary.serials }}</dd>
+        <dt class="text-base-content/60">{% translate "Containers identified" %}</dt>
+        <dd class="tabular-nums text-right">{{ summary.identified }}</dd>
+        <dt class="text-base-content/60"><a class="link link-hover" href="?status=received">{% translate "Received" %}</a></dt>
+        <dd class="tabular-nums text-right">{{ summary.received }}</dd>
+        <dt class="text-base-content/60"><a class="link link-hover" href="?status=already_received">{% translate "Already received" %}</a></dt>
+        <dd class="tabular-nums text-right">{{ summary.already_received }}</dd>
+        <dt class="text-base-content/60"><a class="link link-hover" href="?status=pending">{% translate "Waiting" %}</a></dt>
+        <dd class="tabular-nums text-right">{{ summary.pending }}</dd>
+        <dt class="text-base-content/60"><a class="link link-hover" href="?status=not_received">{% translate "Not received" %}</a></dt>
+        <dd class="tabular-nums text-right">{{ summary.not_received }}</dd>
+        <dt class="text-base-content/60">{% translate "Last successful sync" %}</dt>
+        <dd class="text-right">{{ summary.last_sync_at|default:"—" }}</dd>
+        <dt class="text-base-content/60">{% translate "Last automatic receive" %}</dt>
+        <dd class="text-right">{{ summary.last_receive_at|default:"—" }}</dd>
+      </dl>
+    </section>
+
+    <section class="app-card">
+      <h3 class="font-semibold mb-3">{% translate "Why not received" %}</h3>
+      {% if summary.reasons %}
+        <ul class="text-sm divide-y divide-base-200">
+          {% for code, label, count in summary.reasons %}
+            <li class="py-1.5 flex justify-between gap-2">
+              <a class="link link-hover" href="?reason={{ code }}">{{ label }}</a>
+              <span class="tabular-nums">{{ count }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-sm text-base-content/60">{% translate "Nothing has been held back." %}</p>
+      {% endif %}
+    </section>
+
+    <section class="app-card">
+      <h3 class="font-semibold mb-3">{% translate "Resolution" %}</h3>
+      <h4 class="text-xs uppercase text-base-content/60 mb-1">{% translate "Receipts" %}</h4>
+      <ul class="text-sm divide-y divide-base-200 mb-3">
+        {% for code, label, count in summary.receipts_by_resolution %}
+          <li class="py-1 flex justify-between gap-2"><span>{{ label }}</span><span class="tabular-nums">{{ count }}</span></li>
+        {% empty %}
+          <li class="py-1 text-base-content/60">{% translate "No receipts yet." %}</li>
+        {% endfor %}
+      </ul>
+      <h4 class="text-xs uppercase text-base-content/60 mb-1">{% translate "Serial numbers" %}</h4>
+      <ul class="text-sm divide-y divide-base-200">
+        {% for code, label, count in summary.serials_by_resolution %}
+          <li class="py-1 flex justify-between gap-2">
+            <a class="link link-hover" href="?resolution={{ code }}">{{ label }}</a>
+            <span class="tabular-nums">{{ count }}</span>
+          </li>
+        {% empty %}
+          <li class="py-1 text-base-content/60">{% translate "No serial numbers yet." %}</li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+
+  <section class="app-card">
+    <h3 class="font-semibold mb-3">
+      {% if filtered %}{% translate "Serial numbers" %}{% else %}{% translate "Latest serial numbers" %}{% endif %}
+    </h3>
+    {% if rows %}
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>{% translate "Receipt" %}</th>
+              <th>{% translate "Posted" %}</th>
+              <th class="text-right">{% translate "Entry" %}</th>
+              <th>{% translate "Serial" %}</th>
+              <th>{% translate "Item" %}</th>
+              <th>{% translate "BC location" %}</th>
+              <th>{% translate "Resolution" %}</th>
+              <th>{% translate "Receive" %}</th>
+              <th>{% translate "Container" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td class="font-mono">{{ row.receipt.receipt_no }}</td>
+                <td>{{ row.posting_date|default:"—" }}</td>
+                <td class="text-right tabular-nums">{{ row.entry_no }}</td>
+                <td class="font-mono">{{ row.serial_no }}</td>
+                <td class="font-mono">{{ row.item_no|default:"—" }}</td>
+                <td class="font-mono">{{ row.location_code|default:"—" }}</td>
+                <td>{{ row.get_resolution_status_display }}</td>
+                <td>
+                  {% if row.receive_status == "received" %}
+                    <span class="badge badge-success badge-soft badge-sm">{{ row.get_receive_status_display }}</span>
+                  {% elif row.receive_status == "not_received" %}
+                    <span class="badge badge-warning badge-soft badge-sm">{{ row.get_receive_reason_display }}</span>
+                  {% else %}
+                    <span class="badge badge-ghost badge-sm">{{ row.get_receive_status_display }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.container %}
+                    <a class="link" href="{% url 'containers:detail' row.container.pk %}">{{ row.container }}</a>
+                  {% else %}—{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No serial numbers to show." %}</p>
+    {% endif %}
+  </section>
+{% endblock %}

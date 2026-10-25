@@ -133,6 +133,7 @@ def run_business_central_resource_sync_task(task, integration_id: int, resource_
             run.records_unchanged,
             run.records_failed,
         )
+        _queue_receipt_processing_after(integration, resource_type)
     except (BusinessCentralConfigurationError, BusinessCentralSyncInProgressError) as exc:
         logger.info("BC %s sync task: integration=%s skipped: %s", resource_type, integration_id, exc)
     except BusinessCentralError as exc:
@@ -194,6 +195,46 @@ def match_business_central_item_ledger_entries_task(integration_id: int) -> dict
         logger.info("BC item ledger matching: integration %s already running — skipping.", integration_id)
         return {"skipped": True}
     return {"checked": result.checked, "changed": result.changed, "by_status": dict(result.by_status)}
+
+
+def _queue_receipt_processing_after(integration, resource_type: str) -> None:
+    """New receipts or ledger entries may complete a receipt: queue a processing pass.
+
+    Only when the purchase-receipt resource is enabled. The sync itself never
+    receives; processing is its own task with its own lock.
+    """
+    from .business_systems.business_central.resources import get_resource_settings
+    from .models import IntegrationSyncRun
+
+    ResourceType = IntegrationSyncRun.ResourceType
+    if resource_type not in (ResourceType.PURCHASE_RECEIPTS, ResourceType.ITEM_LEDGER_ENTRIES):
+        return
+    if get_resource_settings(integration, ResourceType.PURCHASE_RECEIPTS).runnable:
+        process_business_central_purchase_receipts_task.delay(integration.pk)
+
+
+@shared_task
+def process_business_central_purchase_receipts_task(integration_id: int) -> dict:
+    """Resolve the integration's posted purchase receipts and receive what qualifies.
+
+    Receives only through locations configured for automatic receive, and only
+    receipts posted after activation. A pass already running is skipped.
+    """
+    from .business_systems.business_central.exceptions import BusinessCentralSyncInProgressError
+    from .business_systems.business_central.receipt_receive import process_purchase_receipts
+    from .models import Integration
+
+    try:
+        integration = Integration.objects.get(pk=integration_id, provider_code="business_central", is_active=True)
+    except Integration.DoesNotExist:
+        logger.info("BC receipt processing: integration %s not found/inactive — skipping.", integration_id)
+        return {"skipped": True}
+    try:
+        result = process_purchase_receipts(integration)
+    except BusinessCentralSyncInProgressError:
+        logger.info("BC receipt processing: integration %s already running — skipping.", integration_id)
+        return {"skipped": True}
+    return {"checked": result.checked, "received": len(result.received), "by_reason": dict(result.by_reason)}
 
 
 @shared_task

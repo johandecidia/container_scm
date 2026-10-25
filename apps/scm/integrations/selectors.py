@@ -1,17 +1,20 @@
 # Integration selectors — all read/query operations.
 from dataclasses import dataclass
 
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Count, Max, Q, QuerySet, Sum
 
 from apps.teams.models import Team
 
 from .business_systems.business_central import resources as bc_resources
 from .models import (
     BusinessCentralItemLedgerEntry,
+    BusinessCentralPurchaseReceipt,
+    BusinessCentralReceiptContainer,
     Integration,
     IntegrationRequestLog,
     IntegrationSyncRun,
     IntegrationWebhookEvent,
+    ReceiveStatus,
 )
 
 
@@ -211,3 +214,41 @@ def get_item_link_summary(integration: Integration) -> list[tuple[str, str, int]
         for status, label in BusinessCentralItemLedgerEntry.LinkStatus.choices
         if counts.get(status)
     ]
+
+
+def get_receipt_summary(integration: Integration) -> dict:
+    """Counts for the Business Central receipts page (Settings → Integrations → Receipts)."""
+    receipts = BusinessCentralPurchaseReceipt.objects.filter(integration=integration)
+    rows = BusinessCentralReceiptContainer.objects.filter(receipt__integration=integration)
+    by_receive = dict(rows.values_list("receive_status").annotate(n=Count("id")).order_by())
+    last_completed = (
+        IntegrationSyncRun.objects.filter(
+            integration=integration,
+            resource_type=IntegrationSyncRun.ResourceType.PURCHASE_RECEIPTS,
+            status=IntegrationSyncRun.Status.COMPLETED,
+        )
+        .order_by("-finished_at")
+        .first()
+    )
+    return {
+        "receipts": receipts.count(),
+        "lines": receipts.aggregate(n=Sum("line_count"))["n"] or 0,
+        "receipts_by_resolution": _choice_counts(receipts, "resolution_status"),
+        "serials": rows.count(),
+        "identified": rows.filter(container__isnull=False).count(),
+        "serials_by_resolution": _choice_counts(rows, "resolution_status"),
+        "received": by_receive.get(ReceiveStatus.RECEIVED, 0),
+        "already_received": by_receive.get(ReceiveStatus.ALREADY_RECEIVED, 0),
+        "pending": by_receive.get(ReceiveStatus.PENDING, 0),
+        "not_received": by_receive.get(ReceiveStatus.NOT_RECEIVED, 0),
+        "reasons": _choice_counts(rows.filter(receive_status=ReceiveStatus.NOT_RECEIVED), "receive_reason"),
+        "last_sync_at": last_completed.finished_at if last_completed else None,
+        "last_receive_at": rows.aggregate(m=Max("received_at"))["m"],
+    }
+
+
+def _choice_counts(queryset, field_name: str) -> list[tuple[str, str, int]]:
+    """``(value, label, count)`` per choice of ``field_name`` present in ``queryset``, largest first."""
+    labels = dict(queryset.model._meta.get_field(field_name).choices)
+    counts = queryset.values_list(field_name).annotate(n=Count("id")).order_by("-n")
+    return [(value, str(labels.get(value, value)), n) for value, n in counts]
