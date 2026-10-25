@@ -74,7 +74,7 @@ FINAL_STATUSES = (ReceiveStatus.RECEIVED, ReceiveStatus.ALREADY_RECEIVED)
 # A BC receive is a business system's record of the arrival, not somebody seeing the
 # box: it ranks below a gate-in typed by an operator or reported by a depot.
 BC_RECEIVE_SOURCE = LocationSource.API
-_SERIAL_REASONS = {
+_SERIAL_REASONS: dict[str, str] = {
     ReceiptResolution.INVALID_SERIAL: ReceiveReason.INVALID_SERIAL,
     ReceiptResolution.MISSING_EQUIPMENT_TYPE: ReceiveReason.MISSING_EQUIPMENT_TYPE,
 }

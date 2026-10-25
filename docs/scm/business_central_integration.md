@@ -606,6 +606,12 @@ serials first, re-checks every one, and creates through
 re-matched. Refused serials are reported with the reason. No sync or matching pass
 ever creates a container, and nothing is created from BC stock status.
 
+## Posted purchase receipts and automatic receive (stage 2)
+
+See [business_central_receipts.md](business_central_receipts.md): location mappings,
+receipt sync, receipt → serial resolution, automatic receive, lifecycle safety and the
+sandbox verification.
+
 ## Technical debt left after stage 0
 
 - `schemas.NormalizedCustomerOrder(Line)` (plain dataclasses) and
