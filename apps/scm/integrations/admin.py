@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     BusinessCentralItemLedgerEntry,
     BusinessCentralItemRule,
+    BusinessCentralLocationMapping,
     Integration,
     IntegrationCredential,
     IntegrationRequestLog,
@@ -197,6 +198,32 @@ class BusinessCentralItemRuleAdmin(admin.ModelAdmin):
     list_display = ["item_no", "match_type", "variant_code", "classification", "equipment_type", "integration", "team"]
     list_filter = ["classification", "match_type", "team"]
     search_fields = ["item_no"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BusinessCentralLocationMapping)
+class BusinessCentralLocationMappingAdmin(admin.ModelAdmin):
+    """Read-only here: mappings are edited by Team Administrators in Settings, where they are validated."""
+
+    list_display = [
+        "bc_location_code",
+        "location_type",
+        "pegasus_location",
+        "receive_trigger",
+        "auto_receive_enabled",
+        "auto_receive_after_entry_no",
+        "auto_create_containers",
+        "is_active",
+        "integration",
+        "team",
+    ]
+    list_filter = ["location_type", "auto_receive_enabled", "is_active", "team"]
+    search_fields = ["bc_location_code", "name"]
 
     def has_add_permission(self, request):
         return False

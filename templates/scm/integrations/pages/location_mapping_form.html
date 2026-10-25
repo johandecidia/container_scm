@@ -1,0 +1,21 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'integrations:location_mappings' integration.pk %}">
+      &larr; {% translate "Locations" %}
+    </a>
+    <h2 class="text-xl font-semibold mt-2">{% blocktranslate with code=mapping.bc_location_code %}Edit location {{ code }}{% endblocktranslate %}</h2>
+  </div>
+
+  <section class="app-card">
+    <form method="post">
+      {% csrf_token %}
+      {% include "scm/integrations/components/location_mapping_fields.html" %}
+      <button type="submit" class="btn btn-primary btn-sm mt-3">{% translate "Save location" %}</button>
+    </form>
+  </section>
+{% endblock %}

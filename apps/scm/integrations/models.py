@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -408,3 +409,100 @@ class BusinessCentralItemRule(BaseTeamModel):
         if self.variant_code:
             target = f"{target}/{self.variant_code}"
         return f"{target} → {self.classification}"
+
+
+class BusinessCentralLocationMapping(BaseTeamModel):
+    """What one Business Central location code means physically, per integration.
+
+    A BC location is a *commercial* stock location; whether it is also a physical
+    place in Pegasus is a per-team decision made here, never assumed. An unknown
+    code, an inactive mapping, a non-physical type or a missing Pegasus location
+    all mean "never receive automatically" — safe by default.
+
+    ``auto_receive_after_entry_no`` is the activation boundary: when automatic
+    receive is switched on, it is set to the item ledger cursor at that moment, and
+    only receipt entries posted after it (higher ``entryNo``) are ever received.
+    BC posting dates can be backdated; ``entryNo`` is BC's posting order.
+    """
+
+    class LocationType(models.TextChoices):
+        PHYSICAL = "physical", _("Physical")
+        COMMERCIAL = "commercial", _("Commercial")
+        CUSTOMER = "customer", _("At customer")
+
+    class ReceiveTrigger(models.TextChoices):
+        NONE = "none", _("None")
+        MANUAL = "manual", _("Manual")
+        POSTED_PURCHASE_RECEIPT = "posted_purchase_receipt", _("Posted purchase receipt")
+
+    integration = models.ForeignKey(
+        Integration,
+        on_delete=models.CASCADE,
+        related_name="location_mappings",
+        verbose_name=_("integration"),
+    )
+    bc_location_code = models.CharField(_("BC location code"), max_length=20)
+    name = models.CharField(_("name"), max_length=100, blank=True)
+    location_type = models.CharField(
+        _("location type"), max_length=20, choices=LocationType.choices, default=LocationType.COMMERCIAL
+    )
+    pegasus_location = models.ForeignKey(
+        "scm_containers.ContainerLocation",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name=_("Pegasus location"),
+    )
+    receive_trigger = models.CharField(
+        _("receive trigger"), max_length=30, choices=ReceiveTrigger.choices, default=ReceiveTrigger.NONE
+    )
+    auto_receive_enabled = models.BooleanField(_("automatic receive"), default=False)
+    auto_create_containers = models.BooleanField(_("create missing containers"), default=False)
+    is_active = models.BooleanField(_("active"), default=True)
+    auto_receive_enabled_at = models.DateTimeField(_("automatic receive enabled at"), null=True, blank=True)
+    auto_receive_after_entry_no = models.BigIntegerField(
+        _("receive entries after entry no."), null=True, blank=True, editable=False
+    )
+
+    class Meta:
+        ordering = ["bc_location_code"]
+        constraints = [
+            models.UniqueConstraint(fields=["integration", "bc_location_code"], name="uniq_bc_location_mapping"),
+            # Automatic receive only into a physical Pegasus location, on the posted-receipt
+            # trigger, with an activation boundary; container creation only alongside it.
+            models.CheckConstraint(
+                condition=models.Q(auto_receive_enabled=False)
+                | models.Q(
+                    location_type="physical",
+                    pegasus_location__isnull=False,
+                    receive_trigger="posted_purchase_receipt",
+                    auto_receive_after_entry_no__isnull=False,
+                ),
+                name="bc_location_auto_receive_physical",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(auto_create_containers=False) | models.Q(auto_receive_enabled=True),
+                name="bc_location_auto_create_needs_receive",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.bc_location_code} ({self.get_location_type_display()})"
+
+    def clean(self):
+        super().clean()
+        if self.pegasus_location_id and self.pegasus_location.team_id != self.team_id:
+            raise ValidationError({"pegasus_location": _("The location belongs to a different team.")})
+
+    @property
+    def receives_automatically(self) -> bool:
+        """Every switch is set for an automatic receive into a physical Pegasus location."""
+        return (
+            self.is_active
+            and self.auto_receive_enabled
+            and self.location_type == self.LocationType.PHYSICAL
+            and self.receive_trigger == self.ReceiveTrigger.POSTED_PURCHASE_RECEIPT
+            and self.pegasus_location_id is not None
+            and self.auto_receive_after_entry_no is not None
+        )

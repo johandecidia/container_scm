@@ -1,0 +1,129 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Settings → Integrations → Business Central → Locations. Team Administrators only.
+  Maps Business Central location codes to Pegasus locations and decides whether a
+  posted purchase receipt there receives containers automatically. Nothing here
+  changes Business Central.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'integrations:detail' integration.pk %}">
+      &larr; {{ integration.name }}
+    </a>
+    <h2 class="text-xl font-semibold mt-2">{% translate "Locations" %}</h2>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% blocktranslate trimmed %}
+        A Business Central location is a commercial stock location. Only a physical location mapped to a
+        Pegasus location, with automatic receive switched on, ever records a receive. Unmapped codes never do.
+      {% endblocktranslate %}
+    </p>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags|default:'info' }} alert-soft mb-4">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <section class="app-card mb-6">
+    <h3 class="font-semibold mb-3">{% translate "Add location" %}</h3>
+    <form method="post" action="{% url 'integrations:location_mappings' integration.pk %}">
+      {% csrf_token %}
+      {% include "scm/integrations/components/location_mapping_fields.html" %}
+      <button type="submit" class="btn btn-primary btn-sm mt-3">{% translate "Save location" %}</button>
+    </form>
+  </section>
+
+  <section class="app-card mb-6">
+    <h3 class="font-semibold mb-3">{% translate "Configured locations" %}</h3>
+    {% if mappings %}
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>{% translate "BC code" %}</th>
+              <th>{% translate "Name" %}</th>
+              <th>{% translate "Type" %}</th>
+              <th>{% translate "Pegasus location" %}</th>
+              <th>{% translate "Trigger" %}</th>
+              <th>{% translate "Automatic receive" %}</th>
+              <th>{% translate "Create containers" %}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for mapping in mappings %}
+              <tr>
+                <td class="font-mono">{{ mapping.bc_location_code }}</td>
+                <td>{{ mapping.name|default:"—" }}</td>
+                <td>
+                  {{ mapping.get_location_type_display }}
+                  {% if not mapping.is_active %}<span class="badge badge-ghost badge-sm">{% translate "Inactive" %}</span>{% endif %}
+                </td>
+                <td>{{ mapping.pegasus_location.name|default:"—" }}</td>
+                <td>{{ mapping.get_receive_trigger_display }}</td>
+                <td>
+                  {% if mapping.receives_automatically %}
+                    <span class="badge badge-success badge-soft badge-sm">{% translate "On" %}</span>
+                    <span class="text-xs text-base-content/60">
+                      {% blocktranslate trimmed with entry=mapping.auto_receive_after_entry_no %}after entry {{ entry }}{% endblocktranslate %}
+                    </span>
+                  {% else %}
+                    <span class="badge badge-ghost badge-sm">{% translate "Off" %}</span>
+                  {% endif %}
+                </td>
+                <td>{% if mapping.auto_create_containers %}{% translate "Yes" %}{% else %}{% translate "No" %}{% endif %}</td>
+                <td>
+                  <div class="flex justify-end gap-1">
+                    <a class="btn btn-ghost btn-xs" href="{% url 'integrations:location_mapping_update' integration.pk mapping.pk %}">{% translate "Edit" %}</a>
+                    <form method="post" action="{% url 'integrations:location_mapping_delete' integration.pk mapping.pk %}">
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-ghost btn-xs text-error">{% translate "Remove" %}</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No locations configured — nothing is received automatically." %}</p>
+    {% endif %}
+  </section>
+
+  <section class="app-card">
+    <h3 class="font-semibold mb-3">{% translate "Location codes in synced item ledger entries without a mapping" %}</h3>
+    {% if unmapped %}
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>{% translate "BC code" %}</th>
+              <th class="text-right">{% translate "Entries" %}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in unmapped %}
+              <tr>
+                <td class="font-mono">{{ row.location_code }}</td>
+                <td class="text-right tabular-nums">{{ row.entries }}</td>
+                <td class="text-right">
+                  <a class="btn btn-ghost btn-xs" href="?code={{ row.location_code|urlencode }}">{% translate "Configure" %}</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "Every location code seen so far is configured." %}</p>
+    {% endif %}
+  </section>
+{% endblock %}

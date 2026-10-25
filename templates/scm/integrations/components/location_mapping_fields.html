@@ -1,0 +1,33 @@
+{% load i18n %}
+{# Fields of a LocationMappingForm, shared by the add form and the edit page. #}
+{% if form.non_field_errors %}
+  <div role="alert" class="alert alert-error mb-3 text-sm">
+    <i class="fa fa-circle-exclamation"></i>
+    <span>{{ form.non_field_errors|join:" " }}</span>
+  </div>
+{% endif %}
+<div x-data="{ autoReceive: {{ form.auto_receive_enabled.value|yesno:'true,false' }} }"
+     @change="if ($event.target.name === 'auto_receive_enabled') autoReceive = $event.target.checked">
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+    {% for field in form %}
+      <div class="form-control">
+        <label class="label" for="{{ field.id_for_label }}">
+          <span class="label-text">{{ field.label }}</span>
+        </label>
+        {{ field }}
+        {% if field.help_text %}<p class="text-xs text-base-content/60 mt-1">{{ field.help_text }}</p>{% endif %}
+        {% if field.errors %}<p class="text-error text-xs mt-1">{{ field.errors|join:" " }}</p>{% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  <div role="alert" class="alert alert-warning alert-soft mt-3 text-sm" x-show="autoReceive" x-cloak>
+    <i class="fa fa-triangle-exclamation"></i>
+    <span>
+      {% blocktranslate trimmed %}
+        With automatic receive on, every purchase receipt Business Central posts at this location after now
+        records a gate-in in Pegasus, and the team's stop-tracking-on-receive policy applies.
+        Earlier receipts are never received.
+      {% endblocktranslate %}
+    </span>
+  </div>
+</div>
