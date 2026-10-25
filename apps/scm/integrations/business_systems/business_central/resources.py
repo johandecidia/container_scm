@@ -43,6 +43,10 @@ _SYNC_IMPLEMENTATIONS: dict[str, str] = {
     ResourceType.PURCHASE_ORDERS: (
         "apps.scm.integrations.business_systems.business_central.sync.sync_purchase_orders_from_business_central"
     ),
+    ResourceType.ITEM_LEDGER_ENTRIES: (
+        "apps.scm.integrations.business_systems.business_central.item_ledger_sync."
+        "sync_item_ledger_entries_from_business_central"
+    ),
 }
 
 # Resources that are on unless explicitly switched off (legacy behaviour).
@@ -89,7 +93,8 @@ def get_sync_function(resource_type: str) -> Callable | None:
     return import_string(path) if path else None
 
 
-def _resource_config(integration: Integration, resource_type: str) -> dict:
+def get_resource_config(integration: Integration, resource_type: str) -> dict:
+    """The integration's ``config["resources"][resource_type]`` entry ({} when absent or malformed)."""
     resources = (integration.config or {}).get("resources")
     entry = resources.get(resource_type) if isinstance(resources, dict) else None
     return entry if isinstance(entry, dict) else {}
@@ -97,7 +102,7 @@ def _resource_config(integration: Integration, resource_type: str) -> dict:
 
 def _minutes(integration: Integration, resource_type: str, key: str, default: int) -> timedelta:
     config = integration.config or {}
-    value = _resource_config(integration, resource_type).get(key)
+    value = get_resource_config(integration, resource_type).get(key)
     if value in (None, ""):
         legacy_key = _LEGACY_KEYS.get(resource_type, {}).get(key)
         value = config.get(legacy_key) if legacy_key else None
@@ -107,7 +112,7 @@ def _minutes(integration: Integration, resource_type: str, key: str, default: in
 def get_resource_settings(integration: Integration, resource_type: str) -> ResourceSettings:
     if not is_defined(resource_type):
         raise ValueError(f"unknown Business Central resource type: {resource_type!r}")
-    entry = _resource_config(integration, resource_type)
+    entry = get_resource_config(integration, resource_type)
     # Only a literal ``true`` switches a resource on; absent falls back to its default.
     enabled = entry["enabled"] is True if "enabled" in entry else resource_type in _ENABLED_BY_DEFAULT
     return ResourceSettings(

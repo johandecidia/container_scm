@@ -75,8 +75,8 @@ hand.
 synced on a schedule only when all of these hold:
 
 1. it is **defined** (a `ResourceType`);
-2. it is **implemented** (registered in `resources._SYNC_IMPLEMENTATIONS` — today
-   only `purchase_orders`);
+2. it is **implemented** (registered in `resources._SYNC_IMPLEMENTATIONS` —
+   `purchase_orders` and, since stage 1a, `item_ledger_entries`);
 3. it is **enabled** for the integration;
 4. the integration has `sync_enabled` and `scheduled_sync_enabled: true`.
 
@@ -489,6 +489,53 @@ only. No relation to `Container`; nothing creates or changes containers.
 Serials are normalised with `containers.intake.normalise_container_number` (trim,
 inner whitespace, upper case) and checked with `parse_and_validate_container_number`;
 a wrong check digit is never corrected. Every entry is stored whatever its serial.
+
+### Sync (`item_ledger_sync.py`)
+
+Off by default. Enable per integration (manual runs need only this; scheduled runs
+also need `scheduled_sync_enabled: true`):
+
+```jsonc
+{"resources": {"item_ledger_entries": {
+  "enabled": true,
+  "item_no_prefixes": [],          // default: every item; e.g. ["CON", "MAFI"]
+  "serial_only": false,            // only entries with a serial number
+  "max_entries_per_run": 5000,     // 1–100 000
+  "interval_minutes": 30
+}}}
+```
+
+- **Incremental by `entryNo`.** Each run requests `entryNo gt <cursor>` in ascending
+  order and stores whole pages until `max_entries_per_run` is reached
+  (`metadata["has_more"]` is then true). The cursor (`metadata["cursor_to"]`) is the
+  last entry stored and is kept only when the run completes fully.
+- **Initial import** is a series of such runs:
+  `python manage.py bc_sync_item_ledger_entries --integration <id> --until-complete`
+  (bounded by `--max-runs`; `--dummy` uses the fixtures). Nothing starts on its own.
+- **Resumption.** Each page is upserted in its own transaction. A run that fails
+  part-way keeps those rows; the next run starts from the old cursor and reports them
+  as unchanged. A record without an integer `entryNo` fails, makes the run partial and
+  holds the cursor. A response that is not strictly ascending fails the run.
+- **Idempotent** on `(integration, company_id, entry_no)`; an unchanged row (same
+  `sync_hash`) only gets `synced_at` bumped, a changed row is rewritten.
+- **Scoped cursor.** The filter (`item_no_prefixes`, `serial_only`) is stored as
+  `metadata["scope"]`, and a cursor is only reused within the same scope; widening the
+  filter re-reads from the start (existing rows come back unchanged).
+- **Monitoring.** Standard run counts plus `metadata["quality"]`
+  (`valid_iso`, `invalid_iso`, `missing_serial`, `unclassified`) on the integration
+  detail page. Invalid serials are queryable on the model (`serial_status`) and in
+  Django admin (read-only).
+- **No side effects.** No containers, movements, receipts, shipments or tracking.
+
+### Reconciliation (proposal, not implemented)
+
+Incremental sync never re-reads an entry once the cursor has passed it, so the
+fields BC updates after posting (`open`, `remainingQuantity`, `invoicedQuantity`,
+amounts) go stale in `raw_payload`. Identity fields do not change. Proposed: a
+periodic, separate pass that re-reads `open eq true` entries (verified filter) and,
+less often, a full re-scan of the selected scope through the same idempotent upsert;
+entries missing from a full scan would be flagged, never deleted. Until then, use the
+columns (immutable) rather than the mutable values in `raw_payload`.
 
 ## Technical debt left after stage 0
 

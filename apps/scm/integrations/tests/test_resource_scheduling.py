@@ -66,10 +66,14 @@ class ResourceSettingsTest(TestCase):
         self.assertTrue(po.implemented and po.enabled)
         self.assertEqual(po.interval, timedelta(minutes=30))
         self.assertEqual(po.failure_backoff, timedelta(minutes=15))
-        for resource_type in (_ILE, _SO, IntegrationSyncRun.ResourceType.PURCHASE_RECEIPTS):
+        for resource_type in (_SO, IntegrationSyncRun.ResourceType.PURCHASE_RECEIPTS):
             settings = resources.get_resource_settings(integration, resource_type)
             self.assertFalse(settings.implemented, resource_type)
             self.assertFalse(settings.enabled, resource_type)
+        # Item ledger entries are implemented (stage 1a) but stay off by default.
+        ile = resources.get_resource_settings(integration, _ILE)
+        self.assertTrue(ile.implemented)
+        self.assertFalse(ile.enabled)
 
     def test_legacy_purchase_order_keys_still_apply(self):
         integration = _integration(
@@ -107,8 +111,8 @@ class ResourceSchedulingTest(TestCase):
         self.assertEqual(_due(integration), [_PO])
 
     def test_enabled_but_unimplemented_resource_is_never_scheduled(self):
-        integration = _integration("sc-unimpl", resources={_ILE: {"enabled": True}, _SO: {"enabled": True}})
-        self.assertFalse(resources.is_resource_schedulable(integration, _ILE))
+        integration = _integration("sc-unimpl", resources={_SO: {"enabled": True}})
+        self.assertFalse(resources.is_resource_schedulable(integration, _SO))
         self.assertEqual(_due(integration), [_PO])
 
     @mock.patch.dict(resources._SYNC_IMPLEMENTATIONS, _FAKE_IMPL)

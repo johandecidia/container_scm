@@ -96,14 +96,19 @@ def get_due_business_central_integrations(now: datetime | None = None) -> list[I
 # ── Sync run watermark ──────────────────────────────────────────────────────
 
 
-def get_last_successful_watermark(integration: Integration, resource_type: str, *, source: dict | None = None):
+def get_last_successful_watermark(
+    integration: Integration, resource_type: str, *, source: dict | None = None, scope: dict | None = None
+):
     """Return the watermark_to of the most recent fully completed sync run.
 
     Only ``COMPLETED`` runs advance the watermark — a failed or partially
     completed run must not move it forward, so those are excluded here. With
     ``source`` (the data source recorded in ``metadata["source"]``), only runs
     that read that same source count, so a watermark from one environment is
-    never reused for another. Returns None when there is no such run (first sync).
+    never reused for another. With ``scope`` (``metadata["scope"]``, e.g. the
+    resource's record filter), only runs over that same selection count, so a
+    marker from a narrower filter never skips records of a wider one. Returns
+    None when there is no such run (first sync).
     """
     runs = IntegrationSyncRun.objects.filter(
         integration=integration,
@@ -113,16 +118,20 @@ def get_last_successful_watermark(integration: Integration, resource_type: str, 
     )
     if source is not None:
         runs = runs.filter(metadata__source=source)
+    if scope is not None:
+        runs = runs.filter(metadata__scope=scope)
     run = runs.order_by("-watermark_to").first()
     return run.watermark_to if run else None
 
 
-def get_last_successful_cursor(integration: Integration, resource_type: str, *, source: dict | None = None):
+def get_last_successful_cursor(
+    integration: Integration, resource_type: str, *, source: dict | None = None, scope: dict | None = None
+):
     """Return the highest integer ``metadata["cursor_to"]`` of a fully completed run, or None.
 
     The integer counterpart of :func:`get_last_successful_watermark` (e.g. a
     ledger ``entryNo``), with the same rules: only ``COMPLETED`` runs, and with
-    ``source`` only runs that read that same source.
+    ``source`` / ``scope`` only runs that read that same source and selection.
     """
     runs = IntegrationSyncRun.objects.filter(
         integration=integration,
@@ -132,6 +141,8 @@ def get_last_successful_cursor(integration: Integration, resource_type: str, *, 
     )
     if source is not None:
         runs = runs.filter(metadata__source=source)
+    if scope is not None:
+        runs = runs.filter(metadata__scope=scope)
     cursor = (
         runs.annotate(_cursor=Cast(KT("metadata__cursor_to"), BigIntegerField()))
         .order_by("-_cursor")

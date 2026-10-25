@@ -18,6 +18,7 @@
           <th>{% translate "Finished" %}</th>
           <th class="text-right">{% translate "Fetched" %}</th>
           <th class="text-right">{% translate "Failed" %}</th>
+          <th>{% translate "Details" %}</th>
           <th>{% translate "Error" %}</th>
         </tr>
       </thead>
@@ -51,6 +52,18 @@
               <td class="text-right">—</td>
               <td class="text-right">—</td>
             {% endif %}
+            <td class="text-xs text-base-content/70">
+              {% with quality=resource.last_finished_run.metadata.quality %}
+                {% if quality %}
+                  {% blocktranslate trimmed with valid=quality.valid_iso invalid=quality.invalid_iso missing=quality.missing_serial unclassified=quality.unclassified %}
+                    Valid ISO {{ valid }} · invalid ISO {{ invalid }} · no serial {{ missing }} · unclassified {{ unclassified }}
+                  {% endblocktranslate %}
+                {% endif %}
+              {% endwith %}
+              {% if resource.last_finished_run.metadata.has_more %}
+                <span class="badge badge-warning badge-soft badge-xs">{% translate "More to import" %}</span>
+              {% endif %}
+            </td>
             <td class="text-error text-xs">
               {% if resource.has_open_error %}{{ resource.error_summary|default:_("Last sync did not complete") }}{% endif %}
             </td>

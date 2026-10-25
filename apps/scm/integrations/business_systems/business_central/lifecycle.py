@@ -73,7 +73,12 @@ class SyncOutcome:
     errors: list[dict] = field(default_factory=list)
     watermark_to: datetime | None = None
     cursor_to: int | None = None
+    # Resource-specific run details (e.g. data-quality counts), stored in run.metadata.
+    metadata: dict = field(default_factory=dict)
 
+
+# run.metadata keys owned by the lifecycle; a step's metadata cannot overwrite them.
+_RESERVED_METADATA_KEYS = frozenset({"source", "scope", "cursor_from", "cursor_to", "errors"})
 
 SyncStep = Callable[[SyncContext], SyncOutcome]
 
@@ -85,8 +90,13 @@ def run_business_central_sync(
     client: BusinessCentralClient | None = None,
     *,
     trigger_type: str = IntegrationSyncRun.TriggerType.SCHEDULED,
+    marker_scope: dict | None = None,
 ) -> IntegrationSyncRun:
     """Run ``step`` for ``resource_type`` inside the shared lifecycle.
+
+    ``marker_scope`` describes which records the step selects (e.g. its filter).
+    It is stored on the run, and markers are only reused from completed runs with
+    the same scope, so changing the selection never skips records.
 
     Raises:
         BusinessCentralConfigurationError: integration invalid / not sync-enabled /
@@ -106,7 +116,7 @@ def run_business_central_sync(
     with sync_lock(sync_lock_name(integration, resource_type), ttl=ttl):
         source = client.source_identity()
         started = timezone.now()
-        run = _start_run(integration, resource_type, trigger_type, source, started)
+        run = _start_run(integration, resource_type, trigger_type, source, started, marker_scope)
         context = SyncContext(
             integration=integration,
             client=client,
@@ -204,7 +214,12 @@ def _describe_source(source: dict) -> str:
 
 
 def _start_run(
-    integration: Integration, resource_type: str, trigger_type: str, source: dict, started: datetime
+    integration: Integration,
+    resource_type: str,
+    trigger_type: str,
+    source: dict,
+    started: datetime,
+    scope: dict | None = None,
 ) -> IntegrationSyncRun:
     """Check the source binding and claim the run in one transaction.
 
@@ -215,8 +230,10 @@ def _start_run(
     with transaction.atomic():
         list(Integration.objects.select_for_update().filter(pk=integration.pk).values_list("pk", flat=True))
         check_source_binding(integration, source)
-        cursor_from = get_last_successful_cursor(integration, resource_type, source=source)
+        cursor_from = get_last_successful_cursor(integration, resource_type, source=source, scope=scope)
         metadata: dict = {"source": source}
+        if scope is not None:
+            metadata["scope"] = scope
         if cursor_from is not None:
             metadata["cursor_from"] = cursor_from
         return IntegrationSyncRun.objects.create(
@@ -227,7 +244,7 @@ def _start_run(
             trigger_type=trigger_type,
             started_at=started,
             correlation_id=uuid.uuid4().hex,
-            watermark_from=get_last_successful_watermark(integration, resource_type, source=source),
+            watermark_from=get_last_successful_watermark(integration, resource_type, source=source, scope=scope),
             metadata=metadata,
         )
 
@@ -242,6 +259,7 @@ def _finish(run: IntegrationSyncRun, integration: Integration, outcome: SyncOutc
     run.records_unchanged = outcome.unchanged
     run.records_failed = outcome.failed
     metadata = dict(run.metadata or {})
+    metadata.update({k: v for k, v in outcome.metadata.items() if k not in _RESERVED_METADATA_KEYS})
     if completed:
         # Markers advance only on full success.
         run.watermark_to = outcome.watermark_to

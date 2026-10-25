@@ -30,6 +30,7 @@ _COMPANY = "782d7133-5033-4c4b-9a29-83f7f44f062d"
 _OTHER_COMPANY = "99999999-9999-4999-8999-999999999999"
 _PO = IntegrationSyncRun.ResourceType.PURCHASE_ORDERS
 _ILE = IntegrationSyncRun.ResourceType.ITEM_LEDGER_ENTRIES
+_SO = IntegrationSyncRun.ResourceType.SALES_ORDERS
 _FAKE_IMPL = {_ILE: "apps.scm.integrations.business_systems.business_central.tests.test_lifecycle.fake_sync"}
 
 
@@ -162,10 +163,12 @@ class LifecycleValidationTest(TestCase):
         cache.clear()
 
     def test_unimplemented_resource_is_refused(self):
-        integration = _integration("lc-unimpl")  # enabled in config, but no implementation
+        integration = _integration("lc-unimpl")
+        integration.config["resources"][_SO] = {"enabled": True}  # enabled in config, but no implementation
+        integration.save()
         step = _step()
         with self.assertRaisesMessage(BusinessCentralConfigurationError, "no Business Central sync implementation"):
-            _run_ile(integration, step)
+            run_business_central_sync(integration, _SO, step, _SourceClient())
         step.assert_not_called()
         self.assertFalse(integration.sync_runs.exists())
 

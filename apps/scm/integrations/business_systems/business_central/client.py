@@ -108,7 +108,7 @@ _PO_LINE_SELECT = [
 ]
 
 
-def _require_item_prefix(value: str) -> str:
+def require_item_prefix(value: str) -> str:
     """Return ``value`` if it is safe to place inside an OData ``startswith`` filter."""
     if not isinstance(value, str) or not _ITEM_PREFIX_PATTERN.match(value):
         raise BusinessCentralConfigurationError(
@@ -406,7 +406,7 @@ class BusinessCentralClient(BaseBusinessSystemClient):
         can stop after any page. In dummy mode the same filters are applied to
         ``business_central_item_ledger_entries.json``.
         """
-        prefixes = [_require_item_prefix(prefix) for prefix in item_no_prefixes]
+        prefixes = [require_item_prefix(prefix) for prefix in item_no_prefixes]
         if after_entry_no is not None and (isinstance(after_entry_no, bool) or not isinstance(after_entry_no, int)):
             raise BusinessCentralConfigurationError("after_entry_no must be an integer")
 
