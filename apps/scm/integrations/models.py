@@ -598,7 +598,7 @@ class ReceiveReason(models.TextChoices):
     NOT_PHYSICAL = "not_physical", _("Not a physical Pegasus location")
     AUTO_RECEIVE_DISABLED = "auto_receive_disabled", _("Automatic receive disabled")
     HISTORICAL = "historical", _("Historical receipt")
-    STALE_RECEIPT = "stale_receipt", _("Receipt too old")
+    FUTURE_POSTING_DATE = "future_posting_date", _("Posting date in the future")
     NEWER_MOVEMENT = "newer_movement", _("Newer physical movement")
     RECEIPT_UNRESOLVED = "receipt_unresolved", _("Receipt not resolved")
     SERIAL_UNRESOLVED = "serial_unresolved", _("Serial number not resolved")

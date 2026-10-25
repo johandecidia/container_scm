@@ -1,4 +1,4 @@
-"""Automatic receive from posted Business Central purchase receipts (stages 2d, 2e).
+"""Automatic receive from posted Business Central purchase receipts (stages 2d, 2e, 2g).
 
 ``process_purchase_receipts`` re-resolves the integration's receipts
 (``receipt_resolution``) and then, for every serial row not yet final, decides —
@@ -8,18 +8,29 @@ in this order, stopping at the first that fails:
      a Pegasus location, the posted-receipt trigger, automatic receive on;
   2. the entry was posted after the mapping's activation boundary (``entryNo``,
      never the posting date) — otherwise HISTORICAL, and nothing is created;
-  3. the posting date is at most ``max_receipt_age_days`` old (default 30) — a
-     receipt discovered late, or backdated far, is left for manual review;
+  3. the entry has a posting date, and it is not in the future (BC allows future
+     posting dates; then the order of events cannot be known — manual review);
   4. the receipt and the serial are RESOLVED (entydigt identified, valid ISO,
      classified as a container);
   5. the container exists in the team, or the mapping may create it and the item
      has an equipment type — created through ``containers.intake``;
-  6. nothing physical contradicts it, checked under the container's row lock: an
-     arrival at the same location on or after the posting date, or the container
-     already being there, is ALREADY_RECEIVED; any other movement on or after the
-     posting date is NEWER_MOVEMENT (manual review — the order cannot be trusted);
+  6. nothing physical contradicts it, checked under the container's row lock and
+     against the *posting date* (start of that day on the location's clock), never
+     against the time the receive is recorded: an arrival at the same location on or
+     after the posting date, or the container already being there, is
+     ALREADY_RECEIVED; any other movement on or after the posting date is
+     NEWER_MOVEMENT (manual review — BC carries only a date, so the order cannot be
+     trusted);
   7. the receive itself: ``containers.receive.receive_container`` — the same GATE_IN
-     a pasted depot report records, idempotent per container, location and time.
+     a pasted depot report records — at the moment Pegasus records it.
+
+Two times are kept apart. The BC posting date is a bookkeeping date and stays on the
+row (``posting_date``) and in the movement's notes; it is not a verified arrival
+time, so no arrival is invented at 00:00 of it. The movement's ``occurred_at`` (and
+``received_at``) is when Pegasus registered the receive. The age of a posting date
+never blocks a receive on its own: the ``entryNo`` activation boundary is what keeps
+history out, and step 6 is what keeps a late or backdated receipt from overriding
+newer physical information.
 
 A row ends RECEIVED (with its movement), ALREADY_RECEIVED, or NOT_RECEIVED with a
 reason. RECEIVED and ALREADY_RECEIVED are final, so a receipt read again never
@@ -54,7 +65,6 @@ from apps.scm.integrations.models import (
     BusinessCentralLocationMapping,
     BusinessCentralReceiptContainer,
     Integration,
-    IntegrationSyncRun,
     ReceiptResolution,
     ReceiveReason,
     ReceiveStatus,
@@ -64,7 +74,6 @@ from .item_rules import ItemRuleSet
 from .location_mappings import get_location_mappings
 from .locks import sync_lock
 from .receipt_resolution import processing_lock_name, resolve_purchase_receipts_locked
-from .resources import get_resource_config
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +87,6 @@ _SERIAL_REASONS: dict[str, str] = {
     ReceiptResolution.INVALID_SERIAL: ReceiveReason.INVALID_SERIAL,
     ReceiptResolution.MISSING_EQUIPMENT_TYPE: ReceiveReason.MISSING_EQUIPMENT_TYPE,
 }
-DEFAULT_MAX_RECEIPT_AGE_DAYS = 30
-_MAX_RECEIPT_AGE_LIMIT = 3650
 
 
 @dataclass
@@ -108,7 +115,6 @@ def process_purchase_receipts(integration: Integration, *, actor=None) -> Proces
         resolve_purchase_receipts_locked(integration)
         mappings = get_location_mappings(integration)
         rules = ItemRuleSet.for_integration(integration)
-        max_age = max_receipt_age_days(integration)
         rows = (
             Line.objects.filter(receipt__integration=integration)
             .exclude(receive_status__in=FINAL_STATUSES)
@@ -116,7 +122,7 @@ def process_purchase_receipts(integration: Integration, *, actor=None) -> Proces
             .order_by("entry_no", "pk")
         )
         for row in rows.iterator(chunk_size=500):
-            if _process_row(integration, row, mappings, rules, max_age):
+            if _process_row(integration, row, mappings, rules):
                 received.append(row)
             result.checked += 1
             result.by_status[row.receive_status] += 1
@@ -136,21 +142,9 @@ def process_purchase_receipts(integration: Integration, *, actor=None) -> Proces
     return result
 
 
-def max_receipt_age_days(integration: Integration) -> int:
-    """``config["resources"]["purchase_receipts"]["max_receipt_age_days"]``, else the default."""
-    value = get_resource_config(integration, IntegrationSyncRun.ResourceType.PURCHASE_RECEIPTS).get(
-        "max_receipt_age_days"
-    )
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _MAX_RECEIPT_AGE_LIMIT:
-        return DEFAULT_MAX_RECEIPT_AGE_DAYS
-    return value
-
-
-def _process_row(
-    integration: Integration, row: Line, mappings: dict[str, Mapping], rules: ItemRuleSet, max_age: int
-) -> bool:
+def _process_row(integration: Integration, row: Line, mappings: dict[str, Mapping], rules: ItemRuleSet) -> bool:
     """Decide and, if everything holds, receive one row. True when a new receive was recorded."""
-    decision = _check(row, mappings.get(row.location_code.upper()), max_age)
+    decision = _check(integration, row, mappings.get(row.location_code.upper()))
     if decision is not None:
         _save(row, decision)
         return False
@@ -177,14 +171,15 @@ def _process_row(
             return False
         row.container = container
 
-    occurred_at = receipt_occurred_at(integration, row, location)
+    posted_from = posting_day_start(integration, row, location)
+    received_at = timezone.now()
     try:
         with transaction.atomic():
             # The same row lock every movement takes: no movement can land between the check and the receive.
             locked = (
                 Container.objects.select_for_update(of=("self",)).only("pk", "current_location").get(pk=container.pk)
             )
-            conflict = _physical_conflict(integration, locked, location, occurred_at)
+            conflict = _physical_conflict(integration, locked, location, posted_from)
             if conflict is not None:
                 _save(row, conflict)
                 return False
@@ -192,7 +187,7 @@ def _process_row(
                 team=integration.team,
                 container=container,
                 location=location,
-                occurred_at=occurred_at,
+                occurred_at=received_at,
                 source=BC_RECEIVE_SOURCE,
                 notes=_provenance(row),
             )
@@ -202,14 +197,14 @@ def _process_row(
         return False
     row.movement = outcome.movement
     if outcome.created:
-        row.received_at = timezone.now()
+        row.received_at = received_at
         _save(row, _Decision(ReceiveStatus.RECEIVED))
         return True
     _save(row, _Decision(ReceiveStatus.ALREADY_RECEIVED))
     return False
 
 
-def _check(row: Line, mapping: Mapping | None, max_age: int) -> _Decision | None:
+def _check(integration: Integration, row: Line, mapping: Mapping | None) -> _Decision | None:
     """The first reason this row may not be received, or None when it may."""
     if mapping is None:
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.UNKNOWN_LOCATION)
@@ -223,8 +218,8 @@ def _check(row: Line, mapping: Mapping | None, max_age: int) -> _Decision | None
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.HISTORICAL)
     if row.posting_date is None:
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.SERIAL_UNRESOLVED)
-    if (timezone.localdate() - row.posting_date).days > max_age:
-        return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.STALE_RECEIPT)
+    if posting_day_start(integration, row, mapping.pegasus_location) > timezone.now():
+        return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.FUTURE_POSTING_DATE)
     if row.receipt.resolution_status != ReceiptResolution.RESOLVED:
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.RECEIPT_UNRESOLVED)
     if row.resolution_status != ReceiptResolution.RESOLVED:
@@ -233,24 +228,28 @@ def _check(row: Line, mapping: Mapping | None, max_age: int) -> _Decision | None
     return None
 
 
-def receipt_occurred_at(integration: Integration, row: Line, location) -> datetime:
-    """When the receive happened: the start of the posting date on the location's clock.
+def posting_day_start(integration: Integration, row: Line, location) -> datetime:
+    """The start of the BC posting date on the location's clock — what history is compared with.
 
-    BC records a date, not a time. The start of the day is the conservative choice:
-    any movement somebody recorded that day sorts after it and wins.
+    Not the time of the receive: BC records a date, so anything that happened on or
+    after the start of that day may have happened after the posting, and is treated so.
     """
     assert row.posting_date is not None  # refused by _check
-    posting_date = row.posting_date
     zone = resolve_location_timezone(integration.team, location).zone
-    return datetime.combine(posting_date, time.min, tzinfo=zone)
+    return datetime.combine(row.posting_date, time.min, tzinfo=zone)
 
 
 def _physical_conflict(
-    integration: Integration, container: Container, location: ContainerLocation, occurred_at: datetime
+    integration: Integration, container: Container, location: ContainerLocation, posted_from: datetime
 ) -> _Decision | None:
-    """Whether the container's movement history makes this receive redundant or out of date."""
+    """Whether the container's movement history makes this receive redundant or out of date.
+
+    Compared with the posting date, not with now: a movement recorded after the
+    receipt's posting date is newer physical information whatever the receive's own
+    timestamp will be.
+    """
     later = ContainerMovement.objects.filter(
-        team=integration.team, container=container, affects_current_state=True, occurred_at__gte=occurred_at
+        team=integration.team, container=container, affects_current_state=True, occurred_at__gte=posted_from
     )
     if later.filter(movement_type__in=ARRIVAL_MOVEMENT_TYPES, to_location=location).exists():
         return _Decision(ReceiveStatus.ALREADY_RECEIVED)
@@ -263,8 +262,9 @@ def _physical_conflict(
 
 def _provenance(row: Line) -> str:
     return (
-        f"Business Central purchase receipt {row.receipt.receipt_no} "
-        f"(entry {row.entry_no}, item {row.item_no}, location {row.location_code})."
+        f"Business Central purchase receipt {row.receipt.receipt_no} posted {row.posting_date} "
+        f"(entry {row.entry_no}, item {row.item_no}, location {row.location_code}). "
+        "Recorded when Pegasus registered it; the posting date is not an arrival time."
     )
 
 

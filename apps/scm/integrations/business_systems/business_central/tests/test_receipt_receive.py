@@ -1,8 +1,7 @@
 """Automatic receive from posted purchase receipts (stage 2d). No Business Central calls."""
 
-from datetime import datetime, time
+from datetime import datetime
 from unittest import mock
-from zoneinfo import ZoneInfo
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -99,8 +98,9 @@ class AutomaticReceiveTest(TestCase):
             (movement.container, movement.movement_type, movement.to_location, movement.source),
             (container, MovementType.GATE_IN, self.location, LocationSource.API),
         )
-        expected = datetime.combine(line.posting_date, time.min, tzinfo=ZoneInfo("Europe/Stockholm"))
-        self.assertEqual(movement.occurred_at, expected)
+        # Recorded when Pegasus registered it, not at an invented 00:00 on the posting date.
+        self.assertEqual(movement.occurred_at, line.received_at)
+        self.assertNotEqual(movement.occurred_at.time(), datetime.min.time())
         self.assertIn("IN1", movement.notes)
         container.refresh_from_db()
         self.assertEqual((container.current_location, container.equipment_type_id), (self.location, "22G1"))

@@ -1,5 +1,5 @@
-"""Lifecycle safety of automatic receive (stage 2e): activation boundary, history, stale and late
-receipts, newer physical movements, concurrency, undo after receive, and the receipts page.
+"""Lifecycle safety of automatic receive (stages 2e, 2g): activation boundary, history, backdated,
+late and future-dated receipts, newer physical movements, concurrency, undo after receive, and the receipts page.
 No Business Central calls."""
 
 from datetime import date, datetime, time, timedelta
@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.scm.containers.choices import LocationSource, MovementType
 from apps.scm.containers.intake import create_or_get_container
@@ -123,21 +124,38 @@ class HistoryAndActivationTest(LifecycleTestBase):
         )
         self.assertEqual(ContainerMovement.objects.filter(team=other.team).count(), 1)
 
-    def test_backdated_receipt_posted_after_activation_is_stale_when_too_old(self):
+    def test_old_posting_date_on_a_new_entry_is_received_when_pegasus_registers_it(self):
+        """The age of a posting date never blocks on its own; the entryNo boundary keeps history out."""
         self._container()
-        self._receipt(posted=date.today() - timedelta(days=45))
+        posted = date.today() - timedelta(days=400)
+        self._receipt(posted=posted)
+        before = timezone.now()
         self._process()
-        self.assertEqual(self._status(), (S.NOT_RECEIVED, W.STALE_RECEIPT))
-        self.assertFalse(ContainerMovement.objects.exists())
+        after = timezone.now()
+        line = self._line()
+        self.assertEqual((line.receive_status, line.posting_date), (S.RECEIVED, posted))
+        self.assertTrue(before <= line.movement.occurred_at <= after)  # not 00:00 of the posting date
+        self.assertEqual(line.received_at, line.movement.occurred_at)
+        self.assertIn(f"posted {posted}", line.movement.notes)
 
-    def test_backdated_receipt_within_the_configured_age_is_received_at_its_posting_date(self):
-        self.integration.config = {"resources": {"purchase_receipts": {"max_receipt_age_days": 60}}}
-        self.integration.save()
-        self._container()
-        posted = date.today() - timedelta(days=45)
+    def test_backdated_receipt_after_a_later_movement_is_held_for_review(self):
+        container = self._container()
+        posted = date.today() - timedelta(days=60)
+        record_container_movement(
+            team=self.team, container=container, movement_type=MovementType.GATE_IN, to_location=self.elsewhere,
+            occurred_at=at(date.today() - timedelta(days=10), 9),
+        )  # fmt: skip
         self._receipt(posted=posted)
         self._process()
-        self.assertEqual(self._line().movement.occurred_at, at(posted))
+        self.assertEqual(self._status(), (S.NOT_RECEIVED, W.NEWER_MOVEMENT))
+        self.assertEqual(ContainerMovement.objects.count(), 1)
+
+    def test_future_posting_date_is_held_for_review(self):
+        self._container()
+        self._receipt(posted=date.today() + timedelta(days=3))
+        self._process()
+        self.assertEqual(self._status(), (S.NOT_RECEIVED, W.FUTURE_POSTING_DATE))
+        self.assertFalse(ContainerMovement.objects.exists())
 
 
 class PhysicalOrderTest(LifecycleTestBase):
@@ -200,7 +218,7 @@ class PhysicalOrderTest(LifecycleTestBase):
         container.refresh_from_db()
         self.assertEqual(container.current_location, self.location)
 
-    def test_same_instant_receive_by_another_path_is_not_duplicated(self):
+    def test_receive_by_another_path_after_the_posting_is_not_duplicated(self):
         container = self._container()
         receive_container(
             team=self.team, container=container, location=self.location, occurred_at=at(RECENT),
