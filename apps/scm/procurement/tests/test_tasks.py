@@ -43,7 +43,8 @@ class SyncTaskTest(TestCase):
         fake_run.records_failed = 0
         with mock.patch(_SYNC_PATH, return_value=fake_run) as sync:
             sync_purchase_orders_from_bc(team.id)
-        sync.assert_called_once_with(integration)
+        # Delegates to the shared BC task body; the run is recorded as scheduled, as before.
+        sync.assert_called_once_with(integration, trigger_type="scheduled")
 
     def test_without_scheduled_opt_in_is_skipped(self):
         team = _team("task-team-no-opt-in")

@@ -7,26 +7,17 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def sync_purchase_orders_from_bc(self, team_id: int) -> None:
-    """Sync purchase orders from Business Central for the given team.
+    """Legacy team-based entry point for the Business Central purchase-order sync.
 
-    Resolves the team's active Business Central integration and runs an
-    incremental sync. Permanent configuration problems (no integration, disabled
-    sync, missing credentials) are logged and skipped; transient failures are
-    retried. The full per-integration scheduled task + dispatcher is milestone 2.
-
-    This is a background entry point, so it honours the same
-    ``scheduled_sync_enabled`` opt-in as the dispatcher.
+    Not scheduled by this project — Celery Beat uses
+    ``integrations.tasks.sync_enabled_business_central_integrations_task``. Kept
+    (name unchanged) so an existing Beat entry or queued message still resolves.
+    It only maps the team to its active BC integration and then runs the same
+    task body as ``sync_business_central_purchase_orders_task`` as a *scheduled*
+    run, so the same opt-in, resource checks, locking and retry rules apply.
     """
-    from apps.scm.integrations.business_systems.business_central.exceptions import (
-        BusinessCentralConfigurationError,
-        BusinessCentralError,
-        BusinessCentralSyncInProgressError,
-    )
-    from apps.scm.integrations.business_systems.business_central.sync import (
-        sync_purchase_orders_from_business_central,
-    )
-    from apps.scm.integrations.models import Integration
-    from apps.scm.integrations.services import is_business_central_scheduled_sync_enabled
+    from apps.scm.integrations.models import Integration, IntegrationSyncRun
+    from apps.scm.integrations.tasks import run_business_central_resource_sync_task
     from apps.teams.models import Team
 
     try:
@@ -44,28 +35,7 @@ def sync_purchase_orders_from_bc(self, team_id: int) -> None:
     if integration is None:
         logger.info("sync_purchase_orders_from_bc: team %s has no active BC integration — skipping.", team.slug)
         return
-    if not is_business_central_scheduled_sync_enabled(integration):
-        logger.info("sync_purchase_orders_from_bc: team %s scheduled sync not enabled — skipping.", team.slug)
-        return
 
-    try:
-        run = sync_purchase_orders_from_business_central(integration)
-        logger.info(
-            "sync_purchase_orders_from_bc: team %s — %s (created=%d updated=%d unchanged=%d failed=%d).",
-            team.slug,
-            run.status,
-            run.records_created,
-            run.records_updated,
-            run.records_unchanged,
-            run.records_failed,
-        )
-    except (BusinessCentralConfigurationError, BusinessCentralSyncInProgressError) as exc:
-        # Permanent / not-our-turn — do not retry.
-        logger.info("sync_purchase_orders_from_bc: team %s skipped: %s", team.slug, exc)
-    except BusinessCentralError as exc:
-        # Transient (auth/connection/rate-limit/server) — retry.
-        logger.warning("sync_purchase_orders_from_bc: team %s transient failure: %s", team.slug, exc)
-        raise self.retry(exc=exc) from exc
-    except Exception as exc:
-        logger.exception("sync_purchase_orders_from_bc: team %s failed: %s", team_id, exc)
-        raise self.retry(exc=exc) from exc
+    run_business_central_resource_sync_task(
+        self, integration.id, IntegrationSyncRun.ResourceType.PURCHASE_ORDERS, "scheduled"
+    )

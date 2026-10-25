@@ -320,6 +320,28 @@ def mark_integration_success(integration: Integration) -> None:
     integration.save(update_fields=["status", "last_success_at", "last_error_message", "updated_at"])
 
 
+def mark_integration_sync_success(integration: Integration, resource_type: str) -> None:
+    """Record a fully completed sync of one resource on the Integration model.
+
+    ``last_error_message`` is shared by every resource of the integration, so a
+    success only clears it when no *other* resource's latest finished run failed
+    or was partial. Otherwise the integration stays in error and the message is
+    rebuilt from those runs, so one resource's success never hides another's
+    failure. The per-resource truth is the sync-run history (see
+    ``selectors.get_resource_sync_statuses``).
+    """
+    from .selectors import get_open_sync_errors
+
+    open_errors = get_open_sync_errors(integration, exclude=resource_type)
+    if not open_errors:
+        mark_integration_success(integration)
+        return
+    integration.status = Integration.Status.ERROR
+    integration.last_success_at = timezone.now()
+    integration.last_error_message = "; ".join(f"{e.label}: {e.error_summary}" for e in open_errors)[:1000]
+    integration.save(update_fields=["status", "last_success_at", "last_error_message", "updated_at"])
+
+
 def mark_integration_error(integration: Integration, error_message: str) -> None:
     """Record a failed API interaction on the Integration model."""
     integration.status = Integration.Status.ERROR

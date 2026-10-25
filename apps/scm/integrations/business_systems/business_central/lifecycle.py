@@ -13,6 +13,8 @@ supplies only a *step*: fetch, map, validate and upsert, returning a
   - records the run as an IntegrationSyncRun (source, markers, counts, errors)
   - advances sync markers (timestamp watermark, integer cursor) only when the
     run completes fully; a failed or partial run never moves them forward
+  - updates the integration's shared health fields without letting one
+    resource's success hide another resource's outstanding error
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from apps.scm.integrations.services import (
     get_last_successful_cursor,
     get_last_successful_watermark,
     mark_integration_error,
-    mark_integration_success,
+    mark_integration_sync_success,
 )
 
 from .client import BusinessCentralClient
@@ -252,7 +254,7 @@ def _finish(run: IntegrationSyncRun, integration: Integration, outcome: SyncOutc
     run.save()
 
     if completed:
-        mark_integration_success(integration)
+        mark_integration_sync_success(integration, run.resource_type)
     else:
         mark_integration_error(integration, run.error_summary)
 

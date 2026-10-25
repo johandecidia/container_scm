@@ -427,3 +427,34 @@ Run it a second time: `created=0 … unchanged=N` (idempotent).
   watermark, and — for team administrators — **Test connection** / **Sync purchase
   orders now** buttons (POST + CSRF, team-scoped, queue Celery tasks, never display
   credentials).
+- The detail page also lists every resource type (`selectors.get_resource_sync_statuses`):
+  implemented / enabled, latest run, last finished run counts, *Never synced*, and
+  the error of a resource whose latest finished run failed or was partial. The list
+  page flags *N resource error(s)*. All of it is read from `IntegrationSyncRun`; no
+  extra status is stored.
+- `Integration.status` / `last_error_message` are shared by every resource. A failed
+  or partial run sets them as before; a completed run clears them only when no
+  *other* resource has an open error — otherwise the integration stays `error` and
+  the message lists the failing resources (`services.mark_integration_sync_success`).
+  A successful connection test still clears them (connection health); the
+  per-resource table remains the source of truth.
+
+## Technical debt left after stage 0
+
+- `schemas.NormalizedCustomerOrder(Line)` (plain dataclasses) and
+  `BusinessCentralMapper.map_sales_order` (raises `NotImplementedError`) are unused
+  placeholders. Replace them with Pydantic schemas when sales orders are built
+  (stage 5).
+- `test_connection` only proves purchase-order read access; each new resource needs
+  its own permission check (e.g. item ledger entries, analytics API).
+- Reconciliation (`reconcile.py`) and **Sync purchase orders now** are
+  purchase-order only.
+- The client issues one `requests.get` per call (there is no shared
+  `requests.Session`); retry, 401 refresh, logging and pagination are shared in
+  `_request` / `_fetch_all_pages`.
+- `procurement.tasks.sync_purchase_orders_from_bc` is kept only as a thin,
+  team-based wrapper (Celery Beat uses the database scheduler, so a stored entry
+  might still reference it). Remove it once no Beat entry points at it.
+- The *stale running* threshold (2 h) is shared by the dispatcher and the source
+  binding.
+

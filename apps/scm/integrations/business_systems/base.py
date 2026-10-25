@@ -1,9 +1,9 @@
 # Base classes for business system integrations.
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass
+@dataclass(frozen=True)
 class BusinessSystemCapability:
     """Describes what a business system integration supports."""
 
@@ -20,7 +20,8 @@ class BaseBusinessSystemClient:
     """Base class for all business system API clients."""
 
     system_code: str = ""
-    capabilities: BusinessSystemCapability = field(default_factory=BusinessSystemCapability)
+    # A plain class attribute (this is not a dataclass): subclasses replace it, never mutate it.
+    capabilities: BusinessSystemCapability = BusinessSystemCapability()
 
     def test_connection(self) -> dict:
         """Verify connectivity and credentials.

@@ -31,24 +31,14 @@ def _build_registry() -> dict[str, BusinessSystemDefinition]:
             name="Microsoft Business Central",
             client_class=BusinessCentralClient,
             mapper_class=BusinessCentralMapper,
-            capabilities=BusinessSystemCapability(
-                supports_sales_orders=True,
-                supports_purchase_orders=True,
-                supports_customers=True,
-                supports_vendors=True,
-                supports_items=True,
-                supports_webhooks=True,
-                supports_polling=True,
-            ),
+            capabilities=BusinessCentralClient.capabilities,
         ),
         "john_evans": BusinessSystemDefinition(
             system_code="john_evans",
             name="John Evans International",
             client_class=JohnEvansClient,
             mapper_class=JohnEvansMapper,
-            capabilities=BusinessSystemCapability(
-                supports_polling=True,
-            ),
+            capabilities=JohnEvansClient.capabilities,
         ),
     }
 

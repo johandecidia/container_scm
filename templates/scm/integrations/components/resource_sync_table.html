@@ -1,0 +1,62 @@
+{% load i18n %}
+
+{% comment %}
+  One row per Business Central resource type, built from IntegrationSyncRun history
+  (`resources` from get_integration_monitoring_context). A resource without an
+  implementation is shown as unavailable; one that never ran says so.
+{% endcomment %}
+
+<section class="app-card">
+  <h2 class="font-semibold mb-3">{% translate "Resources" %}</h2>
+  <div class="overflow-x-auto">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>{% translate "Resource" %}</th>
+          <th>{% translate "Sync" %}</th>
+          <th>{% translate "Latest run" %}</th>
+          <th>{% translate "Finished" %}</th>
+          <th class="text-right">{% translate "Fetched" %}</th>
+          <th class="text-right">{% translate "Failed" %}</th>
+          <th>{% translate "Error" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for resource in resources %}
+          <tr>
+            <td>{{ resource.label }}</td>
+            <td>
+              {% if not resource.implemented %}
+                <span class="badge badge-ghost badge-sm">{% translate "Not available" %}</span>
+              {% elif resource.enabled %}
+                <span class="badge badge-success badge-soft badge-sm">{% translate "Enabled" %}</span>
+              {% else %}
+                <span class="badge badge-ghost badge-sm">{% translate "Disabled" %}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if resource.in_progress %}
+                <span class="badge badge-info badge-sm">{% translate "Running" %}</span>
+              {% elif resource.never_synced %}
+                <span class="text-base-content/60">{% translate "Never synced" %}</span>
+              {% else %}
+                {{ resource.latest_run.get_status_display }}
+              {% endif %}
+            </td>
+            <td>{{ resource.last_finished_run.finished_at|date:"d M Y H:i"|default:"—" }}</td>
+            {% if resource.last_finished_run %}
+              <td class="text-right tabular-nums">{{ resource.last_finished_run.records_fetched }}</td>
+              <td class="text-right tabular-nums">{{ resource.last_finished_run.records_failed }}</td>
+            {% else %}
+              <td class="text-right">—</td>
+              <td class="text-right">—</td>
+            {% endif %}
+            <td class="text-error text-xs">
+              {% if resource.has_open_error %}{{ resource.error_summary|default:_("Last sync did not complete") }}{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

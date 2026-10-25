@@ -232,14 +232,10 @@ class BusinessCentralClient(BaseBusinessSystemClient):
     """
 
     system_code = "business_central"
+    # What this client actually implements today — not what Business Central offers.
+    # Only purchase orders are fetched; no BC webhook processor exists (polling only).
     capabilities = BusinessSystemCapability(
-        supports_sales_orders=True,
         supports_purchase_orders=True,
-        supports_customers=True,
-        supports_vendors=True,
-        supports_items=True,
-        # No BC-specific webhook processor exists yet — polling only.
-        supports_webhooks=False,
         supports_polling=True,
     )
 

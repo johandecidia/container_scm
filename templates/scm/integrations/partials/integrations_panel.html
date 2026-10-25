@@ -75,6 +75,15 @@
                   {% elif row.latest_run %}
                     {{ row.latest_run.get_status_display }}
                   {% else %}—{% endif %}
+                  {% if row.resource_errors %}
+                    <span class="badge badge-error badge-soft badge-sm" title="{% for r in row.resource_errors %}{{ r.label }}{% if not forloop.last %}, {% endif %}{% endfor %}">
+                      {% blocktranslate trimmed count counter=row.resource_errors|length %}
+                        {{ counter }} resource error
+                      {% plural %}
+                        {{ counter }} resource errors
+                      {% endblocktranslate %}
+                    </span>
+                  {% endif %}
                 </td>
                 <td>
                   <div class="flex justify-end gap-1">

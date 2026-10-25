@@ -1,8 +1,11 @@
 # Integration selectors — all read/query operations.
+from dataclasses import dataclass
+
 from django.db.models import QuerySet
 
 from apps.teams.models import Team
 
+from .business_systems.business_central import resources as bc_resources
 from .models import Integration, IntegrationRequestLog, IntegrationSyncRun, IntegrationWebhookEvent
 
 
@@ -41,38 +44,107 @@ def get_team_business_central_integrations(team: Team) -> QuerySet[Integration]:
     ).order_by("name")
 
 
-def get_latest_sync_run(integration: Integration) -> IntegrationSyncRun | None:
-    return (
-        IntegrationSyncRun.objects.filter(
-            integration=integration,
-            resource_type=IntegrationSyncRun.ResourceType.PURCHASE_ORDERS,
+@dataclass(frozen=True)
+class ResourceSyncStatus:
+    """Monitoring summary for one resource of one integration, built from its sync-run history."""
+
+    resource_type: str
+    label: str
+    implemented: bool
+    enabled: bool
+    latest_run: IntegrationSyncRun | None
+    last_finished_run: IntegrationSyncRun | None
+    last_completed_run: IntegrationSyncRun | None
+
+    @property
+    def never_synced(self) -> bool:
+        return self.latest_run is None
+
+    @property
+    def in_progress(self) -> bool:
+        return bool(self.latest_run and self.latest_run.status == IntegrationSyncRun.Status.RUNNING)
+
+    @property
+    def has_open_error(self) -> bool:
+        """The most recent finished run did not complete fully (failed or partial)."""
+        return bool(self.last_finished_run and self.last_finished_run.status != IntegrationSyncRun.Status.COMPLETED)
+
+    @property
+    def error_summary(self) -> str:
+        run = self.last_finished_run
+        return run.error_summary if run and self.has_open_error else ""
+
+
+_FINISHED_STATUSES = [
+    IntegrationSyncRun.Status.COMPLETED,
+    IntegrationSyncRun.Status.PARTIALLY_COMPLETED,
+    IntegrationSyncRun.Status.FAILED,
+]
+
+
+def _latest_run_per_resource(runs: QuerySet[IntegrationSyncRun], order: str) -> dict[str, IntegrationSyncRun]:
+    # DISTINCT ON (resource_type): one query for all resources (PostgreSQL).
+    return {run.resource_type: run for run in runs.order_by("resource_type", order).distinct("resource_type")}
+
+
+def get_resource_sync_statuses(integration: Integration) -> list[ResourceSyncStatus]:
+    """One status per defined resource type, including resources that never synced."""
+    runs = IntegrationSyncRun.objects.filter(integration=integration)
+    latest = _latest_run_per_resource(runs, "-started_at")
+    finished = _latest_run_per_resource(runs.filter(status__in=_FINISHED_STATUSES), "-finished_at")
+    completed = _latest_run_per_resource(runs.filter(status=IntegrationSyncRun.Status.COMPLETED), "-finished_at")
+    statuses = []
+    for resource_type in IntegrationSyncRun.ResourceType.values:
+        settings = bc_resources.get_resource_settings(integration, resource_type)
+        statuses.append(
+            ResourceSyncStatus(
+                resource_type=resource_type,
+                label=settings.label,
+                implemented=settings.implemented,
+                enabled=settings.enabled,
+                latest_run=latest.get(resource_type),
+                last_finished_run=finished.get(resource_type),
+                last_completed_run=completed.get(resource_type),
+            )
         )
+    return statuses
+
+
+def get_open_sync_errors(integration: Integration, *, exclude: str | None = None) -> list[ResourceSyncStatus]:
+    """Resources whose most recent finished run failed or was partial (optionally excluding one)."""
+    return [s for s in get_resource_sync_statuses(integration) if s.has_open_error and s.resource_type != exclude]
+
+
+def get_latest_sync_run(
+    integration: Integration, resource_type: str = IntegrationSyncRun.ResourceType.PURCHASE_ORDERS
+) -> IntegrationSyncRun | None:
+    return (
+        IntegrationSyncRun.objects.filter(integration=integration, resource_type=resource_type)
         .order_by("-started_at")
         .first()
     )
 
 
-def is_sync_in_progress(integration: Integration) -> bool:
+def is_sync_in_progress(
+    integration: Integration, resource_type: str = IntegrationSyncRun.ResourceType.PURCHASE_ORDERS
+) -> bool:
     return IntegrationSyncRun.objects.filter(
         integration=integration,
-        resource_type=IntegrationSyncRun.ResourceType.PURCHASE_ORDERS,
+        resource_type=resource_type,
         status=IntegrationSyncRun.Status.RUNNING,
     ).exists()
 
 
 def get_integration_monitoring_context(integration: Integration) -> dict:
-    """Sanitised monitoring summary for one integration (never exposes credentials)."""
+    """Sanitised monitoring summary for one integration (never exposes credentials).
+
+    The top-level run keys describe purchase orders (the resource the page can
+    sync now); ``resources`` has one status per resource type, and
+    ``resource_errors`` the resources whose latest finished run did not complete.
+    """
     config = integration.config or {}
-    latest = get_latest_sync_run(integration)
-    last_completed = (
-        IntegrationSyncRun.objects.filter(
-            integration=integration,
-            resource_type=IntegrationSyncRun.ResourceType.PURCHASE_ORDERS,
-            status=IntegrationSyncRun.Status.COMPLETED,
-        )
-        .order_by("-finished_at")
-        .first()
-    )
+    resources = get_resource_sync_statuses(integration)
+    purchase_orders = next(r for r in resources if r.resource_type == IntegrationSyncRun.ResourceType.PURCHASE_ORDERS)
     last_failed = (
         IntegrationSyncRun.objects.filter(
             integration=integration,
@@ -82,13 +154,16 @@ def get_integration_monitoring_context(integration: Integration) -> dict:
         .order_by("-finished_at")
         .first()
     )
+    last_completed = purchase_orders.last_completed_run
     return {
         "integration": integration,
         "environment": config.get("environment", ""),
         "company_id": config.get("company_id", ""),
-        "latest_run": latest,
+        "latest_run": purchase_orders.latest_run,
         "last_completed_run": last_completed,
         "last_failed_run": last_failed,
         "current_watermark": last_completed.watermark_to if last_completed else None,
-        "in_progress": bool(latest and latest.status == IntegrationSyncRun.Status.RUNNING),
+        "in_progress": purchase_orders.in_progress,
+        "resources": resources,
+        "resource_errors": [r for r in resources if r.has_open_error],
     }
