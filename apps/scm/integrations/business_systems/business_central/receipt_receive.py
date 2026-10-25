@@ -1,4 +1,4 @@
-"""Automatic receive from posted Business Central purchase receipts (stage 2d).
+"""Automatic receive from posted Business Central purchase receipts (stages 2d, 2e).
 
 ``process_purchase_receipts`` re-resolves the integration's receipts
 (``receipt_resolution``) and then, for every serial row not yet final, decides —
@@ -8,11 +8,17 @@ in this order, stopping at the first that fails:
      a Pegasus location, the posted-receipt trigger, automatic receive on;
   2. the entry was posted after the mapping's activation boundary (``entryNo``,
      never the posting date) — otherwise HISTORICAL, and nothing is created;
-  3. the receipt and the serial are RESOLVED (entydigt identified, valid ISO,
+  3. the posting date is at most ``max_receipt_age_days`` old (default 30) — a
+     receipt discovered late, or backdated far, is left for manual review;
+  4. the receipt and the serial are RESOLVED (entydigt identified, valid ISO,
      classified as a container);
-  4. the container exists in the team, or the mapping may create it and the item
+  5. the container exists in the team, or the mapping may create it and the item
      has an equipment type — created through ``containers.intake``;
-  5. the receive itself: ``containers.receive.receive_container`` — the same GATE_IN
+  6. nothing physical contradicts it, checked under the container's row lock: an
+     arrival at the same location on or after the posting date, or the container
+     already being there, is ALREADY_RECEIVED; any other movement on or after the
+     posting date is NEWER_MOVEMENT (manual review — the order cannot be trusted);
+  7. the receive itself: ``containers.receive.receive_container`` — the same GATE_IN
      a pasted depot report records, idempotent per container, location and time.
 
 A row ends RECEIVED (with its movement), ALREADY_RECEIVED, or NOT_RECEIVED with a
@@ -20,6 +26,9 @@ reason. RECEIVED and ALREADY_RECEIVED are final, so a receipt read again never
 receives twice; NOT_RECEIVED is re-evaluated on the next pass. After a *new*
 receive, the team's existing stop-tracking-on-receive policy is applied with the
 receive path's own helper — there is no BC-specific tracking behaviour.
+
+A receipt undone in BC *after* it was received is never reversed here; the row keeps
+RECEIVED and its resolution turns REVERSED, which the receipts page lists for review.
 
 Never writes to Business Central.
 """
@@ -32,16 +41,20 @@ from dataclasses import dataclass, field
 from datetime import datetime, time
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
 from apps.scm.containers.choices import LocationSource
 from apps.scm.containers.intake import create_or_get_container
 from apps.scm.containers.location_time import resolve_location_timezone
+from apps.scm.containers.models import Container, ContainerLocation, ContainerMovement
+from apps.scm.containers.movements import ARRIVAL_MOVEMENT_TYPES
 from apps.scm.containers.receive import receive_container, stop_tracking_after_receive
 from apps.scm.integrations.models import (
     BusinessCentralLocationMapping,
     BusinessCentralReceiptContainer,
     Integration,
+    IntegrationSyncRun,
     ReceiptResolution,
     ReceiveReason,
     ReceiveStatus,
@@ -51,6 +64,7 @@ from .item_rules import ItemRuleSet
 from .location_mappings import get_location_mappings
 from .locks import sync_lock
 from .receipt_resolution import processing_lock_name, resolve_purchase_receipts_locked
+from .resources import get_resource_config
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +78,8 @@ _SERIAL_REASONS = {
     ReceiptResolution.INVALID_SERIAL: ReceiveReason.INVALID_SERIAL,
     ReceiptResolution.MISSING_EQUIPMENT_TYPE: ReceiveReason.MISSING_EQUIPMENT_TYPE,
 }
+DEFAULT_MAX_RECEIPT_AGE_DAYS = 30
+_MAX_RECEIPT_AGE_LIMIT = 3650
 
 
 @dataclass
@@ -92,6 +108,7 @@ def process_purchase_receipts(integration: Integration, *, actor=None) -> Proces
         resolve_purchase_receipts_locked(integration)
         mappings = get_location_mappings(integration)
         rules = ItemRuleSet.for_integration(integration)
+        max_age = max_receipt_age_days(integration)
         rows = (
             Line.objects.filter(receipt__integration=integration)
             .exclude(receive_status__in=FINAL_STATUSES)
@@ -99,7 +116,7 @@ def process_purchase_receipts(integration: Integration, *, actor=None) -> Proces
             .order_by("entry_no", "pk")
         )
         for row in rows.iterator(chunk_size=500):
-            if _process_row(integration, row, mappings, rules):
+            if _process_row(integration, row, mappings, rules, max_age):
                 received.append(row)
             result.checked += 1
             result.by_status[row.receive_status] += 1
@@ -119,9 +136,21 @@ def process_purchase_receipts(integration: Integration, *, actor=None) -> Proces
     return result
 
 
-def _process_row(integration: Integration, row: Line, mappings: dict[str, Mapping], rules: ItemRuleSet) -> bool:
+def max_receipt_age_days(integration: Integration) -> int:
+    """``config["resources"]["purchase_receipts"]["max_receipt_age_days"]``, else the default."""
+    value = get_resource_config(integration, IntegrationSyncRun.ResourceType.PURCHASE_RECEIPTS).get(
+        "max_receipt_age_days"
+    )
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _MAX_RECEIPT_AGE_LIMIT:
+        return DEFAULT_MAX_RECEIPT_AGE_DAYS
+    return value
+
+
+def _process_row(
+    integration: Integration, row: Line, mappings: dict[str, Mapping], rules: ItemRuleSet, max_age: int
+) -> bool:
     """Decide and, if everything holds, receive one row. True when a new receive was recorded."""
-    decision = _check(row, mappings.get(row.location_code.upper()))
+    decision = _check(row, mappings.get(row.location_code.upper()), max_age)
     if decision is not None:
         _save(row, decision)
         return False
@@ -148,15 +177,25 @@ def _process_row(integration: Integration, row: Line, mappings: dict[str, Mappin
             return False
         row.container = container
 
+    occurred_at = receipt_occurred_at(integration, row, location)
     try:
-        outcome = receive_container(
-            team=integration.team,
-            container=container,
-            location=location,
-            occurred_at=receipt_occurred_at(integration, row, location),
-            source=BC_RECEIVE_SOURCE,
-            notes=_provenance(row),
-        )
+        with transaction.atomic():
+            # The same row lock every movement takes: no movement can land between the check and the receive.
+            locked = (
+                Container.objects.select_for_update(of=("self",)).only("pk", "current_location").get(pk=container.pk)
+            )
+            conflict = _physical_conflict(integration, locked, location, occurred_at)
+            if conflict is not None:
+                _save(row, conflict)
+                return False
+            outcome = receive_container(
+                team=integration.team,
+                container=container,
+                location=location,
+                occurred_at=occurred_at,
+                source=BC_RECEIVE_SOURCE,
+                notes=_provenance(row),
+            )
     except ValidationError:
         logger.warning("BC receive: receive_container refused %s", row.serial_no)
         _save(row, _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.RECEIVE_FAILED))
@@ -170,7 +209,7 @@ def _process_row(integration: Integration, row: Line, mappings: dict[str, Mappin
     return False
 
 
-def _check(row: Line, mapping: Mapping | None) -> _Decision | None:
+def _check(row: Line, mapping: Mapping | None, max_age: int) -> _Decision | None:
     """The first reason this row may not be received, or None when it may."""
     if mapping is None:
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.UNKNOWN_LOCATION)
@@ -182,6 +221,10 @@ def _check(row: Line, mapping: Mapping | None) -> _Decision | None:
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.AUTO_RECEIVE_DISABLED)
     if row.entry_no <= (mapping.auto_receive_after_entry_no or 0):
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.HISTORICAL)
+    if row.posting_date is None:
+        return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.SERIAL_UNRESOLVED)
+    if (timezone.localdate() - row.posting_date).days > max_age:
+        return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.STALE_RECEIPT)
     if row.receipt.resolution_status != ReceiptResolution.RESOLVED:
         return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.RECEIPT_UNRESOLVED)
     if row.resolution_status != ReceiptResolution.RESOLVED:
@@ -196,9 +239,26 @@ def receipt_occurred_at(integration: Integration, row: Line, location) -> dateti
     BC records a date, not a time. The start of the day is the conservative choice:
     any movement somebody recorded that day sorts after it and wins.
     """
-    posting_date = row.posting_date or row.receipt.posting_date or timezone.localdate()
+    assert row.posting_date is not None  # refused by _check
+    posting_date = row.posting_date
     zone = resolve_location_timezone(integration.team, location).zone
     return datetime.combine(posting_date, time.min, tzinfo=zone)
+
+
+def _physical_conflict(
+    integration: Integration, container: Container, location: ContainerLocation, occurred_at: datetime
+) -> _Decision | None:
+    """Whether the container's movement history makes this receive redundant or out of date."""
+    later = ContainerMovement.objects.filter(
+        team=integration.team, container=container, affects_current_state=True, occurred_at__gte=occurred_at
+    )
+    if later.filter(movement_type__in=ARRIVAL_MOVEMENT_TYPES, to_location=location).exists():
+        return _Decision(ReceiveStatus.ALREADY_RECEIVED)
+    if later.exists():
+        return _Decision(ReceiveStatus.NOT_RECEIVED, ReceiveReason.NEWER_MOVEMENT)
+    if container.current_location_id == location.pk:
+        return _Decision(ReceiveStatus.ALREADY_RECEIVED)
+    return None
 
 
 def _provenance(row: Line) -> str:

@@ -3,6 +3,8 @@
 No Business Central calls; receipts and ledger entries are built in BC's API shape.
 """
 
+from datetime import date, timedelta
+
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 
@@ -21,12 +23,14 @@ from apps.users.models import CustomUser
 
 _LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "bc-rcpt-resolve"}}
 COMPANY = "782d7133-5033-4c4b-9a29-83f7f44f062d"
+# Posting dates relative to today, so the receive's age limit never makes a test drift into failure.
+RECENT = date.today() - timedelta(days=2)
 R = ReceiptResolution
 Receipt = BusinessCentralPurchaseReceipt
 Line = BusinessCentralReceiptContainer
 
 
-def ile(entry_no, serial, *, item="CON22G1", doc="IN1", qty=1, loc="L005", doc_type="Purchase Receipt", day="10-20"):
+def ile(entry_no, serial, *, item="CON22G1", doc="IN1", qty=1, loc="L005", doc_type="Purchase Receipt", posted=None):
     """One raw item ledger entry as the Analytics API returns it."""
     return {
         "entryNo": entry_no,
@@ -35,7 +39,7 @@ def ile(entry_no, serial, *, item="CON22G1", doc="IN1", qty=1, loc="L005", doc_t
         "entryType": "Purchase" if doc_type == "Purchase Receipt" else "Sale",
         "documentType": doc_type,
         "documentNo": doc,
-        "postingDate": f"2026-{day}",
+        "postingDate": (posted or RECENT).isoformat(),
         "quantity": qty,
         "locationCode": loc,
         "sourceType": "Vendor",
@@ -43,15 +47,15 @@ def ile(entry_no, serial, *, item="CON22G1", doc="IN1", qty=1, loc="L005", doc_t
     }
 
 
-def bc_receipt(number, lines, *, day="10-20"):
+def bc_receipt(number, lines, *, posted=None):
     """One raw posted purchase receipt with ``lines`` = [(item, quantity), ...]."""
     return {
         "id": f"00000000-0000-0000-0000-{abs(hash(number)) % 10**12:012d}",
         "number": number,
-        "postingDate": f"2026-{day}",
+        "postingDate": (posted or RECENT).isoformat(),
         "vendorNumber": "1203",
         "orderNumber": "100017",
-        "lastModifiedDateTime": f"2026-{day}T10:00:00Z",
+        "lastModifiedDateTime": f"{(posted or RECENT).isoformat()}T10:00:00Z",
         "purchaseReceiptLines": [
             {"id": f"{number}-{i}", "sequence": i * 10000, "lineType": "Item", "lineObjectNumber": item, "quantity": q}
             for i, (item, q) in enumerate(lines, start=1)
@@ -104,7 +108,7 @@ class ReceiptResolutionTest(TestCase):
             (line.resolution_status, line.container, line.location_code, line.entry_no, line.item_no),
             (R.RESOLVED, container, "L005", 1, "CON22G1"),
         )
-        self.assertEqual(str(line.posting_date), "2026-10-20")
+        self.assertEqual(line.posting_date, RECENT)
 
     def test_several_containers_on_several_lines_of_the_same_item(self):
         serials = ["MCUU2901785", "TCLU1234568", "CRTU4101684"]

@@ -14,6 +14,7 @@ from .models import (
     IntegrationRequestLog,
     IntegrationSyncRun,
     IntegrationWebhookEvent,
+    ReceiptResolution,
     ReceiveStatus,
 )
 
@@ -242,6 +243,10 @@ def get_receipt_summary(integration: Integration) -> dict:
         "pending": by_receive.get(ReceiveStatus.PENDING, 0),
         "not_received": by_receive.get(ReceiveStatus.NOT_RECEIVED, 0),
         "reasons": _choice_counts(rows.filter(receive_status=ReceiveStatus.NOT_RECEIVED), "receive_reason"),
+        # Received, then undone in BC: never reversed automatically, listed for review.
+        "reversed_after_receive": rows.filter(
+            receive_status=ReceiveStatus.RECEIVED, resolution_status=ReceiptResolution.REVERSED
+        ).count(),
         "last_sync_at": last_completed.finished_at if last_completed else None,
         "last_receive_at": rows.aggregate(m=Max("received_at"))["m"],
     }

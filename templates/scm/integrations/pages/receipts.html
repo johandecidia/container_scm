@@ -55,6 +55,10 @@
         <dd class="tabular-nums text-right">{{ summary.pending }}</dd>
         <dt class="text-base-content/60"><a class="link link-hover" href="?status=not_received">{% translate "Not received" %}</a></dt>
         <dd class="tabular-nums text-right">{{ summary.not_received }}</dd>
+        {% if summary.reversed_after_receive %}
+          <dt class="text-warning"><a class="link link-hover" href="?resolution=reversed">{% translate "Undone in BC after receive" %}</a></dt>
+          <dd class="tabular-nums text-right text-warning">{{ summary.reversed_after_receive }}</dd>
+        {% endif %}
         <dt class="text-base-content/60">{% translate "Last successful sync" %}</dt>
         <dd class="text-right">{{ summary.last_sync_at|default:"—" }}</dd>
         <dt class="text-base-content/60">{% translate "Last automatic receive" %}</dt>
