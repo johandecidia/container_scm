@@ -508,6 +508,20 @@ class BusinessCentralLocationMapping(BaseTeamModel):
         )
 
 
+class ReceiptResolution(models.TextChoices):
+    """How a posted receipt (and each serial number on it) maps to physical containers."""
+
+    PENDING = "pending", _("Not checked yet")
+    RESOLVED = "resolved", _("Resolved")
+    AMBIGUOUS = "ambiguous", _("Ambiguous")
+    MISSING_SERIAL = "missing_serial", _("Serial numbers missing")
+    INVALID_SERIAL = "invalid_serial", _("Invalid ISO 6346 serial")
+    UNCLASSIFIED_ITEM = "unclassified_item", _("Item not classified")
+    MISSING_EQUIPMENT_TYPE = "missing_equipment_type", _("No equipment type mapped")
+    NOT_APPLICABLE = "not_applicable", _("Not a physical container")
+    REVERSED = "reversed", _("Receipt undone in Business Central")
+
+
 class BusinessCentralPurchaseReceipt(BaseTeamModel):
     """A local copy of one posted purchase receipt (standard API v2.0 ``purchaseReceipts``).
 
@@ -541,6 +555,13 @@ class BusinessCentralPurchaseReceipt(BaseTeamModel):
     sync_hash = models.CharField(_("sync hash"), max_length=64)
     synced_at = models.DateTimeField(_("synced at"))
 
+    # Set by ``receipt_resolution`` (never by the sync), recomputed on every pass.
+    resolution_status = models.CharField(
+        _("resolution"), max_length=30, choices=ReceiptResolution.choices, default=ReceiptResolution.PENDING
+    )
+    resolution_details = models.JSONField(_("resolution details"), default=dict, blank=True)
+    resolved_at = models.DateTimeField(_("resolved at"), null=True, blank=True)
+
     class Meta:
         ordering = ["integration", "-posting_date", "-receipt_no"]
         constraints = [
@@ -560,3 +581,52 @@ class BusinessCentralPurchaseReceipt(BaseTeamModel):
     def lines(self) -> list[dict]:
         lines = (self.raw_payload or {}).get("purchaseReceiptLines")
         return [line for line in lines if isinstance(line, dict)] if isinstance(lines, list) else []
+
+
+class BusinessCentralReceiptContainer(BaseTeamModel):
+    """One serial number on one posted purchase receipt — the unit a receive is made for.
+
+    Built by ``receipt_resolution`` from the receipt's item ledger entries
+    (``documentType`` "Purchase Receipt", ``documentNo`` = receipt no., same company):
+    BC posts one entry per serial, carrying item, location, posting date and
+    ``entryNo``. Unique per receipt and serial, so a receipt read again never adds a
+    second row — this row is also the idempotency record for its receive.
+    """
+
+    receipt = models.ForeignKey(
+        BusinessCentralPurchaseReceipt,
+        on_delete=models.CASCADE,
+        related_name="containers",
+        verbose_name=_("receipt"),
+    )
+    serial_no = models.CharField(_("serial no."), max_length=100)
+    item_no = models.CharField(_("item no."), max_length=50, blank=True)
+    location_code = models.CharField(_("location code"), max_length=50, blank=True)
+    posting_date = models.DateField(_("posting date"), null=True, blank=True)
+    entry_no = models.BigIntegerField(_("entry no."))
+    net_quantity = models.DecimalField(_("net quantity"), max_digits=20, decimal_places=5)
+    resolution_status = models.CharField(
+        _("resolution"), max_length=30, choices=ReceiptResolution.choices, default=ReceiptResolution.PENDING
+    )
+    container = models.ForeignKey(
+        "scm_containers.Container",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bc_receipt_lines",
+        verbose_name=_("container"),
+    )
+    resolved_at = models.DateTimeField(_("resolved at"), null=True, blank=True)
+
+    class Meta:
+        ordering = ["receipt", "serial_no"]
+        constraints = [
+            models.UniqueConstraint(fields=["receipt", "serial_no"], name="uniq_bc_receipt_serial"),
+        ]
+        indexes = [
+            models.Index(fields=["team", "serial_no"]),
+            models.Index(fields=["team", "resolution_status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.receipt.receipt_no} / {self.serial_no}"
