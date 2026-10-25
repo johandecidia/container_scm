@@ -5,7 +5,7 @@ from django.urls import reverse
 
 from apps.scm.imports.models import ImportJob
 
-from .helpers import make_import_job, make_team, make_user
+from .helpers import add_team_admin, make_import_job, make_team, make_user
 
 _TEST_STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
@@ -21,7 +21,7 @@ class ImportPermissionsTest(TestCase):
         cls.other_team = make_team(name="Other Team", slug="perm-other-team")
 
         cls.user = make_user("perm@example.com")
-        cls.team.members.add(cls.user)
+        add_team_admin(cls.team, cls.user)
 
         cls.other_user = make_user("other@example.com")
         cls.other_team.members.add(cls.other_user)
@@ -41,6 +41,21 @@ class ImportPermissionsTest(TestCase):
         c = Client()
         resp = c.get(reverse("imports:list"))
         self.assertIn(resp.status_code, [302, 301])
+
+    def test_plain_member_gets_404_on_every_import_page(self):
+        member = make_user("perm-member@example.com")
+        self.team.members.add(member)  # no role: an ordinary member, not an administrator
+        c = self._client(member)
+        for method, url in (
+            ("get", reverse("imports:list")),
+            ("get", reverse("imports:upload")),
+            ("get", reverse("imports:detail", kwargs={"pk": self.job.pk})),
+            ("post", reverse("imports:parse", kwargs={"pk": self.job.pk})),
+            ("post", reverse("imports:validate", kwargs={"pk": self.job.pk})),
+            ("post", reverse("imports:confirm", kwargs={"pk": self.job.pk})),
+        ):
+            with self.subTest(method=method, url=url):
+                self.assertEqual(getattr(c, method)(url).status_code, 404)
 
     def test_user_cannot_access_other_team_import(self):
         c = self._client(self.user)

@@ -13,7 +13,7 @@ from apps.scm.imports.services import create_import_job
 from apps.teams.models import Team
 from apps.users.models import CustomUser
 
-from .helpers import make_csv_file, make_team, make_user
+from .helpers import add_team_admin, make_csv_file, make_team, make_user
 
 
 class BCPOXLSXRemovedTest(TestCase):
@@ -134,7 +134,7 @@ class ImportUploadViewPreselectionTest(TestCase):
     def setUpTestData(cls):
         cls.team = make_team(slug="presel-team")
         cls.user = make_user("presel@example.com")
-        cls.team.members.add(cls.user)
+        add_team_admin(cls.team, cls.user)
 
     def _client(self):
         c = Client()
@@ -192,7 +192,7 @@ class UploadFormErrorRenderingTest(TestCase):
     def setUpTestData(cls):
         cls.team = make_team(slug="upload-errors-team")
         cls.user = make_user("upload-errors@example.com")
-        cls.team.members.add(cls.user)
+        add_team_admin(cls.team, cls.user)
 
     def _client(self) -> Client:
         c = Client()

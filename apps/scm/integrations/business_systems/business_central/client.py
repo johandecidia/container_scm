@@ -20,7 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 from urllib.parse import quote, urlsplit
 
 import requests
@@ -182,6 +182,14 @@ def _resolve_config(config: dict) -> BusinessCentralConfig:
         max_retries=int(config.get("max_retries") or 3),
         retry_backoff_seconds=float(config.get("retry_backoff_seconds") or 0.5),
     )
+
+
+class _ErrorContext(TypedDict):
+    """Keyword arguments shared by the BusinessCentralResponseError family."""
+
+    status_code: int | None
+    error_code: str
+    endpoint: str
 
 
 def _error_field(response, field: str) -> str:
@@ -520,7 +528,7 @@ class BusinessCentralClient(BaseBusinessSystemClient):
 
                 # Permanent client/other errors (400, 403, 404, ...).
                 code = _error_code(response)
-                error_kwargs = {"status_code": status_code, "error_code": code, "endpoint": log_endpoint}
+                error_kwargs: _ErrorContext = {"status_code": status_code, "error_code": code, "endpoint": log_endpoint}
                 if status_code == 403:
                     # Only allowlisted fields of BC's message are kept — never the message itself.
                     permission = parse_permission_error(_error_field(response, "message"))
@@ -528,10 +536,12 @@ class BusinessCentralClient(BaseBusinessSystemClient):
                         "Business Central denied access (403). The app needs read permission sets in Business Central",
                         code,
                     )
-                    exc = BusinessCentralPermissionError(error_message, permission=permission, **error_kwargs)
+                    permission_error = BusinessCentralPermissionError(
+                        error_message, permission=permission, **error_kwargs
+                    )
                     # The request log is admin-only, so it records what was denied.
-                    error_message = f"{error_message}. {format_diagnostic(failure_diagnostic(exc))}"
-                    raise exc
+                    error_message = f"{error_message}. {format_diagnostic(failure_diagnostic(permission_error))}"
+                    raise permission_error
                 if status_code == 404:
                     error_message = _with_code("Business Central returned HTTP 404 (not found)", code)
                     raise BusinessCentralNotFoundError(error_message, **error_kwargs)

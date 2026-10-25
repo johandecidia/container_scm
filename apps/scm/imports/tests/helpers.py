@@ -8,6 +8,7 @@ from apps.scm.containers.models import EquipmentType
 from apps.scm.containers.utils import calculate_check_digit
 from apps.scm.imports.models import ImportJob, ImportRow
 from apps.teams.models import Team
+from apps.teams.roles import ROLE_ADMIN
 from apps.users.models import CustomUser
 
 # A known-valid container ID: CSQU3054187
@@ -27,6 +28,11 @@ def make_user(email="importer@example.com") -> CustomUser:
         username=email,
         defaults={"email": email},
     )[0]
+
+
+def add_team_admin(team: Team, user: CustomUser) -> None:
+    """Make ``user`` an administrator of ``team``: Imports is a Team Settings area, closed to members."""
+    team.members.add(user, through_defaults={"role": ROLE_ADMIN})
 
 
 def make_equipment_type(iso_code="22G1") -> EquipmentType:

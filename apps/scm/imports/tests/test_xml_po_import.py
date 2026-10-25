@@ -29,7 +29,7 @@ from apps.scm.procurement.models import PurchaseOrder
 from apps.teams.models import Team
 from apps.users.models import CustomUser
 
-from .helpers import make_team, make_user
+from .helpers import add_team_admin, make_team, make_user
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 BC_XML_FIXTURE = FIXTURES_DIR / "business_central_purchase_order_sample.xml"
@@ -461,7 +461,7 @@ class XMLUploadViewTest(TestCase):
     def setUpTestData(cls):
         cls.team = make_team(slug="xml-view-team")
         cls.user = make_user("xml-view@example.com")
-        cls.team.members.add(cls.user)
+        add_team_admin(cls.team, cls.user)
 
     def _client(self) -> Client:
         c = Client()

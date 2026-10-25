@@ -95,8 +95,11 @@
           </tbody>
         </table>
       </div>
-    {% else %}
+    {% elif request.user|is_admin_of:request.default_team %}
+      {# Imports is a Team Settings area, so only administrators are offered the import action. #}
       {% include "scm/components/empty_state.html" with icon="fa-file-invoice" title=_("No purchase orders yet") message=_("Import purchase orders from Business Central to start tracking fulfillment.") action_url="/scm/imports/upload/?import_type=purchase_orders" action_label=_("Import data") %}
+    {% else %}
+      {% include "scm/components/empty_state.html" with icon="fa-file-invoice" title=_("No purchase orders yet") message=_("Import purchase orders from Business Central to start tracking fulfillment.") %}
     {% endif %}
   </section>
 {% endblock %}

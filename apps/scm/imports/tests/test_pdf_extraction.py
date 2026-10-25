@@ -27,7 +27,7 @@ from apps.scm.procurement.models import PurchaseOrder
 from apps.teams.models import Team
 from apps.users.models import CustomUser
 
-from .helpers import make_team, make_user
+from .helpers import add_team_admin, make_team, make_user
 
 # Canonical API response dict matching the real FastAPI extraction service shape.
 CANONICAL_API_RESPONSE: dict[str, Any] = {
@@ -570,7 +570,7 @@ class ImportDetailAlertRenderingTest(TestCase):
     def setUpTestData(cls):
         cls.team = make_team(slug="pdf-alerts-team")
         cls.user = make_user("pdf-alerts@example.com")
-        cls.team.members.add(cls.user)
+        add_team_admin(cls.team, cls.user)
 
     def _client(self) -> Client:
         c = Client()

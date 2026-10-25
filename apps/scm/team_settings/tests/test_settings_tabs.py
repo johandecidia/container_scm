@@ -10,6 +10,7 @@ active tab on each page, the sidebar no longer offering either, and the server-s
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
+from apps.scm.imports.models import ImportJob
 from apps.scm.imports.tests.helpers import make_import_job
 from apps.scm.integrations.models import Integration
 from apps.scm.visibility.tests.factories import TEST_STORAGES
@@ -44,6 +45,15 @@ def _bc_integration(team: Team) -> Integration:
 
 @override_settings(STORAGES=TEST_STORAGES)
 class SettingsTabsFixture(TestCase):
+    team: Team
+    admin: CustomUser
+    member: CustomUser
+    job: ImportJob
+    integration: Integration
+    other_team: Team
+    other_job: ImportJob
+    other_integration: Integration
+
     @classmethod
     def setUpTestData(cls):
         cls.team = Team.objects.create(name="Tabs", slug="settings-tabs")
