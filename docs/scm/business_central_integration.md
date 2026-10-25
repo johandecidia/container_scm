@@ -439,6 +439,57 @@ Run it a second time: `created=0 … unchanged=N` (idempotent).
   A successful connection test still clears them (connection health); the
   per-resource table remains the source of truth.
 
+## Item ledger entries (stage 1a)
+
+### API (verified read-only against the sandbox, 2026-10-25)
+
+`GET …/v2.0/{tenant}/{environment}/api/microsoft/analytics/v1.0/companies({companyId})/itemLedgerEntries`
+(Analytics API, query 36968). Standard API v2.0 has no serial numbers.
+
+Fields: `entryNo` (integer), `itemNo`, `serialNo`, `lotNo`, `entryType`, `documentType`,
+`documentNo`, `postingDate`, `quantity`, `remainingQuantity`, `invoicedQuantity`, `open`,
+`positive`, `locationCode`, `sourceType`, `sourceNo`, `unitOfMeasureCode`,
+`qtyPerUnitOfMeasure`, `costAmountActual`, `salesAmountActual`, `dimensionSetID`,
+`expirationDate`. No etag, no last-modified field, no order / order-line references.
+
+| OData feature | Result |
+| --- | --- |
+| `$filter=entryNo gt N` / `ge` | works |
+| `$orderby=entryNo asc` | works |
+| `$orderby=entryNo desc` | **HTTP 501** |
+| `not …` in a filter | **HTTP 501** |
+| `startswith(itemNo,'X')`, joined with `or` | works |
+| `serialNo ne ''`, `open eq true`, `postingDate ge …` | works |
+| `$count=true`, `$select` | works |
+| filter + order + paging | works: `@odata.nextLink` keeps filter and order and pages by `$skiptoken=<last entryNo>` (keyset) |
+
+Sandbox snapshot: 95 110 entries (entryNo 1…95 110, no gaps in the sampled tail);
+1 869 with a serial — 1 860 on `CON*` items, 5 on `MAFI-CW` (real container numbers)
+and 4 test serials on `P1`. A `CON` prefix filter would therefore drop container
+serials. 377 serials occur in more than one entry and 26 on more than one item
+(reclassification via `KORR`), so identity is the serial alone, not item + serial.
+
+`entryNo` is unique per company and assigned in posting order. Posted entries are
+never edited in their identity fields; corrections are new entries (e.g.
+negative/positive adjustments). `open`, `remainingQuantity`, `invoicedQuantity` and the
+amounts **do** change after posting (application, invoicing, cost adjustment). Deleted
+ledger entries could not be observed through the API (BC does not delete them in
+normal operation).
+
+### Model
+
+`BusinessCentralItemLedgerEntry` (`scm_integrations`): team, integration, `company_id`,
+`entry_no`, item, raw + normalised serial, `serial_status`
+(`valid_iso` / `invalid_iso` / `missing_serial`), `item_classification` (always
+`unclassified` in stage 1a), entry/document type and no., posting date, quantity,
+location, source type/no., `raw_payload`, `sync_hash`, `synced_at`. Unique on
+`(integration, company_id, entry_no)`. Fields BC changes later stay in `raw_payload`
+only. No relation to `Container`; nothing creates or changes containers.
+
+Serials are normalised with `containers.intake.normalise_container_number` (trim,
+inner whitespace, upper case) and checked with `parse_and_validate_container_number`;
+a wrong check digit is never corrected. Every entry is stored whatever its serial.
+
 ## Technical debt left after stage 0
 
 - `schemas.NormalizedCustomerOrder(Line)` (plain dataclasses) and

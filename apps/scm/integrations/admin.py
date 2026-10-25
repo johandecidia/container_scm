@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    BusinessCentralItemLedgerEntry,
     Integration,
     IntegrationCredential,
     IntegrationRequestLog,
@@ -154,3 +155,33 @@ class IntegrationWebhookEventAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         # Payload and headers are always read-only.
         return self.readonly_fields
+
+
+@admin.register(BusinessCentralItemLedgerEntry)
+class BusinessCentralItemLedgerEntryAdmin(admin.ModelAdmin):
+    """Read-only: rows are a copy of Business Central and only the sync writes them."""
+
+    list_display = [
+        "entry_no",
+        "item_no",
+        "serial_no",
+        "serial_status",
+        "item_classification",
+        "entry_type",
+        "document_no",
+        "posting_date",
+        "quantity",
+        "team",
+    ]
+    list_filter = ["serial_status", "item_classification", "entry_type", "team"]
+    search_fields = ["serial_no", "serial_no_raw", "item_no", "document_no"]
+    list_select_related = ["team"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

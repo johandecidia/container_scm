@@ -247,3 +247,78 @@ class IntegrationWebhookEvent(BaseTeamModel):
 
     def __str__(self):
         return f"WebhookEvent({self.provider_code}, {self.status}, {self.created_at})"
+
+
+class BusinessCentralItemLedgerEntry(BaseTeamModel):
+    """A local copy of one Business Central item ledger entry (Analytics API ``itemLedgerEntries``).
+
+    Ledger entries are posted history: BC never edits their identity fields
+    (entry no, item, serial, type, document, posting date, quantity, source) —
+    corrections are new entries. Fields BC *does* update later (``open``,
+    ``remainingQuantity``, ``invoicedQuantity``, cost/sales amounts) are kept only
+    in ``raw_payload`` as of the last sync, not as columns, so nothing reads a
+    stale snapshot as current.
+
+    One row per BC source and ``entryNo``: an integration is bound to a single
+    tenant/environment/company (source binding), so ``(integration, company_id,
+    entry_no)`` is unique. Nothing here links to, creates or changes a Container.
+    """
+
+    class SerialStatus(models.TextChoices):
+        VALID_ISO = "valid_iso", _("Valid ISO 6346 number")
+        INVALID_ISO = "invalid_iso", _("Invalid ISO 6346 number")
+        MISSING_SERIAL = "missing_serial", _("No serial number")
+
+    class ItemClassification(models.TextChoices):
+        # Whether the *item* is a container is a separate question from whether
+        # the serial is a valid ISO number; until a reliable rule exists, unclassified.
+        UNCLASSIFIED = "unclassified", _("Unclassified")
+        CONTAINER = "container", _("Container")
+        NOT_CONTAINER = "not_container", _("Not a container")
+
+    integration = models.ForeignKey(
+        Integration,
+        on_delete=models.CASCADE,
+        related_name="item_ledger_entries",
+        verbose_name=_("integration"),
+    )
+    company_id = models.CharField(_("BC company ID"), max_length=64)
+    entry_no = models.BigIntegerField(_("entry no."))
+    item_no = models.CharField(_("item no."), max_length=50, blank=True)
+    serial_no_raw = models.CharField(_("serial no. (as in BC)"), max_length=100, blank=True)
+    serial_no = models.CharField(_("serial no. (normalised)"), max_length=100, blank=True)
+    serial_status = models.CharField(_("serial status"), max_length=20, choices=SerialStatus.choices)
+    item_classification = models.CharField(
+        _("item classification"),
+        max_length=20,
+        choices=ItemClassification.choices,
+        default=ItemClassification.UNCLASSIFIED,
+    )
+    lot_no = models.CharField(_("lot no."), max_length=100, blank=True)
+    entry_type = models.CharField(_("entry type"), max_length=50, blank=True)
+    document_type = models.CharField(_("document type"), max_length=50, blank=True)
+    document_no = models.CharField(_("document no."), max_length=50, blank=True)
+    posting_date = models.DateField(_("posting date"), null=True, blank=True)
+    quantity = models.DecimalField(_("quantity"), max_digits=20, decimal_places=5, null=True, blank=True)
+    location_code = models.CharField(_("location code"), max_length=50, blank=True)
+    source_type = models.CharField(_("source type"), max_length=50, blank=True)
+    source_no = models.CharField(_("source no."), max_length=50, blank=True)
+    raw_payload = models.JSONField(_("raw payload"), default=dict, blank=True)
+    sync_hash = models.CharField(_("sync hash"), max_length=64)
+    synced_at = models.DateTimeField(_("synced at"))
+
+    class Meta:
+        ordering = ["integration", "entry_no"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["integration", "company_id", "entry_no"], name="uniq_bc_item_ledger_entry_per_source"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["team", "serial_no"]),
+            models.Index(fields=["team", "item_no"]),
+            models.Index(fields=["team", "serial_status"]),
+        ]
+
+    def __str__(self):
+        return f"ILE {self.entry_no} {self.item_no} {self.serial_no or '—'}"

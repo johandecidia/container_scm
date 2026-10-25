@@ -18,6 +18,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -67,6 +68,11 @@ _RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 _MAX_PAGES = 1000
 # Business Central online rejects odata.maxpagesize above this.
 _MAX_PAGE_SIZE = 20000
+# Item number prefixes become part of an OData filter; only identifier characters
+# are allowed so a configured value can never change the filter's meaning.
+_ITEM_PREFIX_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]{1,20}$")
+# Pages of the dummy item ledger fixture (small, so tests exercise paging).
+_DUMMY_PAGE_SIZE = 3
 # Business Central error codes are identifiers; anything else is not echoed.
 _ERROR_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]{1,100}$")
 
@@ -100,6 +106,15 @@ _PO_LINE_SELECT = [
     "directUnitCost",
     "expectedReceiptDate",
 ]
+
+
+def _require_item_prefix(value: str) -> str:
+    """Return ``value`` if it is safe to place inside an OData ``startswith`` filter."""
+    if not isinstance(value, str) or not _ITEM_PREFIX_PATTERN.match(value):
+        raise BusinessCentralConfigurationError(
+            "Business Central item number prefixes may only contain letters, digits, '_', '.' and '-'"
+        )
+    return value
 
 
 def _require_guid(value: str, name: str) -> str:
@@ -374,6 +389,60 @@ class BusinessCentralClient(BaseBusinessSystemClient):
         endpoint = f"{cfg.company_path}/purchaseOrders({po_id})/purchaseOrderLines"
         return self._fetch_all_pages(endpoint, params=params, limit=top)
 
+    def iter_item_ledger_entry_pages(
+        self,
+        *,
+        after_entry_no: int | None = None,
+        item_no_prefixes: Sequence[str] = (),
+        serial_only: bool = False,
+    ) -> Iterator[list[dict]]:
+        """Yield pages of item ledger entries in ascending ``entryNo`` order.
+
+        Analytics API (``…/api/microsoft/analytics/v1.0/companies({id})/itemLedgerEntries``).
+        Verified against BC: ``entryNo gt N``, ``startswith(itemNo, …)`` joined with
+        ``or``, ``serialNo ne ''`` and ``$orderby=entryNo asc`` are supported (a
+        descending order and ``not`` are not — HTTP 501), and ``@odata.nextLink``
+        continues the same filter and order. Pages are fetched lazily, so a caller
+        can stop after any page. In dummy mode the same filters are applied to
+        ``business_central_item_ledger_entries.json``.
+        """
+        prefixes = [_require_item_prefix(prefix) for prefix in item_no_prefixes]
+        if after_entry_no is not None and (isinstance(after_entry_no, bool) or not isinstance(after_entry_no, int)):
+            raise BusinessCentralConfigurationError("after_entry_no must be an integer")
+
+        if self.use_dummy:
+            yield from self._dummy_item_ledger_pages(after_entry_no, prefixes, serial_only)
+            return
+
+        cfg = self._require_config()
+        clauses = []
+        if after_entry_no is not None:
+            clauses.append(f"entryNo gt {after_entry_no}")
+        if prefixes:
+            clauses.append("(" + " or ".join(f"startswith(itemNo,'{prefix}')" for prefix in prefixes) + ")")
+        if serial_only:
+            clauses.append("serialNo ne ''")
+        params: dict[str, Any] = {"$orderby": "entryNo asc"}
+        if clauses:
+            params["$filter"] = " and ".join(clauses)
+        endpoint = f"{cfg.company_path}/itemLedgerEntries"
+        yield from self._iter_pages(endpoint, params=params, api=API_ANALYTICS)
+
+    def _dummy_item_ledger_pages(
+        self, after_entry_no: int | None, prefixes: list[str], serial_only: bool
+    ) -> Iterator[list[dict]]:
+        records = sorted(self._load_fixture("business_central_item_ledger_entries.json"), key=lambda r: r["entryNo"])
+        records = [
+            r
+            for r in records
+            if (after_entry_no is None or r["entryNo"] > after_entry_no)
+            and (not prefixes or any(str(r.get("itemNo", "")).startswith(p) for p in prefixes))
+            and (not serial_only or r.get("serialNo"))
+        ]
+        page_size = _DUMMY_PAGE_SIZE
+        for start in range(0, len(records), page_size):
+            yield records[start : start + page_size]
+
     # ------------------------------------------------------------------
     # Internal helpers — configuration & auth
     # ------------------------------------------------------------------
@@ -420,19 +489,31 @@ class BusinessCentralClient(BaseBusinessSystemClient):
     ) -> list[dict]:
         """Fetch an OData collection of an allowlisted ``api``, following @odata.nextLink.
 
-        Page size is requested with ``Prefer: odata.maxpagesize`` (re-sent on every
-        page). ``$top`` is *not* a page size in OData — it caps the whole result
-        and suppresses nextLink — so it is only sent when ``limit`` is given.
+        ``$top`` is *not* a page size in OData — it caps the whole result — so it
+        is only sent when ``limit`` is given.
         """
-        cfg = self._require_config()
         query = dict(params or {})
         if limit:
             query["$top"] = limit
-        headers = {"Prefer": f"odata.maxpagesize={cfg.page_size}"}
-
         results: list[dict] = []
+        for page in self._iter_pages(endpoint, params=query, api=api):
+            results.extend(page)
+            if limit and len(results) >= limit:
+                break  # the next page is never requested
+        return results[:limit] if limit else results
+
+    def _iter_pages(
+        self, endpoint: str, *, params: dict | None = None, api: str = API_STANDARD
+    ) -> Iterator[list[dict]]:
+        """Yield the pages of an OData collection, following @odata.nextLink lazily.
+
+        Page size is requested with ``Prefer: odata.maxpagesize`` (re-sent on every
+        page). The next page is only requested when the caller asks for it.
+        """
+        cfg = self._require_config()
+        headers = {"Prefer": f"odata.maxpagesize={cfg.page_size}"}
         payload = self._request(
-            self._build_url(endpoint, api=api), params=query, log_endpoint=endpoint, headers=headers
+            self._build_url(endpoint, api=api), params=dict(params or {}), log_endpoint=endpoint, headers=headers
         )
         pages = 0
         while True:
@@ -440,12 +521,12 @@ class BusinessCentralClient(BaseBusinessSystemClient):
             page = payload.get("value", [])
             if not isinstance(page, list):
                 raise BusinessCentralResponseError(f"Business Central returned a non-list 'value' for {endpoint}")
-            results.extend(page)
+            yield page
             next_link = payload.get("@odata.nextLink")
             # Business Central can emit a nextLink after the last full page whose
             # follow-up is empty; an empty page ends the collection.
-            if not next_link or not page or (limit and len(results) >= limit):
-                break
+            if not next_link or not page:
+                return
             if pages >= _MAX_PAGES:
                 raise BusinessCentralResponseError(f"Pagination exceeded {_MAX_PAGES} pages for {endpoint}")
             # The bearer token is only ever sent to the Business Central API host,
@@ -456,7 +537,6 @@ class BusinessCentralClient(BaseBusinessSystemClient):
                 raise BusinessCentralResponseError("Business Central returned a nextLink outside the requested API")
             # nextLink is an absolute URL that already carries the query state.
             payload = self._request(next_link, params=None, log_endpoint=endpoint, headers=headers)
-        return results[:limit] if limit else results
 
     def _request(self, url: str, *, params: dict | None, log_endpoint: str, headers: dict | None = None) -> dict:
         """GET ``url`` with auth, retry, one 401 refresh, and request logging.
