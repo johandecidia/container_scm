@@ -2,7 +2,7 @@
 
 Real tracking subscriptions through a direct carrier, whose Stop needs no remote call:
 the lifecycle runs for real, nothing internal is mocked. Business Central receive is
-covered in ``business_central/tests/test_receipt_receive.py``.
+covered in ``business_central/tests/test_receipt_tracking.py``.
 """
 
 from datetime import timedelta

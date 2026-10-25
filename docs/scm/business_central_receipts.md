@@ -16,11 +16,36 @@ Business Central is never written to.
 | Container item + equipment type | `BusinessCentralItemRule` / `ItemRuleSet` (stage 1b) |
 | Physical location | `ContainerLocation` (no new location register) |
 | Receive + idempotency | `containers.receive.receive_container` → `record_container_movement` |
-| Tracking after receive | Team policy `stop_tracking_on_receive` + `stop_tracking_after_receive` (extracted from the pasted-report receive) |
+| Tracking after receive | `ContainerLocation.auto_stop_tracking_on_receive` via `containers.receive.apply_receive_tracking_policy` → `tracking.lifecycle.stop_container_tracking` |
 | Permissions | `scm_team_admin_required` (Team Admin) |
 
-There is **no location-specific auto-stop** in Pegasus today; the existing
-team-level policy applies to BC receives exactly as to pasted depot reports.
+## Stop tracking on receive (stage 2g)
+
+**Pegasus Location decides auto-stop; Business Central decides whether a posted
+receipt may trigger a receive.** Stop-on-receive is
+`ContainerLocation.auto_stop_tracking_on_receive` (default off), set by Team Admins
+under Settings → Locations (and in the location form; members see it read-only).
+It is the only policy: migration `scm_containers.0013` copied each team's former
+`TeamTrackingSettings.stop_tracking_on_receive` onto all of that team's existing
+locations, and `scm_tracking.0018` removed the team field. Never keyed on the BC
+location code.
+
+Every receive path calls `apply_receive_tracking_policy(team, movement)` after a
+*new*, committed receive:
+
+| Path | Where |
+|---|---|
+| Manual (movement modal, GATE_IN / RECEIVED) | `containers.views.container_record_movement` |
+| Pasted depot report (bulk receive) | `containers.receive.bulk_receive` |
+| Business Central | `receipt_receive.process_purchase_receipts` |
+
+It stops tracking only when the destination's setting is on **and** the receive is
+the container's current position (a superseded, backdated receive stops nothing),
+through `stop_container_tracking` — the Stop button's function, so the existing
+statuses (a stopped watch ends CANCELLED, or PAUSED when a provider release is
+refused) are unchanged. Already-received rows never stop again; a container nothing
+watches returns "not active". Not receives, and unchanged: CSV movement imports
+(POSITION_UPDATE) and carrier-interpreted gate-ins (tracking evidence).
 
 ## API (verified read-only against `Sandbox_eligra_261002`, 2026-10-25)
 
@@ -80,7 +105,6 @@ trigger; `L005PROD`, `L005SAMFAK`, `L001` commercial until verified.
   `config.resources.purchase_receipts.enabled = true`. Incremental by
   `lastModifiedDateTime` (same overlap / `initial_sync_days` as purchase orders).
   Lines are kept in `raw_payload` (no line model). The sync creates nothing else.
-- `max_receipt_age_days` (default 30) in the same block.
 - After a completed receipt or item ledger sync, and from the Receipts page
   ("Process now"), `process_business_central_purchase_receipts_task` runs
   `receipt_receive.process_purchase_receipts` under one processing lock per
@@ -102,16 +126,25 @@ trigger; `L005PROD`, `L005SAMFAK`, `L001` commercial until verified.
 ### Receive decision (first failing check wins)
 
 unknown location → inactive → not physical → automatic receive off →
-**historical** (entry ≤ boundary) → no posting date / **stale** (older than
-`max_receipt_age_days`) → receipt unresolved → serial unresolved / invalid /
+**historical** (entry ≤ boundary) → no posting date / posting date in the future
+(manual review) → receipt unresolved → serial unresolved / invalid /
 missing type → container missing (created only if the mapping allows and the item
 has a type) → under the container row lock: arrival at the same location on/after
 the posting date, or container already there → ALREADY_RECEIVED; any other
 movement on/after the posting date → NEWER_MOVEMENT → `receive_container`
-(GATE_IN, source API, 00:00 of the posting date in the location's timezone).
+(GATE_IN, source API, at the time Pegasus registers it).
+
+**Posting date vs received at (stage 2g).** The BC posting date is a bookkeeping
+date, kept on the receipt row and in the movement notes; it is not an arrival time.
+The movement's `occurred_at` and the row's `received_at` are when Pegasus recorded
+the receive. History is compared with the start of the posting date (location
+timezone), never with the receive time, so a late or backdated receipt cannot
+override newer physical information. There is no age limit: the `entryNo`
+activation boundary is what keeps historical receipts out.
 
 RECEIVED and ALREADY_RECEIVED are final (idempotency: unique receipt + serial,
-plus `receive_container`'s own container/location/time check). A receipt undone in
+plus the physical-order check under the container row lock and the per-integration
+processing lock). A receipt undone in
 BC after receive is never reversed automatically; it is counted for review.
 
 ## Monitoring — Settings → Integrations → Business Central → Receipts
