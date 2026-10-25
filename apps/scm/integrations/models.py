@@ -322,3 +322,58 @@ class BusinessCentralItemLedgerEntry(BaseTeamModel):
 
     def __str__(self):
         return f"ILE {self.entry_no} {self.item_no} {self.serial_no or '—'}"
+
+
+class BusinessCentralItemRule(BaseTeamModel):
+    """How one Business Central item (or item-number prefix) is classified, per integration.
+
+    Resolution for an item ledger entry is deterministic (``item_rules.resolve_item``):
+    exact item + variant, then exact item, then the longest matching prefix, else
+    unclassified. An exact ``NOT_CONTAINER`` rule therefore beats a ``CON`` prefix.
+    ``equipment_type`` is the Pegasus type a ``CONTAINER`` item maps to; without it
+    no container can be created from the item. Variants apply to exact rules only.
+    """
+
+    class MatchType(models.TextChoices):
+        EXACT = "exact", _("Exact item no.")
+        PREFIX = "prefix", _("Item no. prefix")
+
+    integration = models.ForeignKey(
+        Integration,
+        on_delete=models.CASCADE,
+        related_name="item_rules",
+        verbose_name=_("integration"),
+    )
+    match_type = models.CharField(_("match"), max_length=10, choices=MatchType.choices, default=MatchType.EXACT)
+    item_no = models.CharField(_("item no."), max_length=50)
+    variant_code = models.CharField(_("variant code"), max_length=20, blank=True)
+    classification = models.CharField(
+        _("classification"),
+        max_length=20,
+        choices=[
+            (BusinessCentralItemLedgerEntry.ItemClassification.CONTAINER.value, _("Container")),
+            (BusinessCentralItemLedgerEntry.ItemClassification.NOT_CONTAINER.value, _("Not a container")),
+        ],
+    )
+    equipment_type = models.ForeignKey(
+        "scm_containers.EquipmentType",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name=_("equipment type"),
+    )
+
+    class Meta:
+        ordering = ["match_type", "item_no", "variant_code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["integration", "match_type", "item_no", "variant_code"], name="uniq_bc_item_rule"
+            ),
+        ]
+
+    def __str__(self):
+        target = f"{self.item_no}*" if self.match_type == self.MatchType.PREFIX else self.item_no
+        if self.variant_code:
+            target = f"{target}/{self.variant_code}"
+        return f"{target} → {self.classification}"

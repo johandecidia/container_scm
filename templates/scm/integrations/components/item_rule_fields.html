@@ -1,0 +1,20 @@
+{% load i18n %}
+{# Fields of an ItemRuleForm, shared by the add form and the edit page. #}
+{% if form.non_field_errors %}
+  <div role="alert" class="alert alert-error mb-3 text-sm">
+    <i class="fa fa-circle-exclamation"></i>
+    <span>{{ form.non_field_errors|join:" " }}</span>
+  </div>
+{% endif %}
+<div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+  {% for field in form %}
+    <div class="form-control">
+      <label class="label" for="{{ field.id_for_label }}">
+        <span class="label-text">{{ field.label }}</span>
+      </label>
+      {{ field }}
+      {% if field.help_text %}<p class="text-xs text-base-content/60 mt-1">{{ field.help_text }}</p>{% endif %}
+      {% if field.errors %}<p class="text-error text-xs mt-1">{{ field.errors|join:" " }}</p>{% endif %}
+    </div>
+  {% endfor %}
+</div>

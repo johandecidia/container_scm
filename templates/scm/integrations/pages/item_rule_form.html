@@ -1,0 +1,21 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'integrations:item_rules' integration.pk %}">
+      &larr; {% translate "Item classification" %}
+    </a>
+    <h2 class="text-xl font-semibold mt-2">{% translate "Edit rule" %}</h2>
+  </div>
+
+  <section class="app-card">
+    <form method="post">
+      {% csrf_token %}
+      {% include "scm/integrations/components/item_rule_fields.html" %}
+      <button type="submit" class="btn btn-primary btn-sm mt-3">{% translate "Save rule" %}</button>
+    </form>
+  </section>
+{% endblock %}

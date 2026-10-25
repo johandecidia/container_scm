@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     BusinessCentralItemLedgerEntry,
+    BusinessCentralItemRule,
     Integration,
     IntegrationCredential,
     IntegrationRequestLog,
@@ -184,4 +185,19 @@ class BusinessCentralItemLedgerEntryAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BusinessCentralItemRule)
+class BusinessCentralItemRuleAdmin(admin.ModelAdmin):
+    """Read-only here: rules are edited by Team Administrators in Settings, where they are validated."""
+
+    list_display = ["item_no", "match_type", "variant_code", "classification", "equipment_type", "integration", "team"]
+    list_filter = ["classification", "match_type", "team"]
+    search_fields = ["item_no"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False

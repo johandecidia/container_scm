@@ -1,0 +1,131 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Settings → Integrations → Business Central → Items. Team Administrators only.
+  Rules decide which Business Central items are physical containers and which
+  Pegasus equipment type they map to. Nothing here changes Business Central or
+  any container.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="integrations" %}
+
+  <div class="mb-6">
+    <a class="link link-neutral text-sm" href="{% url 'integrations:detail' integration.pk %}">
+      &larr; {{ integration.name }}
+    </a>
+    <h2 class="text-xl font-semibold mt-2">{% translate "Item classification" %}</h2>
+    <p class="text-sm text-base-content/60 mt-1">
+      {% blocktranslate trimmed %}
+        Most specific rule wins: exact item and variant, then exact item, then the longest prefix.
+        Items without a rule stay unclassified and are never treated as containers.
+      {% endblocktranslate %}
+    </p>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags|default:'info' }} alert-soft mb-4">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <section class="app-card mb-6">
+    <h3 class="font-semibold mb-3">{% translate "Add rule" %}</h3>
+    <form method="post" action="{% url 'integrations:item_rules' integration.pk %}">
+      {% csrf_token %}
+      {% include "scm/integrations/components/item_rule_fields.html" %}
+      <button type="submit" class="btn btn-primary btn-sm mt-3">{% translate "Save rule" %}</button>
+    </form>
+  </section>
+
+  <section class="app-card mb-6">
+    <h3 class="font-semibold mb-3">{% translate "Rules" %}</h3>
+    {% if rules %}
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>{% translate "Match" %}</th>
+              <th>{% translate "Item no." %}</th>
+              <th>{% translate "Variant" %}</th>
+              <th>{% translate "Classification" %}</th>
+              <th>{% translate "Equipment type" %}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule in rules %}
+              <tr>
+                <td>{{ rule.get_match_type_display }}</td>
+                <td class="font-mono">{{ rule.item_no }}{% if rule.match_type == "prefix" %}*{% endif %}</td>
+                <td class="font-mono">{{ rule.variant_code|default:"—" }}</td>
+                <td>{{ rule.get_classification_display }}</td>
+                <td>{{ rule.equipment_type|default:"—" }}</td>
+                <td>
+                  <div class="flex justify-end gap-1">
+                    <a class="btn btn-ghost btn-xs" href="{% url 'integrations:item_rule_update' integration.pk rule.pk %}">{% translate "Edit" %}</a>
+                    <form method="post" action="{% url 'integrations:item_rule_delete' integration.pk rule.pk %}">
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-ghost btn-xs text-error">{% translate "Remove" %}</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No rules yet — every item is unclassified." %}</p>
+    {% endif %}
+  </section>
+
+  <section class="app-card">
+    <h3 class="font-semibold mb-3">{% translate "Items in synced item ledger entries" %}</h3>
+    {% if items %}
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>{% translate "Item no." %}</th>
+              <th class="text-right">{% translate "Entries" %}</th>
+              <th class="text-right">{% translate "Valid ISO serials" %}</th>
+              <th>{% translate "Classification" %}</th>
+              <th>{% translate "Equipment type" %}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+              <tr>
+                <td class="font-mono">{{ item.item_no|default:"—" }}</td>
+                <td class="text-right tabular-nums">{{ item.entries }}</td>
+                <td class="text-right tabular-nums">{{ item.valid_serials }}</td>
+                <td>
+                  {% if item.resolution.needs_variant %}
+                    <span class="badge badge-warning badge-soft badge-sm">{% translate "Variant needed" %}</span>
+                  {% elif item.resolution.classification == "container" %}
+                    <span class="badge badge-success badge-soft badge-sm">{% translate "Container" %}</span>
+                  {% elif item.resolution.classification == "not_container" %}
+                    <span class="badge badge-ghost badge-sm">{% translate "Not a container" %}</span>
+                  {% else %}
+                    <span class="badge badge-warning badge-soft badge-sm">{% translate "Unclassified" %}</span>
+                  {% endif %}
+                </td>
+                <td>{{ item.resolution.equipment_type|default:"—" }}</td>
+                <td class="text-right">
+                  {% if item.resolution.classification == "unclassified" and item.item_no %}
+                    <a class="btn btn-ghost btn-xs" href="?item={{ item.item_no|urlencode }}">{% translate "Add rule" %}</a>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No item ledger entries have been synced yet." %}</p>
+    {% endif %}
+  </section>
+{% endblock %}

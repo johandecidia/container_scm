@@ -1,12 +1,18 @@
 # Integration selectors — all read/query operations.
 from dataclasses import dataclass
 
-from django.db.models import QuerySet
+from django.db.models import Count, Q, QuerySet
 
 from apps.teams.models import Team
 
 from .business_systems.business_central import resources as bc_resources
-from .models import Integration, IntegrationRequestLog, IntegrationSyncRun, IntegrationWebhookEvent
+from .models import (
+    BusinessCentralItemLedgerEntry,
+    Integration,
+    IntegrationRequestLog,
+    IntegrationSyncRun,
+    IntegrationWebhookEvent,
+)
 
 
 def get_team_integrations(team: Team) -> QuerySet[Integration]:
@@ -167,3 +173,26 @@ def get_integration_monitoring_context(integration: Integration) -> dict:
         "resources": resources,
         "resource_errors": [r for r in resources if r.has_open_error],
     }
+
+
+def get_item_summary(integration: Integration) -> list[dict]:
+    """Every item number in the integration's item ledger entries, with its classification.
+
+    Unclassified items come first, so an administrator sees what still needs a rule.
+    """
+    from .business_systems.business_central.item_rules import ItemRuleSet
+
+    rows = (
+        BusinessCentralItemLedgerEntry.objects.filter(integration=integration)
+        .values("item_no")
+        .annotate(
+            entries=Count("id"),
+            valid_serials=Count("id", filter=Q(serial_status=BusinessCentralItemLedgerEntry.SerialStatus.VALID_ISO)),
+        )
+        .order_by()
+    )
+    rules = ItemRuleSet.for_integration(integration)
+    summary = [{**row, "resolution": rules.resolve(row["item_no"])} for row in rows]
+    unclassified = BusinessCentralItemLedgerEntry.ItemClassification.UNCLASSIFIED
+    summary.sort(key=lambda r: (r["resolution"].classification != unclassified, -r["entries"], r["item_no"]))
+    return summary

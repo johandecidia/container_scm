@@ -537,6 +537,27 @@ less often, a full re-scan of the selected scope through the same idempotent ups
 entries missing from a full scan would be flagged, never deleted. Until then, use the
 columns (immutable) rather than the mutable values in `raw_payload`.
 
+## Container identity (stage 1b)
+
+### Item classification
+
+`BusinessCentralItemRule` (per integration, edited by Team Administrators under
+*Settings → Integrations → Business Central → Item classification*,
+`/scm/integrations/<id>/items/`): match type (`exact` / `prefix`), item no., optional
+variant (exact rules only), classification (`container` / `not_container`) and, for
+containers, the Pegasus `EquipmentType`.
+
+Resolution (`item_rules.ItemRuleSet`), most specific first: exact item + variant →
+exact item → longest prefix → unclassified. An exact `not_container` rule therefore
+overrides a `CON` prefix. Item numbers are compared case-insensitively. Nothing is
+inferred from the item number: an item without a rule is unclassified.
+
+Variants: the Analytics API sends no `variantCode` (verified). An item whose exact
+rules all name a variant is reported as needing a variant rather than guessed.
+
+The page also lists every item number in the synced entries with its current
+classification, unclassified items first.
+
 ## Technical debt left after stage 0
 
 - `schemas.NormalizedCustomerOrder(Line)` (plain dataclasses) and
