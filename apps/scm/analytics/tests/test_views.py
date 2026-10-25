@@ -71,7 +71,11 @@ class AnalyticsDashboardContentTest(TestCase):
         )
         response = self._client(self.user).get(reverse("analytics:dashboard"))
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "99")
+        # The other team's snapshot is never this team's, so there is none to show…
+        self.assertIsNone(response.context["snapshot"])
+        # …and its figure is not in a KPI card. Not searched for anywhere on the page:
+        # the random CSRF token in the markup can contain "99".
+        self.assertNotContains(response, '<p class="text-2xl font-bold">99</p>', html=True)
 
     def test_renders_empty_state_when_no_snapshot(self):
         response = self._client(self.user).get(reverse("analytics:dashboard"))
