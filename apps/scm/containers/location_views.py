@@ -18,6 +18,7 @@ from django.views.decorators.http import require_POST
 
 from apps.scm.decorators import scm_login_required
 from apps.scm.visibility.context import get_location_map_context
+from apps.teams.roles import is_admin
 
 from .choices import ContainerStatus
 from .forms import ContainerLocationForm, LocationAliasForm, LocationEvidenceAliasForm
@@ -186,7 +187,7 @@ def container_location_create(request):
     """
     team = request.default_team
     if request.method == "POST":
-        form = ContainerLocationForm(request.POST, team=team)
+        form = ContainerLocationForm(request.POST, team=team, can_manage_tracking=is_admin(request.user, team))
         if form.is_valid():
             create_location(team=team, data=form.cleaned_data)
             if (back := _location_form_return(request)) is not None:
@@ -202,7 +203,7 @@ def container_location_create(request):
             messages.success(request, _("Location created."))
             return redirect("containers:location_list")
     else:
-        form = ContainerLocationForm(team=team)
+        form = ContainerLocationForm(team=team, can_manage_tracking=is_admin(request.user, team))
     return render(
         request,
         "scm/containers/partials/container_location_form.html",
@@ -223,7 +224,9 @@ def container_location_update(request, location_id):
     team = request.default_team
     location = get_object_or_404(ContainerLocation, pk=location_id, team=team)
     if request.method == "POST":
-        form = ContainerLocationForm(request.POST, instance=location, team=team)
+        form = ContainerLocationForm(
+            request.POST, instance=location, team=team, can_manage_tracking=is_admin(request.user, team)
+        )
         if form.is_valid():
             update_location(location=location, data=form.cleaned_data)
             if (back := _location_form_return(request)) is not None:
@@ -239,7 +242,7 @@ def container_location_update(request, location_id):
             messages.success(request, _("Location updated."))
             return redirect("containers:location_list")
     else:
-        form = ContainerLocationForm(instance=location, team=team)
+        form = ContainerLocationForm(instance=location, team=team, can_manage_tracking=is_admin(request.user, team))
     return render(
         request,
         "scm/containers/partials/container_location_form.html",

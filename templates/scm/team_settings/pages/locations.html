@@ -1,0 +1,77 @@
+{% extends "scm/base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Settings → Locations. Whether a container received at a location stops being
+  tracked — for every receive path: the movement form, pasted depot reports and
+  Business Central. Locations themselves are edited on the location pages.
+{% endcomment %}
+
+{% block app %}
+  {% include "scm/team_settings/components/settings_header.html" with active="locations" %}
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags|default:'info' }} alert-soft mb-4">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <section class="app-card">
+    <div class="flex flex-wrap items-start justify-between gap-2 mb-3">
+      <div>
+        <h2 class="font-semibold">{% translate "Stop tracking on receive" %}</h2>
+        <p class="text-sm text-base-content/60 mt-1">
+          {% blocktranslate trimmed %}
+            When on, a container received at the location stops being tracked once the receive is recorded.
+            When off, tracking continues. The receive is recorded either way, and only the destination decides.
+          {% endblocktranslate %}
+        </p>
+      </div>
+      <a class="btn btn-outline btn-sm" href="{% url 'containers:location_list' %}">
+        <i class="fa fa-plus mr-1"></i>{% translate "Add location" %}
+      </a>
+    </div>
+    {% if locations %}
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>{% translate "Location" %}</th>
+              <th>{% translate "Type" %}</th>
+              <th>{% translate "Status" %}</th>
+              <th>{% translate "Stop tracking on receive" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for location in locations %}
+              <tr>
+                <td>
+                  <a class="link link-hover" href="{% url 'containers:location_detail' location.pk %}">{{ location.full_name }}</a>
+                </td>
+                <td>{{ location.get_location_type_display }}</td>
+                <td>
+                  {% if location.is_active %}{% translate "Active" %}{% else %}<span class="badge badge-ghost badge-sm">{% translate "Inactive" %}</span>{% endif %}
+                </td>
+                <td>
+                  <form method="post" action="{% url 'team_settings:location_auto_stop' location.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="auto_stop_tracking_on_receive" value="0">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" name="auto_stop_tracking_on_receive" value="1"
+                             class="toggle toggle-sm toggle-primary"
+                             {% if location.auto_stop_tracking_on_receive %}checked{% endif %}
+                             onchange="this.form.requestSubmit()">
+                      <span class="text-sm">{% if location.auto_stop_tracking_on_receive %}{% translate "On" %}{% else %}{% translate "Off" %}{% endif %}</span>
+                    </label>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-sm text-base-content/60">{% translate "No locations yet." %}</p>
+    {% endif %}
+  </section>
+{% endblock %}

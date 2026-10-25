@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import member_views, tracking_views, views
+from . import location_views, member_views, tracking_views, views
 
 app_name = "team_settings"
 
@@ -19,7 +19,9 @@ urlpatterns = [
     # Whether new containers start being tracked on their own. A team policy rather
     # than a per-carrier one, so it hangs off the tracking page and not off a provider.
     path("tracking/auto-start/", tracking_views.tracking_auto_start, name="tracking_auto_start"),
-    path("tracking/stop-on-receive/", tracking_views.tracking_stop_on_receive, name="tracking_stop_on_receive"),
+    # Stop-on-receive is a property of the destination, so it is set per location.
+    path("locations/", location_views.locations, name="locations"),
+    path("locations/<int:location_id>/auto-stop/", location_views.location_auto_stop, name="location_auto_stop"),
     path(
         "tracking/carriers/<str:provider_code>/credentials/",
         tracking_views.carrier_credentials,

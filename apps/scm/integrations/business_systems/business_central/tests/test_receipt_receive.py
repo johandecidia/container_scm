@@ -10,6 +10,8 @@ from django.test import TestCase, override_settings
 from apps.scm.containers.choices import LocationSource, MovementType
 from apps.scm.containers.intake import create_or_get_container
 from apps.scm.containers.models import Container, ContainerLocation, ContainerMovement
+from apps.scm.containers.receive import TRACKING_NOT_APPLIED, TRACKING_STOPPED
+from apps.scm.containers.tests.test_receive import _track as track
 from apps.scm.integrations.business_systems.business_central.receipt_receive import process_purchase_receipts
 from apps.scm.integrations.business_systems.business_central.tests.test_receipt_resolution import (
     COMPANY,
@@ -24,13 +26,14 @@ from apps.scm.integrations.models import (
     ReceiveReason,
     ReceiveStatus,
 )
-from apps.scm.tracking.preferences import set_team_stop_tracking_on_receive
+from apps.scm.tracking import lifecycle
+from apps.scm.tracking.models import TrackingSubscription
 
 _LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "bc-rcpt-receive"}}
-_STOP = "apps.scm.integrations.business_systems.business_central.receipt_receive.stop_tracking_after_receive"
 Mapping = BusinessCentralLocationMapping
 Line = BusinessCentralReceiptContainer
 S, W = ReceiveStatus, ReceiveReason
+Status = TrackingSubscription.Status
 BOUNDARY = 1000
 
 
@@ -206,29 +209,33 @@ class AutomaticReceiveTest(TestCase):
         self.assertEqual(ContainerMovement.objects.count(), 1)
         self.assertEqual(Line.objects.count(), 1)
 
-    def test_stop_tracking_policy_on(self):
-        set_team_stop_tracking_on_receive(self.team, True)
-        container = self._container()
-        load(self.integration, [bc_receipt("IN13", [("CON22G1", 1)])], [ile(BOUNDARY + 1, "MCUU2901785", doc="IN13")])
-        with mock.patch(_STOP, return_value=("stopped", "Stopped")) as stop:
-            self._process()
-        stop.assert_called_once()
-        self.assertEqual(stop.call_args.kwargs["container"], container)
-        self.assertEqual(self._line().tracking_result, "stopped")
+    def _auto_stop(self, on=True):
+        self.location.auto_stop_tracking_on_receive = on
+        self.location.save(update_fields=["auto_stop_tracking_on_receive"])
 
-    def test_stop_tracking_policy_off(self):
-        self._container()
+    def test_destination_with_auto_stop_on_stops_tracking(self):
+        self._auto_stop()
+        subscription = track(self.team, self._container())
+        load(self.integration, [bc_receipt("IN13", [("CON22G1", 1)])], [ile(BOUNDARY + 1, "MCUU2901785", doc="IN13")])
+        self._process()
+        subscription.refresh_from_db()
+        self.assertEqual((subscription.status, self._line().tracking_result), (Status.CANCELLED, TRACKING_STOPPED))
+
+    def test_destination_with_auto_stop_off_keeps_tracking(self):
+        subscription = track(self.team, self._container())
         load(self.integration, [bc_receipt("IN14", [("CON22G1", 1)])], [ile(BOUNDARY + 1, "MCUU2901785", doc="IN14")])
-        with mock.patch(_STOP) as stop:
-            self._process()
-        stop.assert_not_called()
-        self.assertEqual((self._line().receive_status, self._line().tracking_result), (S.RECEIVED, ""))
+        self._process()
+        subscription.refresh_from_db()
+        line = self._line()
+        self.assertEqual((line.receive_status, line.tracking_result), (S.RECEIVED, TRACKING_NOT_APPLIED))
+        self.assertEqual(subscription.status, Status.ACTIVE)
 
     def test_already_received_is_not_stopped_again(self):
-        set_team_stop_tracking_on_receive(self.team, True)
-        self._container()
+        self._auto_stop()
+        track(self.team, self._container())
         load(self.integration, [bc_receipt("IN15", [("CON22G1", 1)])], [ile(BOUNDARY + 1, "MCUU2901785", doc="IN15")])
-        with mock.patch(_STOP, return_value=("stopped", "")) as stop:
+        real_stop = lifecycle.stop_container_tracking
+        with mock.patch("apps.scm.tracking.lifecycle.stop_container_tracking", wraps=real_stop) as stop:
             self._process()
             self._process()
         stop.assert_called_once()

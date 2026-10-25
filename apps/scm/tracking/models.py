@@ -46,9 +46,10 @@ class CarrierSource(models.TextChoices):
 class TeamTrackingSettings(BaseTeamModel):
     """A team's tracking preferences. One row per team.
 
-    Three settings, and they answer different questions — *who* to ask about a container
-    when no carrier can be called directly, *whether* to start asking about a new
-    container at all, and whether to stop asking once it has been received:
+    Two settings, and they answer different questions — *who* to ask about a container
+    when no carrier can be called directly, and *whether* to start asking about a new
+    container at all. Whether to stop asking once a container is received is not a team
+    setting: it belongs to the destination, ``ContainerLocation.auto_stop_tracking_on_receive``.
 
     ``default_provider_code``
         The aggregator tier a container falls back to. Traqo today, which is why that
@@ -63,12 +64,6 @@ class TeamTrackingSettings(BaseTeamModel):
         aggregator, a shipment slot per box, so a team that imports a thousand
         containers must have said yes to that rather than discovered it. A per-team row
         because the answer depends on what a customer is paying for.
-
-    ``stop_tracking_on_receive``
-        Whether a container stops being tracked once it is physically received. Off by
-        default: the receive is the fact, and releasing a provider subscription as a
-        side effect of it is something a team opts into. Consulted only after a *new*
-        receive — see :mod:`apps.scm.containers.receive`.
 
     Deliberately *not* a routing policy. There is no cost model, no preference order
     and no per-carrier rules here: direct-before-aggregator is
@@ -88,13 +83,6 @@ class TeamTrackingSettings(BaseTeamModel):
         default=False,
         help_text=_(
             "Start tracking a container as soon as it is created or imported. An import can override this for one run."
-        ),
-    )
-    stop_tracking_on_receive = models.BooleanField(
-        _("automatically stop tracking when a container is received"),
-        default=False,
-        help_text=_(
-            "Stop tracking a container once a new gate-in is recorded for it. Receiving it is recorded either way."
         ),
     )
 

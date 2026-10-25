@@ -38,7 +38,6 @@ from apps.scm.tracking import lifecycle
 from apps.scm.tracking.lifecycle import is_container_tracked
 from apps.scm.tracking.manual_refresh import get_or_create_container_subscription
 from apps.scm.tracking.models import TrackingSubscription
-from apps.scm.tracking.preferences import set_team_stop_tracking_on_receive
 from apps.scm.visibility.arrival_lifecycle import ArrivalState, get_container_arrival_lifecycle
 from apps.teams.models import Team
 
@@ -72,6 +71,12 @@ def _track(team, container) -> TrackingSubscription:
     return get_or_create_container_subscription(
         team=team, container=container, provider_code="maersk", provider_name="Maersk", carrier_code="maersk"
     )
+
+
+def _auto_stop(location: ContainerLocation, on: bool = True) -> None:
+    """Turn the destination's stop-on-receive on (the only stop-on-receive policy)."""
+    location.auto_stop_tracking_on_receive = on
+    location.save(update_fields=["auto_stop_tracking_on_receive"])
 
 
 def _aware(*args) -> datetime:
@@ -158,7 +163,7 @@ class PreviewTest(ReceiveTestCase):
         self.assertEqual(self.preview(_line(self.box, "2026-09-17 16:00:51")).rows[0].state, READY)
 
     def test_tracking_on_and_tracked_previews_a_stop(self):
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
         _track(self.team, self.box)
 
         rows = self.preview(
@@ -340,7 +345,7 @@ class TrackingPolicyTest(ReceiveTestCase):
         self.assertTrue(is_container_tracked(team=self.team, container=self.box))
 
     def test_policy_on_stops_a_tracked_container_through_the_lifecycle(self):
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
         subscription = _track(self.team, self.box)
 
         result = self.receive(_line(self.box, "2026-09-17 16:00:51"))
@@ -351,7 +356,7 @@ class TrackingPolicyTest(ReceiveTestCase):
         self.assertEqual(result.counts["tracking_stopped"], 1)
 
     def test_policy_on_uses_the_existing_stop_service(self):
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
         _track(self.team, self.box)
 
         real_stop = lifecycle.stop_container_tracking
@@ -362,14 +367,14 @@ class TrackingPolicyTest(ReceiveTestCase):
         self.assertEqual(stop.call_args.kwargs["container"], self.box)
 
     def test_policy_on_and_untracked_still_receives(self):
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
 
         result = self.receive(_line(self.box, "2026-09-17 16:00:51"))
 
         self.assertEqual((result.rows[0].state, result.rows[0].tracking), (RECEIVED, TRACKING_NOT_ACTIVE))
 
     def test_a_tracking_failure_keeps_the_receive(self):
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
         _track(self.team, self.box)
 
         with mock.patch("apps.scm.tracking.lifecycle.stop_container_tracking", side_effect=RuntimeError("boom")):
@@ -385,7 +390,7 @@ class TrackingPolicyTest(ReceiveTestCase):
         from apps.scm.tracking.lifecycle import STOP_INCOMPLETE
         from apps.scm.tracking.manual_refresh import WARNING, RefreshResult
 
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
         incomplete = RefreshResult(level=WARNING, state=STOP_INCOMPLETE, message="provider refused", tracked=False)
 
         with mock.patch("apps.scm.tracking.lifecycle.stop_container_tracking", return_value=incomplete):
@@ -398,7 +403,7 @@ class TrackingPolicyTest(ReceiveTestCase):
         receive_container(
             team=self.team, container=self.box, location=self.terminal, occurred_at=_aware(2026, 9, 17, 16, 0, 51)
         )
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
         _track(self.team, self.box)
 
         with mock.patch("apps.scm.tracking.lifecycle.stop_container_tracking") as stop:
@@ -542,7 +547,7 @@ class TrackingStatePreviewTest(ReceiveTestCase):
             (TrackingSubscription.Status.CANCELLED, False, TRACKING_NOT_ACTIVE, TrackingSubscription.Status.CANCELLED),
             (None, False, TRACKING_NOT_ACTIVE, None),
         ]
-        set_team_stop_tracking_on_receive(self.team, True)
+        _auto_stop(self.terminal)
         for status, previews_stop, outcome, final in cases:
             with self.subTest(status=status):
                 ContainerMovement.objects.all().delete()
@@ -588,7 +593,7 @@ class TrackingStatePreviewTest(ReceiveTestCase):
 
         self.assertIn(TrackingSubscription.Status.PAUSED, STOPPABLE_STATUSES)
         with mock.patch("apps.scm.tracking.lifecycle.stoppable_subscriptions", wraps=stoppable_subscriptions) as spy:
-            set_team_stop_tracking_on_receive(self.team, True)
+            _auto_stop(self.terminal)
             self.preview_and_confirm()
 
         # Twice by the previews (one inside bulk_receive) and once by the stop itself.

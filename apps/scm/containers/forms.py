@@ -676,6 +676,7 @@ class ContainerLocationForm(forms.ModelForm):
             "owner_name",
             "notes",
             "is_active",
+            "auto_stop_tracking_on_receive",
         ]
         field_classes = {"parent_location": ParentLocationChoiceField}
         widgets = {
@@ -696,8 +697,12 @@ class ContainerLocationForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 2}),
         }
 
-    def __init__(self, *args, team=None, **kwargs):
+    def __init__(self, *args, team=None, can_manage_tracking: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
+        # Stop-on-receive releases provider subscriptions: a team administrator's
+        # decision, like the rest of tracking settings. Shown to everyone, posted by
+        # admins only — a disabled field keeps the stored value whatever is sent.
+        self.fields["auto_stop_tracking_on_receive"].disabled = not can_manage_tracking
         parent_field = cast(forms.ModelChoiceField, self.fields["parent_location"])
         parent_field.empty_label = _("— No parent —")
 

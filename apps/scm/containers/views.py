@@ -241,6 +241,24 @@ def container_refresh_tracking(request, container_id):
     return redirect("containers:detail", container_id=container.pk)
 
 
+def _apply_manual_receive_policy(request, team, movement) -> None:
+    """A gate-in or receipt typed by hand is a receive: the destination's stop-on-receive applies.
+
+    The same shared rule as pasted reports and Business Central — see
+    :func:`~apps.scm.containers.receive.apply_receive_tracking_policy`.
+    """
+    from .movements import ARRIVAL_MOVEMENT_TYPES
+    from .receive import TRACKING_STOP_FAILED, TRACKING_STOPPED, apply_receive_tracking_policy
+
+    if movement.movement_type not in ARRIVAL_MOVEMENT_TYPES:
+        return
+    state, message = apply_receive_tracking_policy(team=team, movement=movement, actor=request.user)
+    if state == TRACKING_STOPPED:
+        messages.info(request, _("Tracking stopped: this location stops tracking on receive."))
+    elif state == TRACKING_STOP_FAILED:
+        messages.warning(request, message)
+
+
 @scm_login_required
 def container_record_movement(request, container_id):
     """Record a gate in, gate out, receipt or transfer for this container.
@@ -262,10 +280,11 @@ def container_record_movement(request, container_id):
         form = ContainerMovementForm(request.POST, team=team, container=container)
         if form.is_valid():
             try:
-                record_container_movement(team=team, container=container, **form.movement_data())
+                movement = record_container_movement(team=team, container=container, **form.movement_data())
             except ValidationError as error:
                 form.add_error(None, error)
             else:
+                _apply_manual_receive_policy(request, team, movement)
                 if request.htmx:
                     # The whole page: a movement changes the header's physical state,
                     # the Overview panel and the Activity tab at once, and swapping

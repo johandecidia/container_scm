@@ -137,6 +137,15 @@ class ContainerLocation(BaseTeamModel):
     owner_name = models.CharField(_("owner name"), max_length=200, blank=True)
     notes = models.TextField(_("notes"), blank=True)
     is_active = models.BooleanField(_("active"), default=True)
+    # The only stop-on-receive policy: whether a container received *here* stops being
+    # tracked. Read by every receive path through `receive.apply_receive_tracking_policy`.
+    auto_stop_tracking_on_receive = models.BooleanField(
+        _("stop tracking on receive"),
+        default=False,
+        help_text=_(
+            "Stop tracking a container once it is received at this location. The receive is recorded either way."
+        ),
+    )
 
     class Meta:
         ordering = ["name"]

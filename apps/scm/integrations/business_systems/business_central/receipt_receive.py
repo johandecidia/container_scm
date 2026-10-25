@@ -24,8 +24,8 @@ in this order, stopping at the first that fails:
 A row ends RECEIVED (with its movement), ALREADY_RECEIVED, or NOT_RECEIVED with a
 reason. RECEIVED and ALREADY_RECEIVED are final, so a receipt read again never
 receives twice; NOT_RECEIVED is re-evaluated on the next pass. After a *new*
-receive, the team's existing stop-tracking-on-receive policy is applied with the
-receive path's own helper — there is no BC-specific tracking behaviour.
+receive, the destination location's stop-tracking-on-receive setting is applied
+through the receive path's shared policy — there is no BC-specific tracking behaviour.
 
 A receipt undone in BC *after* it was received is never reversed here; the row keeps
 RECEIVED and its resolution turns REVERSED, which the receipts page lists for review.
@@ -49,7 +49,7 @@ from apps.scm.containers.intake import create_or_get_container
 from apps.scm.containers.location_time import resolve_location_timezone
 from apps.scm.containers.models import Container, ContainerLocation, ContainerMovement
 from apps.scm.containers.movements import ARRIVAL_MOVEMENT_TYPES
-from apps.scm.containers.receive import receive_container, stop_tracking_after_receive
+from apps.scm.containers.receive import apply_receive_tracking_policy, receive_container
 from apps.scm.integrations.models import (
     BusinessCentralLocationMapping,
     BusinessCentralReceiptContainer,
@@ -287,17 +287,11 @@ def _save(row: Line, decision: _Decision) -> None:
 
 
 def _apply_tracking_policy(integration: Integration, received: list[Line], actor) -> None:
-    """The team's stop-tracking-on-receive policy, for receives this pass recorded."""
-    if not received:
-        return
-    from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
-
-    if not get_team_stop_tracking_on_receive(integration.team):
-        return
+    """The destination's stop-tracking-on-receive setting, for receives this pass recorded."""
     for row in received:
-        if row.container is None:
+        if row.movement is None:
             continue
-        row.tracking_result, _message = stop_tracking_after_receive(
-            team=integration.team, container=row.container, actor=actor, label=row.serial_no
+        row.tracking_result, _message = apply_receive_tracking_policy(
+            team=integration.team, movement=row.movement, actor=actor, label=row.serial_no
         )
         row.save(update_fields=["tracking_result", "updated_at"])

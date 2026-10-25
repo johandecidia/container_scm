@@ -17,6 +17,10 @@
      class="tab {% if active == 'tracking' %}tab-active{% endif %}">
     <i class="fa fa-satellite-dish mr-2"></i>{% translate "Tracking" %}
   </a>
+  <a role="tab" href="{% url 'team_settings:locations' %}"
+     class="tab {% if active == 'locations' %}tab-active{% endif %}">
+    <i class="fa fa-location-dot mr-2"></i>{% translate "Locations" %}
+  </a>
   {% comment %}
     Container settings is the conditions page, on the route it has always had. It is
     a tab here rather than a copy: the team's grading vocabulary is edited in one

@@ -18,10 +18,13 @@ pasted twice — or confirmed twice in two tabs — records each receive once.
 compared with what MCR already knows and produce warnings; they never create a
 location, a container or change a container's equipment type.
 
-**Tracking is secondary.** After a *new* receive, and only when the team has asked
-for it, :func:`~apps.scm.tracking.lifecycle.stop_container_tracking` is called —
-the Stop button's own function, provider-neutral. It runs after the receive is
-committed, and a failure is reported beside a receive that stands.
+**Tracking is secondary.** After a *new* receive, and only when the destination
+asks for it (``ContainerLocation.auto_stop_tracking_on_receive``),
+:func:`~apps.scm.tracking.lifecycle.stop_container_tracking` is called — the Stop
+button's own function, provider-neutral. It runs after the receive is committed,
+and a failure is reported beside a receive that stands. That decision is
+:func:`apply_receive_tracking_policy`, shared by every receive path: the movement
+modal, pasted reports and Business Central.
 """
 
 from __future__ import annotations
@@ -195,14 +198,12 @@ def preview_bulk_receive(*, team: Team, location: ContainerLocation, text: str) 
     receives already recorded, their stoppable tracking, the destination's aliases and
     its parents' timezones.
     """
-    from apps.scm.tracking.preferences import get_team_stop_tracking_on_receive
-
     if location.team_id != team.pk:
         raise ValidationError({"location": _("The location belongs to a different team.")})
 
     parsed = parse_receive_text(text)
     zone = resolve_location_timezone(team, location)
-    stop_policy = get_team_stop_tracking_on_receive(team)
+    stop_policy = location.auto_stop_tracking_on_receive
     result = BulkReceive(location=location, stop_tracking_on_receive=stop_policy, timezone=zone)
 
     times = {row.line_number: localize(row.local_time, zone.zone) for row in parsed.rows}
@@ -378,8 +379,9 @@ def bulk_receive(*, team: Team, location: ContainerLocation, text: str, actor=No
             row.state, row.will_stop_tracking = ALREADY_RECEIVED, False
             continue
         row.state = RECEIVED
-        if result.stop_tracking_on_receive:
-            _stop_tracking(team=team, container=container, row=row, actor=actor)
+        row.tracking, row.tracking_message = apply_receive_tracking_policy(
+            team=team, movement=outcome.movement, actor=actor, label=row.container_number
+        )
 
     logger.info("Bulk receive at location %s for team %s: %s", location.pk, team.pk, result.counts)
     return result
@@ -395,21 +397,33 @@ def _provenance(row: BulkReceiveRow, zone: LocationTimezone) -> str:
     return " ".join(details)
 
 
-def _stop_tracking(*, team: Team, container: Container, row: BulkReceiveRow, actor) -> None:
-    row.tracking, row.tracking_message = stop_tracking_after_receive(
-        team=team, container=container, actor=actor, label=row.container_number
-    )
+def apply_receive_tracking_policy(
+    *, team: Team, movement: ContainerMovement, actor=None, label: str = ""
+) -> tuple[str, str]:
+    """After a *new* receive: stop tracking if its destination says so. Never raises.
 
+    The one stop-on-receive rule, for every receive path. Returns ``(TRACKING_*,
+    message)``; ``TRACKING_NOT_APPLIED`` when the destination's
+    ``auto_stop_tracking_on_receive`` is off, or when the receive is not the
+    container's current position — a backdated receive that a later movement already
+    superseded says nothing about where the box is now, so it stops nothing.
 
-def stop_tracking_after_receive(*, team: Team, container: Container, actor=None, label: str = "") -> tuple[str, str]:
-    """Stop tracking a container just received. Never raises; the receive stands.
-
-    Returns ``(TRACKING_*, message)``. Called with the receive already committed and
-    outside any transaction of ours, the way the Stop button calls it: a provider
-    release is an HTTP call, and holding a database transaction open across it would
-    gain nothing. Shared by every receive path (pasted reports, Business Central).
+    Called with the receive already committed and outside any transaction of ours,
+    the way the Stop button calls :func:`~apps.scm.tracking.lifecycle.stop_container_tracking`:
+    a provider release is an HTTP call, and holding a transaction open across it would
+    gain nothing. What "stop" means — which status a watch ends in — is the lifecycle's.
     """
     from apps.scm.tracking.lifecycle import ALREADY_STOPPED, STOPPED, stop_container_tracking
+
+    from .movements import get_current_state_movement
+
+    location = movement.to_location
+    if location is None or not location.auto_stop_tracking_on_receive:
+        return TRACKING_NOT_APPLIED, ""
+    container = movement.container
+    current = get_current_state_movement(team, container)
+    if current is None or current.pk != movement.pk:
+        return TRACKING_NOT_APPLIED, ""
 
     try:
         stop = stop_container_tracking(team=team, container=container, actor=actor)

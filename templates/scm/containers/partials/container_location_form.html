@@ -173,6 +173,15 @@
             <span class="label-text">{{ form.is_active.label }}</span>
           </label>
         </div>
+        <div class="form-control">
+          <label class="label cursor-pointer justify-start gap-2">
+            {{ form.auto_stop_tracking_on_receive }}
+            <span class="label-text">{{ form.auto_stop_tracking_on_receive.label }}</span>
+          </label>
+          <p class="text-xs text-base-content/60">{{ form.auto_stop_tracking_on_receive.help_text }}
+            {% if form.auto_stop_tracking_on_receive.field.disabled %}{% translate "Only team administrators can change this." %}{% endif %}
+          </p>
+        </div>
       </div>
       <div class="modal-action">
         <button type="button" class="btn btn-ghost" onclick="this.closest('.modal').remove()">{% translate "Cancel" %}</button>
