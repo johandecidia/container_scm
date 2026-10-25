@@ -196,3 +196,18 @@ def get_item_summary(integration: Integration) -> list[dict]:
     unclassified = BusinessCentralItemLedgerEntry.ItemClassification.UNCLASSIFIED
     summary.sort(key=lambda r: (r["resolution"].classification != unclassified, -r["entries"], r["item_no"]))
     return summary
+
+
+def get_item_link_summary(integration: Integration) -> list[tuple[str, str, int]]:
+    """``(status, label, count)`` of the integration's item ledger entries per link status."""
+    counts = dict(
+        BusinessCentralItemLedgerEntry.objects.filter(integration=integration)
+        .values_list("link_status")
+        .annotate(n=Count("id"))
+        .order_by()
+    )
+    return [
+        (status, str(label), counts[status])
+        for status, label in BusinessCentralItemLedgerEntry.LinkStatus.choices
+        if counts.get(status)
+    ]

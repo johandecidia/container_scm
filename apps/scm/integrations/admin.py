@@ -168,15 +168,17 @@ class BusinessCentralItemLedgerEntryAdmin(admin.ModelAdmin):
         "serial_no",
         "serial_status",
         "item_classification",
+        "link_status",
+        "container",
         "entry_type",
         "document_no",
         "posting_date",
         "quantity",
         "team",
     ]
-    list_filter = ["serial_status", "item_classification", "entry_type", "team"]
+    list_filter = ["link_status", "serial_status", "item_classification", "entry_type", "team"]
     search_fields = ["serial_no", "serial_no_raw", "item_no", "document_no"]
-    list_select_related = ["team"]
+    list_select_related = ["team", "container"]
 
     def has_add_permission(self, request):
         return False

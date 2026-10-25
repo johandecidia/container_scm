@@ -261,7 +261,8 @@ class BusinessCentralItemLedgerEntry(BaseTeamModel):
 
     One row per BC source and ``entryNo``: an integration is bound to a single
     tenant/environment/company (source binding), so ``(integration, company_id,
-    entry_no)`` is unique. Nothing here links to, creates or changes a Container.
+    entry_no)`` is unique. The sync never touches ``container`` / ``link_status``;
+    only the separate matching pass sets them, and it never changes a Container.
     """
 
     class SerialStatus(models.TextChoices):
@@ -275,6 +276,20 @@ class BusinessCentralItemLedgerEntry(BaseTeamModel):
         UNCLASSIFIED = "unclassified", _("Unclassified")
         CONTAINER = "container", _("Container")
         NOT_CONTAINER = "not_container", _("Not a container")
+
+    class LinkStatus(models.TextChoices):
+        # Set by ``container_links.match_item_ledger_entries`` and recomputed on every
+        # pass, so a status is the current state of the entry, never a duplicate.
+        PENDING = "pending", _("Not checked yet")
+        LINKED = "linked", _("Linked to a container")
+        INVALID_SERIAL = "invalid_serial", _("Invalid ISO 6346 serial")
+        MISSING_SERIAL = "missing_serial", _("No serial number")
+        UNCLASSIFIED_ITEM = "unclassified_item", _("Item not classified")
+        NON_CONTAINER_ITEM = "non_container_item", _("Item is not a container")
+        VARIANT_UNRESOLVED = "variant_unresolved", _("Item variant unknown")
+        MISSING_EQUIPMENT_TYPE = "missing_equipment_type", _("No equipment type mapped")
+        EQUIPMENT_TYPE_CONFLICT = "equipment_type_conflict", _("Equipment type differs from the container's")
+        CONTAINER_NOT_FOUND = "container_not_found", _("Container not in Pegasus")
 
     integration = models.ForeignKey(
         Integration,
@@ -307,6 +322,21 @@ class BusinessCentralItemLedgerEntry(BaseTeamModel):
     sync_hash = models.CharField(_("sync hash"), max_length=64)
     synced_at = models.DateTimeField(_("synced at"))
 
+    # Link to the physical container (identity = team + ISO 6346 number, never the
+    # item no.). Commercial history is kept if the container is deleted.
+    container = models.ForeignKey(
+        "scm_containers.Container",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bc_item_ledger_entries",
+        verbose_name=_("container"),
+    )
+    link_status = models.CharField(
+        _("link status"), max_length=30, choices=LinkStatus.choices, default=LinkStatus.PENDING
+    )
+    link_updated_at = models.DateTimeField(_("link updated at"), null=True, blank=True)
+
     class Meta:
         ordering = ["integration", "entry_no"]
         constraints = [
@@ -318,6 +348,7 @@ class BusinessCentralItemLedgerEntry(BaseTeamModel):
             models.Index(fields=["team", "serial_no"]),
             models.Index(fields=["team", "item_no"]),
             models.Index(fields=["team", "serial_status"]),
+            models.Index(fields=["integration", "link_status"]),
         ]
 
     def __str__(self):

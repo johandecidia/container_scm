@@ -173,6 +173,30 @@ def queue_business_central_resource_sync(integration_id: int, resource_type: str
 
 
 @shared_task
+def match_business_central_item_ledger_entries_task(integration_id: int) -> dict:
+    """Link the integration's item ledger entries to existing containers (operation A).
+
+    Never creates or changes a container and never calls Business Central. A pass
+    already running for the integration is skipped, not queued twice.
+    """
+    from .business_systems.business_central.container_links import match_item_ledger_entries
+    from .business_systems.business_central.exceptions import BusinessCentralSyncInProgressError
+    from .models import Integration
+
+    try:
+        integration = Integration.objects.get(pk=integration_id, provider_code="business_central")
+    except Integration.DoesNotExist:
+        logger.info("BC item ledger matching: integration %s not found — skipping.", integration_id)
+        return {"skipped": True}
+    try:
+        result = match_item_ledger_entries(integration)
+    except BusinessCentralSyncInProgressError:
+        logger.info("BC item ledger matching: integration %s already running — skipping.", integration_id)
+        return {"skipped": True}
+    return {"checked": result.checked, "changed": result.changed, "by_status": dict(result.by_status)}
+
+
+@shared_task
 def test_business_central_connection_task(integration_id: int) -> dict:
     """Test a Business Central integration's connection off the request cycle.
 

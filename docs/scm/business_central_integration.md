@@ -558,6 +558,31 @@ rules all name a variant is reported as needing a variant rather than guessed.
 The page also lists every item number in the synced entries with its current
 classification, unclassified items first.
 
+### Linking entries to containers (operation A)
+
+Identity is the team's `Container` with the entry's valid ISO 6346 number (owner,
+category, serial) — never the item number. `container_links.match_item_ledger_entries`
+(`bc_match_item_ledger_entries --integration <id>`, or the Celery task
+`match_business_central_item_ledger_entries_task`) recomputes, for every entry, the
+nullable `container` FK, `link_status` and `item_classification` from the current
+rules. It only reads containers: nothing is created, edited or moved, and Business
+Central is not called. It runs separately from the sync, can be repeated after rule
+changes, and only rows whose link changed are written (`link_updated_at`).
+
+| `link_status` | Meaning |
+| --- | --- |
+| `linked` | Linked to the team's container |
+| `equipment_type_conflict` | Linked, but the item's mapped type differs from the container's (the container is not changed) |
+| `container_not_found` | Valid container item, not in Pegasus — a creation candidate |
+| `missing_equipment_type` | Container item without a mapped type and no existing container |
+| `unclassified_item` / `non_container_item` / `variant_unresolved` | Item not (yet) a container item |
+| `invalid_serial` / `missing_serial` | No usable ISO number |
+| `pending` | Not checked yet |
+
+The status is the entry's current state (no duplicates across passes). A deleted
+container leaves its entries with `container = NULL`; commercial history is never
+deleted. The BC sync never writes these fields.
+
 ## Technical debt left after stage 0
 
 - `schemas.NormalizedCustomerOrder(Line)` (plain dataclasses) and
