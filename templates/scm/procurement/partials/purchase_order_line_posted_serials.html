@@ -1,0 +1,52 @@
+{% load i18n %}
+
+{% comment %}
+  Serials Business Central has posted as received on this line, with the receipt
+  that posted them.
+
+  Commercial evidence, not a physical receive: a posted serial says the box was
+  booked in, not that Pegasus has seen it arrive. Only posted receipts appear here —
+  serials registered on the open order but not yet received belong to the coming
+  Business Central tracking API and are not shown.
+
+  A serial links to its container when the team has one. A box Pegasus does not
+  know, or one acquired through another line, is said so on the badge rather than
+  hidden, because a conflict nobody can see is one nobody fixes.
+
+  Expects: summary (from line_summaries, with posted_serials).
+{% endcomment %}
+
+{% if summary.posted_serials %}
+  <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs mt-2">
+    <span
+      class="uppercase tracking-wide text-base-content/40 shrink-0"
+      title="{% translate 'Serial numbers on posted purchase receipts in Business Central. A posted receipt is not a physical receive in Pegasus.' %}"
+    >
+      {% translate "Posted in Business Central" %}
+    </span>
+    {% for posted in summary.posted_serials %}
+      <span
+        class="badge badge-sm gap-1 font-mono {% if posted.state == 'conflict' or posted.state == 'several_orders' %}badge-warning{% elif posted.state == 'not_in_pegasus' %}badge-ghost{% else %}badge-outline{% endif %}"
+        title="{{ posted.state_label }}{% if posted.posting_date %} · {{ posted.posting_date|date:'j M Y' }}{% endif %}"
+      >
+        {% if posted.container %}
+          <a href="{% url 'containers:detail' container_id=posted.container.pk %}" class="link link-hover">{{ posted.serial_no }}</a>
+        {% else %}
+          {{ posted.serial_no }}
+        {% endif %}
+        <span class="text-base-content/50">{{ posted.receipt_no }}</span>
+        {% if posted.state == "not_in_pegasus" %}
+          <span class="font-sans text-base-content/60">· {% translate "not in Pegasus" %}</span>
+        {% elif posted.state == "conflict" %}
+          <span class="font-sans">
+            · {% blocktranslate trimmed with order=posted.other_line.purchase_order.po_number line=posted.other_line.line_no %}acquired through {{ order }} line {{ line }}{% endblocktranslate %}
+          </span>
+        {% elif posted.state == "several_orders" %}
+          <span class="font-sans">
+            · {% blocktranslate trimmed with orders=posted.other_orders|join:", " %}also posted on {{ orders }}{% endblocktranslate %}
+          </span>
+        {% endif %}
+      </span>
+    {% endfor %}
+  </div>
+{% endif %}

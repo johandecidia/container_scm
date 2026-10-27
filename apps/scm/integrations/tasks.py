@@ -1,4 +1,5 @@
 import logging
+from dataclasses import asdict
 from typing import Any
 
 from celery import shared_task
@@ -134,6 +135,7 @@ def run_business_central_resource_sync_task(task, integration_id: int, resource_
             run.records_failed,
         )
         _queue_receipt_processing_after(integration, resource_type)
+        _queue_receipt_serial_linking_after(integration, resource_type)
     except (BusinessCentralConfigurationError, BusinessCentralSyncInProgressError) as exc:
         logger.info("BC %s sync task: integration=%s skipped: %s", resource_type, integration_id, exc)
     except BusinessCentralError as exc:
@@ -213,6 +215,36 @@ def _queue_receipt_processing_after(integration, resource_type: str) -> None:
         process_business_central_purchase_receipts_task.delay(integration.pk)
 
 
+def _queue_receipt_serial_linking_after(integration, resource_type: str) -> None:
+    """New order lines may give already-posted receipt serials their line: link them.
+
+    Receipt processing links on its own pass; a purchase-order sync queues a linking
+    pass because the lines a receipt points at can arrive after the receipt did.
+    """
+    from .models import IntegrationSyncRun
+
+    if resource_type == IntegrationSyncRun.ResourceType.PURCHASE_ORDERS:
+        link_business_central_receipt_serials_task.delay(integration.pk)
+
+
+@shared_task
+def link_business_central_receipt_serials_task(integration_id: int) -> dict:
+    """Link posted-receipt serials to their purchase order lines (``ContainerAcquisition``).
+
+    Only for containers that already exist; never creates a container, a movement or
+    a receive, and never calls Business Central.
+    """
+    from .business_systems.business_central.receipt_serial_lines import link_posted_receipt_serials
+    from .models import Integration
+
+    try:
+        integration = Integration.objects.get(pk=integration_id, provider_code="business_central", is_active=True)
+    except Integration.DoesNotExist:
+        logger.info("BC receipt serial linking: integration %s not found/inactive — skipping.", integration_id)
+        return {"skipped": True}
+    return asdict(link_posted_receipt_serials(integration))
+
+
 @shared_task
 def process_business_central_purchase_receipts_task(integration_id: int) -> dict:
     """Resolve the integration's posted purchase receipts and receive what qualifies.
@@ -222,6 +254,7 @@ def process_business_central_purchase_receipts_task(integration_id: int) -> dict
     """
     from .business_systems.business_central.exceptions import BusinessCentralSyncInProgressError
     from .business_systems.business_central.receipt_receive import process_purchase_receipts
+    from .business_systems.business_central.receipt_serial_lines import link_posted_receipt_serials
     from .models import Integration
 
     try:
@@ -234,7 +267,15 @@ def process_business_central_purchase_receipts_task(integration_id: int) -> dict
     except BusinessCentralSyncInProgressError:
         logger.info("BC receipt processing: integration %s already running — skipping.", integration_id)
         return {"skipped": True}
-    return {"checked": result.checked, "received": len(result.received), "by_reason": dict(result.by_reason)}
+    # Commercial evidence only: links existing containers to their order lines, after
+    # (and independent of) the receive decisions above.
+    links = link_posted_receipt_serials(integration)
+    return {
+        "checked": result.checked,
+        "received": len(result.received),
+        "by_reason": dict(result.by_reason),
+        "serial_links": asdict(links),
+    }
 
 
 @shared_task

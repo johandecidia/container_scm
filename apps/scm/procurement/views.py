@@ -13,6 +13,7 @@ from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
 from apps.scm.decorators import scm_login_required
+from apps.scm.integrations.business_systems.business_central.receipt_serial_lines import get_order_posted_serials
 
 from .activity import get_purchase_order_activity
 from .forms import PurchaseOrderForm, PurchaseOrderLineForm
@@ -145,10 +146,17 @@ def purchase_order_detail(request, purchase_order_id: int):
         pk=purchase_order_id,
     )
     workspace = get_purchase_order_workspace(team=team, purchase_order=purchase_order)
+    line_summaries = get_purchase_order_line_summaries(workspace)
+    # Serials Business Central has posted as received, per line. Commercial evidence
+    # only — the page never treats them as a physical receive.
+    posted = get_order_posted_serials(team, purchase_order)
+    for summary in line_summaries:
+        summary["posted_serials"] = posted.for_line(summary["line"].pk)
     context = {
         "purchase_order": purchase_order,
         "workspace": workspace,
-        "line_summaries": get_purchase_order_line_summaries(workspace),
+        "line_summaries": line_summaries,
+        "unattributed_serials": posted.unattributed,
         # Derived entirely from what the workspace already loaded — no extra query.
         "activity": get_purchase_order_activity(workspace),
         # The names the previous document-style page used, kept so existing

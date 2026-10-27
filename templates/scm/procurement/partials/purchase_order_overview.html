@@ -237,6 +237,7 @@
                   <td></td>
                   <td colspan="{% if read_only %}12{% else %}13{% endif %}" class="align-top pt-0">
                     {% include "scm/procurement/partials/purchase_order_line_containers.html" %}
+                    {% include "scm/procurement/partials/purchase_order_line_posted_serials.html" %}
                   </td>
                 </tr>
               {% endwith %}
@@ -259,6 +260,26 @@
       <p class="text-xs text-base-content/40 mt-3">
         {% translate "“Booked” is the quantity placed on a supplier delivery. A shortfall is shown beside it." %}
       </p>
+      {% comment %}
+        Posted serials that could not be placed on one line with certainty — the same
+        item on two receipt lines, or one box posted on two lines. Listed, not guessed.
+      {% endcomment %}
+      {% if unattributed_serials %}
+        <div class="mt-3 pt-3 border-t border-base-300 text-xs">
+          <p class="text-warning font-medium mb-1">
+            {% translate "Posted serials not placed on a line" %}
+          </p>
+          <ul class="flex flex-col gap-0.5">
+            {% for posted in unattributed_serials %}
+              <li>
+                <span class="font-mono">{{ posted.serial_no }}</span>
+                <span class="text-base-content/50">{{ posted.receipt_no }} · {{ posted.item_no }}</span>
+                <span class="text-base-content/60">— {{ posted.reason_label }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
     {% else %}
       <p class="text-sm text-base-content/60 py-2">{% translate "No lines on this purchase order." %}</p>
     {% endif %}

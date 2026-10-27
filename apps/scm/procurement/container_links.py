@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 
@@ -108,7 +108,35 @@ def link_acquired_container(
     """
     _assert_team(team, purchase_order_line, container)
     _assert_writable(purchase_order_line)
+    return _acquire(team, purchase_order_line, container)
 
+
+def link_business_central_acquisition(
+    *,
+    team: Team,
+    purchase_order_line: PurchaseOrderLine,
+    container: Container,
+) -> ContainerAcquisition:
+    """Record a Business Central-evidenced acquisition: the BC sync's own writer.
+
+    The mirror of :func:`link_acquired_container`: it accepts *only* a line of an
+    order Business Central owns, so no human path reaches it and the manual writer
+    still refuses those orders. Same lock, same idempotency and the same refusal to
+    move a box that already came from somewhere else — a conflict is raised, never
+    resolved by overwriting.
+
+    Raises:
+        PermissionDenied: if the order is not owned by Business Central.
+        ValidationError: as for :func:`link_acquired_container`.
+    """
+    _assert_team(team, purchase_order_line, container)
+    if not purchase_order_line.purchase_order.is_business_central:
+        raise PermissionDenied(_("Only a Business Central purchase order line can take a Business Central link."))
+    return _acquire(team, purchase_order_line, container)
+
+
+def _acquire(team: Team, purchase_order_line: PurchaseOrderLine, container: Container) -> ContainerAcquisition:
+    """The locked check-and-write both acquisition writers share. See :func:`link_acquired_container`."""
     with transaction.atomic():
         if not Container.objects.select_for_update().filter(pk=container.pk).exists():
             raise ValidationError(_("That container no longer exists."))
