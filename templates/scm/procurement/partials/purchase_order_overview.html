@@ -141,11 +141,16 @@
             <tr>
               <th>{% translate "Line" %}</th>
               <th>{% translate "Article" %}</th>
+              <th>{% translate "Variant" %}</th>
               <th>{% translate "Description" %}</th>
+              <th title="{% translate 'The source system’s stock location for the line. Commercial, not where a container physically is.' %}">
+                {% translate "Source location" %}
+              </th>
               <th class="text-right">{% translate "Ordered" %}</th>
               <th class="text-right">{% translate "Booked" %}</th>
               <th class="text-right">{% translate "Shipped" %}</th>
               <th class="text-right">{% translate "Received" %}</th>
+              <th class="text-right">{% translate "Outstanding" %}</th>
               <th class="text-right">{% translate "Unit price" %}</th>
               <th class="text-right">{% translate "Amount" %}</th>
               <th>{% translate "Expected" %}</th>
@@ -158,7 +163,21 @@
                 <tr>
                   <td class="text-base-content/60">{{ line.line_no }}</td>
                   <td class="font-mono text-xs">{{ line.item_no }}</td>
+                  <td class="font-mono text-xs">{{ line.variant_code|default:"—" }}</td>
                   <td>{{ line.description }}</td>
+                  {% comment %}
+                    The source system's commercial location (Business Central's L005),
+                    shown as it was sent. It is not a Pegasus location and says nothing
+                    about where a container physically is.
+                  {% endcomment %}
+                  <td class="text-xs">
+                    {% if line.location_code %}
+                      <span class="font-mono">{{ line.location_code }}</span>
+                      {% if line.location_name %}<span class="block text-base-content/60">{{ line.location_name }}</span>{% endif %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
                   <td class="text-right tabular-nums">{{ line.ordered_qty|floatformat:"-2" }}</td>
                   <td class="text-right tabular-nums">
                     {{ summary.booked_qty|floatformat:"-2" }}
@@ -176,6 +195,7 @@
                   </td>
                   <td class="text-right tabular-nums">{{ line.shipped_qty|floatformat:"-2" }}</td>
                   <td class="text-right tabular-nums">{{ line.received_qty|floatformat:"-2" }}</td>
+                  <td class="text-right tabular-nums">{{ line.outstanding_qty|floatformat:"-2" }}</td>
                   {% comment %}
                     Money to two places. The columns multiply a 4-decimal price by a
                     3-decimal quantity, so an unformatted amount prints seven
@@ -215,7 +235,7 @@
                 {% endcomment %}
                 <tr class="border-b border-base-200">
                   <td></td>
-                  <td colspan="{% if read_only %}9{% else %}10{% endif %}" class="align-top pt-0">
+                  <td colspan="{% if read_only %}12{% else %}13{% endif %}" class="align-top pt-0">
                     {% include "scm/procurement/partials/purchase_order_line_containers.html" %}
                   </td>
                 </tr>
@@ -225,7 +245,7 @@
           {% if workspace.total_order_amount is not None %}
             <tfoot>
               <tr class="font-semibold">
-                <td colspan="8" class="text-right text-base-content/60 text-xs uppercase tracking-wide">
+                <td colspan="11" class="text-right text-base-content/60 text-xs uppercase tracking-wide">
                   {% blocktranslate trimmed with currency=purchase_order.currency %}Total {{ currency }}{% endblocktranslate %}
                 </td>
                 <td class="text-right tabular-nums">{{ workspace.total_order_amount|floatformat:2 }}</td>

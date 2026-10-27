@@ -1,4 +1,4 @@
-"""Received quantities on synced Business Central order lines.
+"""Received quantities, variants and locations on synced Business Central order lines.
 
 Payloads follow the live sandbox response for purchase order 100021 line 10000
 (verified 2026-10-25): 49 ordered, 3 received, variant RAL5013, location L005, with
@@ -75,6 +75,26 @@ class LineMappingTest(SimpleTestCase):
     def test_invalid_received_quantity_fails_the_record(self):
         with self.assertRaises(ValueError):
             self._map(_line(receivedQuantity="three"))
+
+    def test_expanded_variant_and_location(self):
+        line = self._map(_LINE)
+        self.assertEqual(line.variant_code, "RAL5013")
+        self.assertEqual(line.location_code, "L005")
+        self.assertEqual(line.location_name, "Lager MCR05 - Lager Oceantermialen i JohnEvans")
+
+    def test_null_navigation_means_none(self):
+        line = self._map(_line(itemVariant=None, location=None))
+        self.assertEqual(line.variant_code, "")
+        self.assertEqual(line.location_code, "")
+        self.assertEqual(line.location_name, "")
+
+    def test_absent_navigation_means_unknown(self):
+        line = _line()
+        del line["itemVariant"], line["location"]
+        mapped = self._map(line)
+        self.assertIsNone(mapped.variant_code)
+        self.assertIsNone(mapped.location_code)
+        self.assertIsNone(mapped.location_name)
 
 
 class _SyncCase(TestCase):
@@ -163,3 +183,51 @@ class ReceivedQuantitySyncTest(_SyncCase):
         self._sync([_LINE])
         po = PurchaseOrder.objects.get(team=self.team, external_id=_PO["id"])
         self.assertEqual(get_purchase_order_logistics_status(po), "partially_received")
+
+
+class LineReferencesSyncTest(_SyncCase):
+    def test_variant_and_location_are_stored(self):
+        self._sync([_LINE])
+        line = self._line_row()
+        self.assertEqual(line.variant_code, "RAL5013")
+        self.assertEqual(line.location_code, "L005")
+        self.assertEqual(line.location_name, "Lager MCR05 - Lager Oceantermialen i JohnEvans")
+
+    def test_line_without_variant_or_location_syncs(self):
+        run = self._sync([_line(itemVariant=None, location=None)])
+        self.assertEqual(run.status, IntegrationSyncRun.Status.COMPLETED)
+        line = self._line_row()
+        self.assertEqual(line.variant_code, "")
+        self.assertEqual(line.location_code, "")
+
+    def test_variant_removed_in_bc_is_cleared(self):
+        self._sync([_LINE])
+        self._sync([_line(itemVariant=None)])
+        self.assertEqual(self._line_row().variant_code, "")
+
+    def test_unexpanded_references_keep_the_stored_codes(self):
+        self._sync([_LINE])
+        line = _line()
+        del line["itemVariant"], line["location"]
+        run = self._sync([line])
+        self.assertEqual(run.status, IntegrationSyncRun.Status.COMPLETED)
+        stored = self._line_row()
+        self.assertEqual(stored.variant_code, "RAL5013")
+        self.assertEqual(stored.location_code, "L005")
+
+    def test_location_code_does_not_touch_any_container(self):
+        from apps.scm.containers.models import Container, ContainerMovement
+
+        self._sync([_LINE])
+        self.assertFalse(Container.objects.filter(team=self.team).exists())
+        self.assertFalse(ContainerMovement.objects.exists())
+
+    def test_teams_keep_their_own_lines(self):
+        other = Team.objects.create(name="bc-qty-b", slug="bc-qty-b")
+        other_integration = self._integration(other)
+        self._sync([_LINE])
+        self._sync([_line(receivedQuantity=7, itemVariant={"code": "RAL7013"})], integration=other_integration)
+        self.assertEqual(self._line_row().received_qty, Decimal("3"))
+        self.assertEqual(self._line_row().variant_code, "RAL5013")
+        self.assertEqual(self._line_row(other).received_qty, Decimal("7"))
+        self.assertEqual(self._line_row(other).variant_code, "RAL7013")

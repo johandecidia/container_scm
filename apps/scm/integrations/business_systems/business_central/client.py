@@ -106,6 +106,11 @@ _PO_LINE_SELECT = [
     "directUnitCost",
     "expectedReceiptDate",
 ]
+# Variant and location codes are not line properties; the line only carries their
+# GUIDs. Expanding the two navigations reads the codes in the same request (verified
+# against the sandbox: a line without one returns ``null``). Each is its own API page
+# (30052 / 30076) with its own permission, so a 403 here is not a line failure.
+_PO_LINE_EXPAND = "itemVariant($select=code),location($select=code,displayName)"
 
 
 # Standard API v2.0 purchaseReceipt / purchaseReceiptLine (verified, stage 2). Neither
@@ -291,6 +296,9 @@ class BusinessCentralClient(BaseBusinessSystemClient):
 
         self._config: BusinessCentralConfig | None = None
         self._auth: BusinessCentralAuth | None = None
+        # Set once Business Central refuses the variant/location expansion, so the rest
+        # of this client's line fetches go straight to the plain request.
+        self._line_references_denied = False
         if not use_dummy:
             if integration is None:
                 raise BusinessCentralConfigurationError(
@@ -394,6 +402,12 @@ class BusinessCentralClient(BaseBusinessSystemClient):
 
         In dummy mode ``purchase_order_id`` is the PO number (fixture filename).
         In live mode it must be the Business Central GUID.
+
+        Lines are requested with their variant and location expanded. If Business
+        Central denies that expansion (an app without the item-variant or location
+        permission), the lines are fetched again without it: the order still syncs,
+        and the lines carry no ``itemVariant``/``location`` key, which the mapper
+        reads as "not known" rather than "none".
         """
         if self.use_dummy:
             records = self._load_fixture(f"business_central_purchase_order_lines_{purchase_order_id}.json")
@@ -403,6 +417,15 @@ class BusinessCentralClient(BaseBusinessSystemClient):
         po_id = _require_guid(purchase_order_id, "purchase order id")
         params = {"$select": ",".join(_PO_LINE_SELECT)}
         endpoint = f"{cfg.company_path}/purchaseOrders({po_id})/purchaseOrderLines"
+        if not self._line_references_denied:
+            try:
+                return self._fetch_all_pages(endpoint, params={**params, "$expand": _PO_LINE_EXPAND}, limit=top)
+            except BusinessCentralPermissionError:
+                self._line_references_denied = True
+                logger.warning(
+                    "Business Central denied the purchase order line variant/location expansion; "
+                    "syncing lines without variant and location codes"
+                )
         return self._fetch_all_pages(endpoint, params=params, limit=top)
 
     def iter_item_ledger_entry_pages(

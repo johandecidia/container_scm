@@ -132,6 +132,13 @@ class PurchaseOrderLine(BaseTeamModel):
     received_qty = models.DecimalField(_("Received Qty"), max_digits=12, decimal_places=3, default=0)
     unit_price = models.DecimalField(_("Unit Price"), max_digits=14, decimal_places=4, null=True, blank=True)
     expected_receipt_date = models.DateField(_("Expected Receipt Date"), null=True, blank=True)
+    variant_code = models.CharField(_("Variant code"), max_length=20, blank=True)
+    # The source system's location for the line — a *commercial* stock location such
+    # as Business Central's L005. It says where the goods are booked, not where a box
+    # physically is: that is ``Container.current_location`` and is never derived from
+    # this code.
+    location_code = models.CharField(_("Source location code"), max_length=20, blank=True)
+    location_name = models.CharField(_("Source location name"), max_length=100, blank=True)
 
     # ── Source metadata (source_system is inherited from the parent PO) ───
     source_last_modified_at = models.DateTimeField(_("Source last modified at"), null=True, blank=True)

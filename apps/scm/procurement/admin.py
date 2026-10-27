@@ -55,8 +55,17 @@ def sync_from_bc_dummy(modeladmin, request, queryset):
 class PurchaseOrderLineInline(admin.TabularInline):
     model = PurchaseOrderLine
     extra = 0
-    fields = ("line_no", "item_no", "description", "ordered_qty", "shipped_qty", "received_qty")
-    readonly_fields = ("line_no", "item_no", "description", "ordered_qty", "shipped_qty", "received_qty")
+    fields = (
+        "line_no",
+        "item_no",
+        "variant_code",
+        "description",
+        "location_code",
+        "ordered_qty",
+        "shipped_qty",
+        "received_qty",
+    )
+    readonly_fields = fields
 
 
 class PurchaseOrderEventInline(admin.TabularInline):
@@ -159,6 +168,9 @@ _BC_LINE_READONLY = (
     "received_qty",
     "unit_price",
     "expected_receipt_date",
+    "variant_code",
+    "location_code",
+    "location_name",
     "source_last_modified_at",
     "last_synced_at",
     "raw_payload",

@@ -72,8 +72,13 @@ def _norm_date(value: Any) -> str | None:
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
+# Line references only some sources send. They join the hash only when present, so
+# a source that never sends them keeps the hashes it already has.
+_OPTIONAL_LINE_REFERENCES = ("variant_code", "location_code", "location_name")
+
+
 def _line_content(line_data: dict[str, Any]) -> dict[str, Any]:
-    return {
+    content = {
         "external_id": line_data.get("external_id", ""),
         "line_no": line_data.get("line_no", ""),
         "item_no": line_data.get("item_no", ""),
@@ -84,6 +89,10 @@ def _line_content(line_data: dict[str, Any]) -> dict[str, Any]:
         "unit_price": _norm_decimal(line_data.get("unit_price")),
         "expected_receipt_date": _norm_date(line_data.get("expected_receipt_date")),
     }
+    for key in _OPTIONAL_LINE_REFERENCES:
+        if line_data.get(key):
+            content[key] = line_data[key]
+    return content
 
 
 def compute_line_sync_hash(line_data: dict[str, Any]) -> str:
@@ -303,10 +312,12 @@ def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[s
 def _line_defaults(team: Team, line_data: dict[str, Any], *, now=None) -> dict[str, Any]:
     """Field values for one upserted line.
 
-    A ``received_qty`` the source explicitly sent as ``None`` is one it could not
-    supply this time (Business Central without ``receivedQuantity``). It is left
-    out, so an update keeps the stored figure instead of replacing it with zero. An
-    absent key keeps its old default, as for sources that never send it.
+    A value the source explicitly sent as ``None`` is one it could not supply this
+    time (Business Central without ``receivedQuantity``, or without permission to
+    expand the variant and location). Those fields are left out, so an update keeps
+    the stored value instead of replacing a known figure with zero or blank. A key
+    that is absent altogether keeps its old default, as for sources that never
+    send it.
     """
     raw_price = line_data.get("unit_price")
     defaults = {
@@ -330,6 +341,9 @@ def _line_defaults(team: Team, line_data: dict[str, Any], *, now=None) -> dict[s
         del defaults["received_qty"]
     else:
         defaults["received_qty"] = Decimal(str(defaults["received_qty"]))
+    for key in _OPTIONAL_LINE_REFERENCES:
+        if line_data.get(key) is not None:
+            defaults[key] = line_data[key]
     return defaults
 
 

@@ -160,6 +160,33 @@ class BoundedFetchTest(_LiveClientCase):
         self.assertNotIn("itemNumber", select)
         self.assertNotIn("lastModifiedDateTime", select)  # not a purchaseOrderLine property
         self.assertEqual(get.call_args.kwargs["params"]["$top"], 5)
+        # Variant and location codes come in the same request, never one call per line.
+        self.assertEqual(
+            get.call_args.kwargs["params"]["$expand"],
+            "itemVariant($select=code),location($select=code,displayName)",
+        )
+        self.assertEqual(get.call_count, 1)
+
+    def test_lines_without_reference_permission_are_fetched_plainly(self):
+        denied = {"error": {"code": "Internal_ServerError", "message": "(Page 30052 APIV2 - Item Variants Execute)"}}
+        lines = {"value": [{"id": "l1", "sequence": 10000}]}
+        with mock.patch("requests.get", side_effect=[_http(403, denied), _http(200, lines), _http(200, lines)]) as get:
+            client = self._client()
+            first = client.fetch_purchase_order_lines(_PO_GUID)
+            second = client.fetch_purchase_order_lines(_PO_GUID)
+        self.assertEqual(first, lines["value"])
+        self.assertEqual(second, lines["value"])
+        expands = ["$expand" in call.kwargs["params"] for call in get.call_args_list]
+        # One denied attempt, then plain requests for the rest of this client's run.
+        self.assertEqual(expands, [True, False, False])
+
+    def test_lines_other_errors_are_not_swallowed(self):
+        with (
+            mock.patch("requests.get", return_value=_http(404)) as get,
+            self.assertRaises(BusinessCentralNotFoundError),
+        ):
+            self._client().fetch_purchase_order_lines(_PO_GUID)
+        self.assertEqual(get.call_count, 1)
 
     def test_lines_reject_non_guid_identifier(self):
         with mock.patch("requests.get") as get, self.assertRaises(BusinessCentralConfigurationError):

@@ -95,7 +95,24 @@ def _text(raw: dict, *keys: str) -> str:
     return ""
 
 
+def _expanded(raw_line: dict, navigation: str, *fields: str) -> list[str] | None:
+    """Fields of an expanded navigation on a line, or None when it was not expanded.
+
+    Business Central returns ``null`` for a line without a variant or location, so
+    a present-but-null navigation is "none" (empty strings) and only a missing key
+    is "not known".
+    """
+    if navigation not in raw_line:
+        return None
+    target = raw_line.get(navigation)
+    if not isinstance(target, dict):
+        return ["" for _ in fields]
+    return [str(target.get(name) or "").strip() for name in fields]
+
+
 def _map_purchase_order_line(raw_line: dict) -> NormalizedPurchaseOrderLine:
+    variant = _expanded(raw_line, "itemVariant", "code")
+    location = _expanded(raw_line, "location", "code", "displayName")
     return NormalizedPurchaseOrderLine(
         external_id=_require_id(raw_line, "purchase order line"),
         line_no=str(raw_line.get("sequence") or ""),
@@ -105,6 +122,9 @@ def _map_purchase_order_line(raw_line: dict) -> NormalizedPurchaseOrderLine:
         # Business Central is master: the current figure replaces the stored one. A
         # missing value is None (kept as it is), never a silent zero.
         received_qty=_parse_decimal(raw_line.get("receivedQuantity"), field="receivedQuantity"),
+        variant_code=variant[0] if variant is not None else None,
+        location_code=location[0] if location is not None else None,
+        location_name=location[1] if location is not None else None,
         unit_price=_parse_decimal(raw_line.get("directUnitCost"), field="directUnitCost"),
         expected_receipt_date=_parse_date(raw_line.get("expectedReceiptDate")),
         # purchaseOrderLine has no lastModifiedDateTime in API v2.0.

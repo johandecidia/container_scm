@@ -51,8 +51,9 @@ class NormalizedCustomerOrder:
 class NormalizedPurchaseOrderLine(BaseModel):
     """A single line on a purchase order, normalised from Business Central.
 
-    ``received_qty`` is ``None`` when Business Central did not send it; the stored
-    value is then kept rather than replaced with zero.
+    ``None`` on ``received_qty`` and the three reference fields means Business
+    Central did not say (field absent, or the expansion was not permitted) and the
+    stored value is kept; ``""`` on a reference field means the line has none.
     """
 
     external_id: str
@@ -62,6 +63,9 @@ class NormalizedPurchaseOrderLine(BaseModel):
     ordered_qty: Decimal = Decimal("0")
     shipped_qty: Decimal = Decimal("0")
     received_qty: Decimal | None = None
+    variant_code: str | None = None
+    location_code: str | None = None
+    location_name: str | None = None
     unit_price: Decimal | None = None
     expected_receipt_date: date | None = None
     source_last_modified: datetime | None = None
