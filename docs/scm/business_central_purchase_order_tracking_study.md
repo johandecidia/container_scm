@@ -1,6 +1,13 @@
 # ETAPP 3a — Förstudie: öppna inköpsorder och serienummer i Business Central
 
-Datum: 2026-10-25 · Gren: `EPIC-3-FIXES` · Status: **förstudie, ingen implementation**
+Datum: 2026-10-25 (uppdaterad 2026-10-27) · Gren: `EPIC-3-FIXES` · Status: **förstudie, ingen implementation**
+
+> **Läge efter 3a.1–3a.4** (detaljer i [`business_central_api_permissions_diagnostics.md`](business_central_api_permissions_diagnostics.md)):
+>
+> - **Variant och lagerställe fungerar.** `purchaseOrderLines?$expand=itemVariant,location` ger 200 (100021/10000: `RAL5013`, `L005`), efter Execute på Page 30052/30076 och Table 5401/14.
+> - **Standard Page 497 (`ContainertrackingReservationEntries`) används inte som integrationskälla.** Sidans beräknade textfält kräver behörighet över hela reservationsmotorn (senast nekad: Codeunit 925 Assembly Header-Reserve). Den exponerar också all reservation i bolaget och saknar SystemId och SystemModifiedAt.
+> - **NAB levererar ett begränsat read-only API över Reservation Entry (337)**, `purchaseLineTrackings`, utan beräknade fält. Specifikation och acceptanstest finns i diagnostikrapporten, avsnitt 3a.4.
+> - **Bokförd serie → orderrad** går via den bokförda inleveransen (avsnitt D), aldrig via ILE `Order_No`/`Order_Line_No`, som är tomma för inköp.
 
 Underlaget kommer från en genomgång av Pegasus-koden och från read-only GET-anrop mot
 `Sandbox_eligra_261002` (integration 5, team 4, företag MCR
@@ -37,8 +44,8 @@ tabell 337 *Reservation Entry*, som saknar standard-API. Svaret på huvudfrågan
 API-sida eller query över Reservation Entry.
 
 **Det som kan lösas utan utveckling hos NAB.** Det här kräver bara behörigheter:
-variantkod, lagerställeskod, `Order_Line_No` på bokförda artikeltransaktioner och
-utestående antal. De ligger alla bakom 403 och inte bakom saknade API:er (se C).
+variantkod och lagerställeskod (**löst i 3a.3**), dokumentrad (`Document_Line_No`) på bokförda
+artikeltransaktioner (Page 38, behörighetskedjan ej klar) och utestående antal (härleds).
 
 **Det som Pegasus själv behöver rätta.** `PurchaseOrderLine.received_qty` skrivs aldrig av
 BC-synken (mappern lägger `receivedQuantity` i `raw_payload`). BC-order visar därför 0
@@ -137,10 +144,10 @@ mottaget i workspace och fulfillment. Det kan rättas utan migration.
 | `id` | verifierat | Stabilt rad-ID (SystemId) |
 | `sequence` | verifierat | = Line No. (10000, 20000 …) |
 | `lineObjectNumber` | verifierat | Artikelnummer |
-| `itemVariantId` | verifierat (GUID) | **50 av 60 rader har variant.** Koden kräver `$expand=itemVariant` → 403 (Page 30052) |
-| Variantkod | 403 | Se ovan |
-| `locationId` | verifierat (GUID) | Koden kräver `$expand=location` → 403 (Page 30076) |
-| Lagerställeskod | 403 | Se ovan |
+| `itemVariantId` | verifierat (GUID) | **50 av 60 rader har variant** |
+| Variantkod | **verifierat (3a.3)** | `$expand=itemVariant` → `itemVariant.code` (100021: `RAL5013`) |
+| `locationId` | verifierat (GUID) | |
+| Lagerställeskod | **verifierat (3a.3)** | `$expand=location` → `location.code` / `displayName` (100021: `L005`, "Lager MCR05 - Lager Oceantermialen i JohnEvans") |
 | `quantity` | verifierat | Beställt |
 | `receivedQuantity` | verifierat | Mottaget. **Mappas inte av Pegasus i dag** |
 | `invoicedQuantity` | verifierat | |
@@ -156,7 +163,7 @@ mottaget i workspace och fulfillment. Det kan rättas utan migration.
 |---|---|---|---|
 | Standard v2.0 `itemLedgerEntries` | nej | nej | Dokumenterat. Saknar serie helt |
 | Analytics `itemLedgerEntries` (Query 36968) | ja | dokumentnr, **ingen** rad-/orderref | **verifierat**, används redan. Endast bokfört |
-| ODataV4 `Artikeltransaktioner_Excel` (Page 38) | ja | `Document_Line_No`, `Order_No`, `Order_Line_No` | 403 (Codeunit 5859). Endast bokfört |
+| ODataV4 `Artikeltransaktioner_Excel` (Page 38) | ja | `Document_No` + `Document_Line_No` (inleveransrad). `Order_No`/`Order_Line_No` är **tomma för inköp** (rättat 3a.2) | 403 (behörighetskedja, se diagnostikrapporten). Endast bokfört |
 | ODataV4 `ItemLedgerEntries` (Query 265) | nej (bara lot) | | 403 |
 | Analytics `warehouseActivityLines` / `warehouseEntries` | ja | nej | 403. Lagerplock/-entries, inte orderspårning |
 | ODataV4 `purchaseDocumentLines` | nej (`reservedQuantity`) | rad | 403 |
@@ -199,12 +206,36 @@ inte Pegasus.
 inleveranser med serier, 33 order. Serien kan knytas till en rad när inleveransen bara har
 en rad med samma artikel (62 av 66). I 4 inleveranser har flera rader samma artikel. Ett
 exempel är IN28167 på 100029, med 11 enheter på rad 20000 och 22 enheter på rad 30000. Där
-kan serien inte knytas till en rad via API:et. `Order_Line_No` på Page 38, som kräver en
-behörighet, eller Pegasus egen spårningsbild från före bokföringen löser det.
+kan serien inte knytas till en rad via Analytics-API:et. `Document_Line_No` på Page 38 löser
+det (kräver behörigheter), liksom Pegasus egen spårningsbild från före bokföringen.
+
+**Relationen bokförd serie → inköpsorderrad (rättad 3a.2/3a.3).** Artikeltransaktionens
+`Order_No`/`Order_Line_No` gäller produktions-, överförings- och monteringsorder och är
+tomma för inköp (verifierat på IN28149). Relationen går via den bokförda inleveransen:
+
+| Steg | Från | Till | Fält |
+|---|---|---|---|
+| 1 | Item Ledger Entry | Posted Purchase Receipt | ILE `documentType = "Purchase Receipt"`, `documentNo` = `purchaseReceipts.number` |
+| 2 | Posted Purchase Receipt | Purchase Order | `purchaseReceipts.orderNumber` = `purchaseOrders.number` |
+| 3 | ILE | Receipt line | Page 38 `Document_Line_No` = `purchaseReceiptLines.sequence` (Analytics ILE saknar dokumentrad) |
+| 4 | Receipt line | Purchase Order Line | `purchaseReceiptLines.sequence` = `purchaseOrderLines.sequence` (verifierat: inleveransen upprepar orderns radnummer) |
+
+Utan steg 3 knyts serien till orderraden bara när inleveransen har en enda rad med samma
+artikel.
 
 **Serier mellan order (verifierat).** 8 serier förekommer på inleveranser till två olika
 order. Ett exempel är PSLU2912950 på 100023 (IN27769) och 100022 (IN28043), efter en
 KORR-korrigering. Serier kan alltså flyttas eller korrigeras mellan order och rader.
+
+---
+
+**Uppdatering 3a.1–3a.4.** Page 497 *Reservation Entries* är publicerad som ODataV4-tjänsten
+**`ContainertrackingReservationEntries`** (`ODataV4/Company('MCR')/ContainertrackingReservationEntries`)
+med fälten `Source_Type`, `Source_Subtype`, `Source_ID`, `Source_Ref_No`, `Item_No`, `Variant_Code`,
+`Location_Code`, `Serial_No`, `Quantity_Base` och nyckeln `Entry_No` + `Positive`. Den är **underkänd som integrationskälla**: sidans beräknade textfält kräver
+behörighet över hela reservationsmotorn (senast nekad: Codeunit 925 Assembly Header-Reserve). Ett
+begränsat API från NAB enligt avsnitt G behövs. Slutlig specifikation och acceptanstest finns i
+`business_central_api_permissions_diagnostics.md` (3a.4).
 
 ---
 
@@ -214,9 +245,9 @@ KORR-korrigering. Serier kan alltså flyttas eller korrigeras mellan order och r
 |---|---|---|---|
 | E1 | Serie på öppen orderrad | BC saknar API | NAB: `purchaseLineTrackings` (G) |
 | E2 | `received_qty` skrivs inte från BC | Pegasus-bugg | Mappa `receivedQuantity` (ingen migration) |
-| E3 | Variantkod (50 av 60 rader har variant) | 403 Page 30052 | Behörighet |
-| E4 | Lagerställeskod på orderrad | 403 Page 30076 | Behörighet (behövs för `BusinessCentralLocationMapping` och destination) |
-| E5 | Bokförd serie → orderrad | 403 Codeunit 5859 (Page 38) | Behörighet |
+| E3 | Variantkod (50 av 60 rader har variant) | **Löst (3a.3)** | `$expand=itemVariant` |
+| E4 | Lagerställeskod på orderrad | **Löst (3a.3)** | `$expand=location` (behövs för `BusinessCentralLocationMapping` och destination) |
+| E5 | Bokförd serie → orderrad | Analytics ILE saknar dokumentrad. Page 38 har `Document_Line_No` (403 tills behörighetskedjan är klar). `Order_No`/`Order_Line_No` är tomma för inköp | Behörighet, sedan ILE → inleverans (`documentNo`) → order (`orderNumber`) + rad (`Document_Line_No` = `sequence`) |
 | E6 | Radens Last Modified | Saknas i v2.0 | Behövs inte med full avstämning. `@odata.etag` räcker för radändringar |
 | E7 | Utestående antal | Saknas i v2.0 | Härleds `quantity − receivedQuantity` |
 | E8 | Historik efter stängd order | Arkiv 403. Order raderas i BC | Pegasus behåller själv (soft delete och staging-rader) |
@@ -322,9 +353,9 @@ GET /api/<publisher>/<group>/v1.0/companies({companyId})/purchaseLineTrackings
 
 | Objekt | Ger | Prioritet |
 |---|---|---|
-| Page 30052 *APIV2 - Item Variants* | Variantkod | hög |
-| Page 30076 *APIV2 - Locations* | Lagerställeskod | hög |
-| Codeunit 5859 *Invt. Ledger Purchase Source* | Page 38 med `Order_No` och `Order_Line_No` för bokförda serier | medel |
+| Page 30052 *APIV2 - Item Variants* + Table 5401 Execute | Variantkod | **klar** |
+| Page 30076 *APIV2 - Locations* + Table 14 Execute | Lagerställeskod | **klar** |
+| Codeunit 5859 *Invt. Ledger Purchase Source* (+ följdbehörigheter, se diagnostikrapporten) | Page 38 med `Document_No` och `Document_Line_No` för bokförda serier (inte `Order_No`, som är tom för inköp) | medel |
 | Page 30218/30219 *Purch. Ord. Archives* | Arkiv | låg |
 | Query 37073 *Purchase Lines* (Power BI) | `outstandingQuantity` | låg |
 
@@ -338,9 +369,8 @@ GET /api/<publisher>/<group>/v1.0/companies({companyId})/purchaseLineTrackings
    ofta och hur långt i förväg? Om det nästan alltid sker vid inleverans ger etapp 3
    begränsat värde utöver det som redan finns.
 2. Kan NAB bygga `purchaseLineTrackings` enligt G, som en read-only API-sida eller query
-   över Reservation Entry? Vilken uppskattad insats? Alternativt: går standardsidan
-   *Reservation Entries* (Page 497) att publicera som webbtjänst med `Source ID`,
-   `Source Ref. No.` och `Serial No.`?
+   över Reservation Entry? Vilken uppskattad insats? (Page 497 är prövad och underkänd, se
+   diagnostikrapporten 3a.4.)
 3. Bekräfta att Purchase Line inte ändras (SystemModifiedAt eller etag) när enbart
    artikelspårningen ändras.
 4. Raderas och återskapas Reservation Entries vid ändring, så att Entry No. och SystemId
