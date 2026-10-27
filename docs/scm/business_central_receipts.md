@@ -175,3 +175,75 @@ quantity-only check would have passed it; the per-serial check marks it
 AMBIGUOUS. Nine serials appear on two receipts (e.g. PSLU2912950 on IN27769 and
 IN28043, after a KORR correction): a second receive is ALREADY_RECEIVED while the
 container is still at the location.
+
+## Posted serials on purchase order lines (stage 3b.4)
+
+`receipt_serial_lines.py` says which purchase order line each posted-receipt serial
+belongs to. It reuses the receipt rows above (`BusinessCentralReceiptContainer`), so
+there is no new model and no migration.
+
+| Step | From → to | Field (verified on PO 100021) |
+|---|---|---|
+| 1 | Item ledger entry → posted receipt | ILE `documentType = "Purchase Receipt"`, `documentNo` = receipt `number` (stage 2) |
+| 2 | Posted receipt → purchase order | `purchaseReceipts.orderNumber` = `PurchaseOrder.po_number` (same team, same company) |
+| 3 | Receipt line → order line | `purchaseReceiptLines.sequence` = `PurchaseOrderLine.line_no` |
+
+ILE `Order_No`/`Order_Line_No` are empty for purchases and are not used. The Analytics
+API sends no variant, so the variant shown is the order line's.
+
+**Counted.** A serial counts only when both of these hold:
+
+- its receipt is RESOLVED,
+- the serial is a single valid container unit (RESOLVED or MISSING_EQUIPMENT_TYPE, net
+  quantity 1).
+
+Reversed, ambiguous and undone postings never reach a line.
+
+**Attributed to a line.** A serial is placed on a line only when the receipt has exactly
+one received line for its item. Otherwise it is listed under "Posted serials not placed on
+a line" with a reason, and never guessed. The reasons are:
+
+- the same item on several receipt lines,
+- no receipt line for the item,
+- the order line not in Pegasus,
+- the same serial posted on two lines of the order.
+
+**States per serial:**
+
+| State | Meaning |
+|---|---|
+| `linked` | The container's `ContainerAcquisition` is this line |
+| `unlinked` | The container exists, no acquisition yet |
+| `not_in_pegasus` | No container with this number in the team (nothing is created) |
+| `conflict` | The container was acquired through another line (it is not moved) |
+| `several_orders` | The serial is also posted on another order (not linked) |
+
+**Linking.**
+
+- `link_posted_receipt_serials(integration)` writes a `ContainerAcquisition` only for
+  `unlinked` serials.
+- It writes through `procurement.container_links.link_business_central_acquisition`.
+  That is the BC-only counterpart of the manual writer, with the same container row lock
+  and the same idempotency, and it accepts only BC-owned orders. The manual writer still
+  refuses BC orders.
+- It runs after every receipt processing pass, and after a purchase-order sync
+  (`link_business_central_receipt_serials_task`).
+- It is idempotent: a second pass finds everything `linked`.
+
+**No physical effect.** Linking creates no container, movement or receive. It sets no
+location and does not start or stop tracking. A posted receipt is commercial evidence,
+not a physical receive.
+
+**Shown on** the purchase order page, under each line ("Posted in Business Central"):
+serial, receipt number and state. A serial links to its container when the team has
+one. Serials registered on the open order but not yet received are not shown; they come
+with NAB's `purchaseLineTrackings`.
+
+**Sandbox, 2026-10-27** (PO sync run in a rolled-back transaction):
+
+- PO 100021, line 10000 (CON22G1, RAL5013, L005, 49/3/46): BBCU3272941 and
+  BBCU3273059 on IN28149, BBCU3273090 on IN28166, all `not_in_pegasus`.
+- Across 32 orders, 225 serials are placed on a line.
+- 51 are not placed: IN28167 (33), IN27580 (10) and IN27608 (8) have the same item on
+  several received lines. They need the document line (Page 38 `Document_Line_No`, blocked
+  by Codeunit 5860) or a pre-receipt tracking snapshot.
