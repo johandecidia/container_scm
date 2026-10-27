@@ -64,6 +64,14 @@ ARRIVAL_WINDOWS: tuple[tuple[str, StrOrPromise], ...] = (
 
 DEFAULT_ARRIVAL_WINDOW = str(ARRIVING_SOON_DAYS)
 
+# The Control Tower's rolling forecast periods, in days. Cumulative: each includes
+# the ones before it. The queue accepts them as windows so a forecast tile can open
+# the arrivals behind its number, without each becoming one more quick-filter button.
+FORECAST_WINDOW_DAYS: tuple[int, ...] = (7, 14, 28, 63)
+
+# How many calendar weeks the arrival timeline shows, the current one first.
+FORECAST_WEEKS = 9
+
 
 @dataclass
 class ArrivalQueueFilters:
@@ -230,7 +238,7 @@ def parse_arrival_queue_filters(params) -> ArrivalQueueFilters:
     a hand-edited URL should not silently turn a planning view into a full list.
     """
     window = (params.get("window") or "").strip()
-    if window not in dict(ARRIVAL_WINDOWS):
+    if window not in dict(ARRIVAL_WINDOWS) and window not in {str(days) for days in FORECAST_WINDOW_DAYS}:
         window = DEFAULT_ARRIVAL_WINDOW
     # An unrecognised lifecycle state narrows nothing rather than erroring, for the
     # same reason a broken window falls back: the value arrives from a query string.
@@ -349,3 +357,151 @@ def _group_by_day(objects: list[VisibilityObject]) -> list[ArrivalGroup]:
 def _within_day_key(obj: VisibilityObject) -> tuple:
     at = obj.current_eta_at
     return (at is None, timezone.localtime(at).time() if at else time.min, obj.label)
+
+
+# ---------------------------------------------------------------------------
+# The arrival forecast
+#
+# The Control Tower's answer to "how many boxes are coming, and when". Counted in
+# containers rather than in rows, because a shipment of twenty and a lone box are
+# not the same amount of work at the gate. Nothing here decides what has arrived or
+# which ETA to believe: a container is still coming when its own lifecycle says so,
+# and it is coming on its object's ``current_eta`` — the queue's rules, counted.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ForecastWeek:
+    """One calendar week of the arrival timeline, Monday to Sunday."""
+
+    monday: date
+    count: int
+    # Bar height relative to the busiest week shown, so the bars compare weeks with
+    # each other rather than against a scale nobody chose.
+    percent: int
+
+    @property
+    def iso_week(self) -> int:
+        return self.monday.isocalendar().week
+
+    @property
+    def sunday(self) -> date:
+        return self.monday + timedelta(days=6)
+
+
+@dataclass(frozen=True)
+class ArrivalForecast:
+    """Unique outstanding containers by rolling period and by calendar week.
+
+    The rolling periods and the weeks answer different questions and are not meant
+    to add up: nine calendar weeks starting this Monday do not end 63 days from today.
+
+    ``overdue`` and ``no_eta`` are outstanding containers that no period can hold —
+    the date has passed, or there is none. ``ambiguous`` are containers on more than
+    one active shipment where the container's own most recent shipment is none of
+    them, so no arrival can be chosen for it without inventing a rule; they are
+    reported rather than counted. ``shipments_without_containers`` are expectations
+    with no boxes linked yet, which cannot be counted in containers at all.
+    """
+
+    next_7_days: int = 0
+    next_14_days: int = 0
+    next_28_days: int = 0
+    next_63_days: int = 0
+    weekly_arrivals: list[ForecastWeek] = field(default_factory=list)
+    overdue: int = 0
+    no_eta: int = 0
+    ambiguous: int = 0
+    shipments_without_containers: int = 0
+
+    @property
+    def periods(self) -> list[tuple[int, int]]:
+        """``(days, containers)`` for each rolling period, shortest first."""
+        return [(days, getattr(self, f"next_{days}_days")) for days in FORECAST_WINDOW_DAYS]
+
+
+def get_arrival_forecast(objects: list[VisibilityObject]) -> ArrivalForecast:
+    """Count *objects*' outstanding containers into the forecast periods and weeks.
+
+    *objects* must be the team's whole inbound population —
+    :func:`~apps.scm.visibility.selectors.list_visibility_objects`, as the arrivals
+    queue reads it — not a filtered board, or the forecast would change with the
+    view on screen. Runs in memory over what that read already loaded: no queries.
+    """
+    owners, ambiguous = _container_owners(objects)
+    # The object each still-coming container is arriving with, keyed by container.
+    coming = {container_id: obj for container_id, (obj, lifecycle) in owners.items() if lifecycle.is_outstanding}
+    arrivals = list({obj.key: obj for obj in coming.values()}.values())
+
+    def containers_in(window: str) -> int:
+        keys = {obj.key for obj in filter_by_eta_window(arrivals, window)}
+        return sum(1 for obj in coming.values() if obj.key in keys)
+
+    return ArrivalForecast(
+        **{f"next_{days}_days": containers_in(str(days)) for days in FORECAST_WINDOW_DAYS},
+        weekly_arrivals=weekly_arrivals(
+            [obj.current_eta for obj in coming.values() if obj.current_eta], timezone.localdate()
+        ),
+        overdue=containers_in("overdue"),
+        no_eta=sum(1 for obj in coming.values() if obj.current_eta is None),
+        ambiguous=len(ambiguous),
+        shipments_without_containers=sum(
+            1
+            for obj in objects
+            if obj.kind == ObjectKind.SHIPMENT and not obj.workspaces and obj.arrival_state in OUTSTANDING_STATES
+        ),
+    )
+
+
+def weekly_arrivals(etas: list[date], today: date, weeks: int = FORECAST_WEEKS) -> list[ForecastWeek]:
+    """Count *etas* into *weeks* Monday-to-Sunday weeks, starting with today's.
+
+    A date before *today* is overdue rather than arriving this week, so it is left
+    out here and counted as overdue by the caller. Weeks are stepped as dates, which
+    is what keeps W52, W53 and W01 in order across a year end.
+    """
+    first_monday = today - timedelta(days=today.weekday())
+    counts = [0] * weeks
+    for eta in etas:
+        index = (eta - first_monday).days // 7
+        if eta >= today and index < weeks:
+            counts[index] += 1
+    busiest = max(counts, default=0)
+    return [
+        ForecastWeek(
+            monday=first_monday + timedelta(weeks=index),
+            count=count,
+            percent=round(count * 100 / busiest) if busiest else 0,
+        )
+        for index, count in enumerate(counts)
+    ]
+
+
+def _container_owners(objects: list[VisibilityObject]) -> tuple[dict, set[int]]:
+    """Which object each container is arriving with, and its lifecycle there.
+
+    A container normally belongs to exactly one object. One linked to several active
+    shipments is attributed to the shipment the container itself treats as current —
+    :attr:`~apps.scm.containers.workspace.ContainerWorkspace.active_shipment`, the
+    relationship its workspace, its ETA and its map already read. When that is none
+    of them there is no existing answer, and the container is returned as ambiguous
+    rather than given one.
+    """
+    candidates: dict[int, list[tuple]] = {}
+    for obj in objects:
+        lifecycles = obj.arrival.lifecycles if obj.arrival is not None else []
+        # One lifecycle per container, in the object's container order.
+        for workspace, lifecycle in zip(obj.workspaces, lifecycles, strict=False):
+            candidates.setdefault(workspace.container.pk, []).append((obj, lifecycle, workspace))
+
+    owners: dict[int, tuple] = {}
+    ambiguous: set[int] = set()
+    for container_id, entries in candidates.items():
+        if len(entries) > 1:
+            current = entries[0][2].active_shipment
+            entries = [entry for entry in entries if current is not None and entry[0].shipment == current]
+        if len(entries) == 1:
+            owners[container_id] = entries[0][:2]
+        else:
+            ambiguous.add(container_id)
+    return owners, ambiguous

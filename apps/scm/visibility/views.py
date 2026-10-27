@@ -39,6 +39,7 @@ from .selectors import (
     parse_visibility_filters,
 )
 from .work_queues import (
+    get_arrival_forecast,
     get_arrival_queue,
     get_exception_queue,
     parse_arrival_queue_filters,
@@ -63,6 +64,9 @@ def visibility_overview(request):
     context = {
         "overview": overview,
         "filters": overview.filters,
+        # From the universe, not the board: the forecast is the team's inbound
+        # population, and switching the view or a filter must not change it.
+        "forecast": get_arrival_forecast(overview.universe),
         "map_data_url": _map_data_url(request),
         "team_slug": team.slug,
     }

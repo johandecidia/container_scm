@@ -22,3 +22,37 @@
 .scm-panel {
   @apply rounded-box border border-base-300 p-4;
 }
+
+/*
+  A panel floating over the Control Tower map: translucent, blurred, and bordered
+  just enough to read against both a dark basemap and the page around it.
+*/
+.scm-glass {
+  @apply rounded-box border border-base-content/10 bg-base-100/80 shadow-lg backdrop-blur-md;
+}
+
+/*
+  The Control Tower map's edges, faded into the page. The mask is on Mapbox's canvas
+  only — not on the map element — so the zoom buttons, the logo and the attribution
+  sit outside it and stay fully visible. The canvas itself, not its container: the
+  container has no height of its own, and a mask sized to it hides everything.
+*/
+.scm-map-fade .mapboxgl-canvas {
+  mask-image:
+    linear-gradient(to right, transparent, #000 5%, #000 95%, transparent),
+    linear-gradient(to bottom, transparent, #000 6%, #000 94%, transparent);
+  mask-composite: intersect;
+}
+
+/*
+  A marker's popup belongs above the panels floating over the map. The map element
+  makes no stacking context of its own, so this lifts the popup past them.
+*/
+.scm-map-fade .mapboxgl-popup {
+  z-index: 30;
+}
+
+/* The marker panel, as a drawer over the right edge of the page. */
+.scm-drawer {
+  @apply fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto border-l border-base-300 bg-base-100 shadow-2xl;
+}

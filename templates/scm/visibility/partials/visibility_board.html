@@ -13,8 +13,8 @@
 
   * It is `display: contents` (Tailwind `contents`), so the blocks below are items
     of the page's grid rather than children of this element. That is what lets the
-    map card sit between the KPI strip and the arrivals list while staying outside
-    the swap. See the page template for the row assignments.
+    arrival forecast float over the map card — same grid cell, drawn above it —
+    while the map stays outside the swap. See the page template for the rows.
 {% endcomment %}
 
 {% url 'visibility:overview' as overview_url %}
@@ -24,6 +24,15 @@
 {% url 'containers:list' as containers_url %}
 
 <div id="visibility-board" class="contents" data-scm-map-source="{{ map_data_url }}">
+
+  {% comment %}
+    0. The arrival forecast, over the map. On desktop it shares the map's grid cell
+    and is drawn above it; the wrapper lets clicks through to the map and only its
+    two panels take them. On one column it simply follows the map.
+  {% endcomment %}
+  <div class="order-2 flex flex-col gap-4 lg:pointer-events-none lg:z-10 lg:col-span-3 lg:col-start-1 lg:row-start-1 lg:justify-between lg:p-4">
+    {% include "scm/visibility/components/arrival_forecast.html" %}
+  </div>
 
   {% comment %}
     1. Status. Every card is an action.
@@ -46,7 +55,7 @@
     work; "Awaiting receipt" is the gap between a box landing and somebody taking it
     into their records.
   {% endcomment %}
-  <div class="order-1 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-1 lg:grid-cols-6">
+  <div class="order-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-2 lg:grid-cols-6">
     {% include "scm/components/metric_card.html" with label=_("Tracking") value=overview.tracking_container_count icon="fa-satellite-dish" color="success" href=overview_url|add:"?view=tracking" %}
     {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" href=shipments_url %}
     {% include "scm/components/metric_card.html" with label=_("Arriving ≤7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" href=arrivals_url %}
@@ -66,7 +75,7 @@
     this board narrowed anything, so Exceptions still reads 3 while Tracking is on
     screen. That is the number that makes the button worth pressing.
   {% endcomment %}
-  <div class="order-2 lg:col-span-3 lg:row-start-2">
+  <div class="order-4 lg:col-span-3 lg:row-start-3">
     <form
       class="scm-panel flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5"
       hx-get="{% url 'visibility:overview' %}"
@@ -146,7 +155,7 @@
     queue, which is where the same findings are worked; this panel deliberately does
     not grow the queue's filters or columns.
   {% endcomment %}
-  <section class="order-3 scm-panel flex flex-col lg:col-start-3 lg:row-start-3">
+  <section class="order-5 scm-panel flex flex-col lg:col-start-3 lg:row-start-4">
     {% include "scm/components/section_header.html" with title=_("Needs attention") count=overview.needs_attention|length action_url=exceptions_url action_label=_("Open queue") %}
     {% if overview.needs_attention %}
       <ul class="max-h-[22rem] divide-y divide-base-200 overflow-y-auto">
@@ -163,7 +172,7 @@
   </section>
 
   {# 4. What is arriving. #}
-  <section class="order-6 scm-panel lg:col-span-3 lg:row-start-5">
+  <section class="order-6 scm-panel lg:col-span-2 lg:col-start-1 lg:row-start-4">
     {% include "scm/components/section_header.html" with title=_("Upcoming arrivals") count=overview.arriving_soon|length subtitle=_("Next 7 days") action_url=arrivals_url action_label=_("Open queue") %}
     {% if overview.arriving_soon %}
       <ul class="divide-y divide-base-200">
@@ -184,7 +193,7 @@
     reader to work out which one they were looking at. Soonest arrival first,
     whatever the view: see selectors.sort_by_arrival.
   {% endcomment %}
-  <section class="order-7 scm-panel lg:col-span-3 lg:row-start-6">
+  <section class="order-7 scm-panel lg:col-span-3 lg:row-start-5">
     {% include "scm/components/section_header.html" with title=overview.view_label count=overview.objects|length subtitle=_("Soonest arrival first") %}
     {% if overview.objects %}
       <ul class="divide-y divide-base-200">

@@ -22,6 +22,8 @@ class MapboxConfig:
 
     token: str
     style_url: str
+    # The Control Tower's own style; falls back to ``style_url`` when unset.
+    tower_style_url: str = ""
 
     @property
     def is_configured(self) -> bool:
@@ -34,7 +36,9 @@ def get_mapbox_config() -> MapboxConfig:
     A blank token is a valid, handled state — not an error. Every template that
     embeds a map checks ``is_configured`` and falls back to an empty state.
     """
+    style_url = (getattr(settings, "MAPBOX_STYLE_URL", "") or "").strip() or DEFAULT_STYLE_URL
     return MapboxConfig(
         token=(getattr(settings, "MAPBOX_PUBLIC_TOKEN", "") or "").strip(),
-        style_url=(getattr(settings, "MAPBOX_STYLE_URL", "") or "").strip() or DEFAULT_STYLE_URL,
+        style_url=style_url,
+        tower_style_url=(getattr(settings, "MAPBOX_CONTROL_TOWER_STYLE_URL", "") or "").strip() or style_url,
     )

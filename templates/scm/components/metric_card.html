@@ -2,7 +2,8 @@
 
 {% comment %}
   Usage: {% include "scm/components/metric_card.html" with label=_("Active Shipments") value=42 icon="fa-ship" color="primary" %}
-  Optional: color (primary, secondary, success, warning, error, info), icon, href, trend, trend_label
+  Optional: color (primary, secondary, success, warning, error, info), icon, href, trend, trend_label,
+  card_class (replaces the default bg-base-200 surface, e.g. "scm-glass" over a map)
 {% endcomment %}
 
 {% comment %}
@@ -11,9 +12,9 @@
   than the plain cards beside it.
 {% endcomment %}
 {% if href %}
-  <a href="{{ href }}" class="stat bg-base-200 rounded-box p-4 hover:bg-base-300 transition-colors">
+  <a href="{{ href }}" class="stat {{ card_class|default:'bg-base-200' }} rounded-box p-4 hover:bg-base-300 transition-colors">
 {% else %}
-  <div class="stat bg-base-200 rounded-box p-4">
+  <div class="stat {{ card_class|default:'bg-base-200' }} rounded-box p-4">
 {% endif %}
   {% if icon %}
     <div class="stat-figure text-{{ color|default:'base-content' }}/40">

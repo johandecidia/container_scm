@@ -97,17 +97,25 @@ class VisibilityMap {
     this.baseUrl = element.dataset.mapDataUrl || '';
     this.dataUrl = this.baseUrl;
     this.panelSelector = element.dataset.mapPanelTarget || '';
+    // Extra room when fitting, for pages that float panels over the map.
+    this.fitPadding = element.dataset.mapFitPadding ? JSON.parse(element.dataset.mapFitPadding) : null;
     this.selectedEventId = null;
     this.data = EMPTY;
 
     mapboxgl.accessToken = element.dataset.mapboxToken;
-    this.map = new mapboxgl.Map({
+    const options = {
       container: element,
       style: element.dataset.mapboxStyle,
       center: FALLBACK_CENTER,
       zoom: FALLBACK_ZOOM,
       cooperativeGestures: true,
-    });
+    };
+    // A Mapbox Standard light preset ("night", "dusk", …). Only Standard-based
+    // styles have a basemap to configure; any other style ignores it.
+    if (element.dataset.mapLightPreset) {
+      options.config = { basemap: { lightPreset: element.dataset.mapLightPreset } };
+    }
+    this.map = new mapboxgl.Map(options);
     this.map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
     this.map.on('load', () => this.onLoad());
   }
@@ -296,7 +304,18 @@ class VisibilityMap {
       }
     });
     if (count === 0) return;
-    this.map.fitBounds(bounds, { padding: FIT_PADDING, maxZoom: MAX_FIT_ZOOM, duration: 0 });
+    this.map.fitBounds(bounds, { padding: this.paddingForFit(), maxZoom: MAX_FIT_ZOOM, duration: 0 });
+  }
+
+  paddingForFit() {
+    // The page's padding only where it leaves the markers room. On one column the
+    // floating panels sit below the map rather than over it, and padding a small
+    // map for them would leave nothing to fit the markers into.
+    const padding = this.fitPadding;
+    if (!padding) return FIT_PADDING;
+    const roomy = padding.left + padding.right < this.element.clientWidth * 0.6
+      && padding.top + padding.bottom < this.element.clientHeight * 0.7;
+    return roomy ? padding : FIT_PADDING;
   }
 
   // -- interaction --------------------------------------------------------
@@ -530,6 +549,13 @@ function onEventSelected(event) {
   if (selected) selected.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function onKeydown(event) {
+  // Escape closes the marker panel, as its own close button does.
+  if (event.key !== 'Escape' || !instance || !instance.panelSelector) return;
+  const panel = document.querySelector(instance.panelSelector);
+  if (panel && panel.innerHTML.trim()) panel.innerHTML = '';
+}
+
 function onAfterSwap(event) {
   // A board filter change swaps the board and leaves the map alone: we only point
   // its existing source at the URL describing the new selection, then re-apply the
@@ -549,6 +575,7 @@ document.addEventListener('DOMContentLoaded', initialise);
 document.addEventListener('click', onTimelineClick);
 document.addEventListener('change', onMapFilterChange);
 document.addEventListener('scm-map:event-selected', onEventSelected);
+document.addEventListener('keydown', onKeydown);
 // htmx events bubble to document, so one listener covers every swap on the page.
 document.addEventListener('htmx:afterSwap', onAfterSwap);
 

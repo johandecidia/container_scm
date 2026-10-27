@@ -640,7 +640,9 @@ def filter_by_eta_window(objects: list[VisibilityObject], window: str) -> list[V
     disagree about whether today counts. An unrecognised window narrows nothing.
     """
     today = timezone.localdate()
-    windows = {"today": 0, "7": 7, "14": 14, "30": 30}
+    # 28 and 63 are the Control Tower's arrival forecast periods — see
+    # :func:`~apps.scm.visibility.work_queues.arrivals.get_arrival_forecast`.
+    windows = {"today": 0, "7": 7, "14": 14, "28": 28, "30": 30, "63": 63}
     if window == "overdue":
         return [obj for obj in objects if obj.current_eta and obj.current_eta < today]
     days = windows.get(window)
