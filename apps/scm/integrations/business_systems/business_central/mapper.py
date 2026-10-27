@@ -102,7 +102,9 @@ def _map_purchase_order_line(raw_line: dict) -> NormalizedPurchaseOrderLine:
         item_no=_text(raw_line, "lineObjectNumber", "itemNumber"),
         description=_text(raw_line, "description"),
         ordered_qty=_parse_decimal(raw_line.get("quantity"), field="quantity") or Decimal("0"),
-        # receivedQuantity stays in raw_payload only: receipts are not synced in this milestone.
+        # Business Central is master: the current figure replaces the stored one. A
+        # missing value is None (kept as it is), never a silent zero.
+        received_qty=_parse_decimal(raw_line.get("receivedQuantity"), field="receivedQuantity"),
         unit_price=_parse_decimal(raw_line.get("directUnitCost"), field="directUnitCost"),
         expected_receipt_date=_parse_date(raw_line.get("expectedReceiptDate")),
         # purchaseOrderLine has no lastModifiedDateTime in API v2.0.

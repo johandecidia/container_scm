@@ -301,15 +301,22 @@ def import_purchase_orders_from_bc(team: Team, purchase_orders_data: list[dict[s
 
 
 def _line_defaults(team: Team, line_data: dict[str, Any], *, now=None) -> dict[str, Any]:
+    """Field values for one upserted line.
+
+    A ``received_qty`` the source explicitly sent as ``None`` is one it could not
+    supply this time (Business Central without ``receivedQuantity``). It is left
+    out, so an update keeps the stored figure instead of replacing it with zero. An
+    absent key keeps its old default, as for sources that never send it.
+    """
     raw_price = line_data.get("unit_price")
-    return {
+    defaults = {
         "team": team,
         "line_no": line_data.get("line_no", ""),
         "item_no": line_data.get("item_no", ""),
         "description": line_data.get("description", ""),
         "ordered_qty": Decimal(str(line_data.get("ordered_qty", 0))),
         "shipped_qty": Decimal(str(line_data.get("shipped_qty", 0))),
-        "received_qty": Decimal(str(line_data.get("received_qty", 0))),
+        "received_qty": line_data.get("received_qty", 0),
         "unit_price": Decimal(str(raw_price)) if raw_price is not None else None,
         "expected_receipt_date": line_data.get("expected_receipt_date"),
         "source_last_modified_at": line_data.get("source_last_modified"),
@@ -319,6 +326,11 @@ def _line_defaults(team: Team, line_data: dict[str, Any], *, now=None) -> dict[s
         "source_deleted_at": None,
         "last_synced_at": now,
     }
+    if defaults["received_qty"] is None:
+        del defaults["received_qty"]
+    else:
+        defaults["received_qty"] = Decimal(str(defaults["received_qty"]))
+    return defaults
 
 
 def _upsert_lines(team: Team, purchase_order: PurchaseOrder, lines_data: list[dict[str, Any]], *, now=None) -> None:

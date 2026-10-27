@@ -49,7 +49,11 @@ class NormalizedCustomerOrder:
 
 
 class NormalizedPurchaseOrderLine(BaseModel):
-    """A single line on a purchase order, normalised from Business Central."""
+    """A single line on a purchase order, normalised from Business Central.
+
+    ``received_qty`` is ``None`` when Business Central did not send it; the stored
+    value is then kept rather than replaced with zero.
+    """
 
     external_id: str
     line_no: str
@@ -57,7 +61,7 @@ class NormalizedPurchaseOrderLine(BaseModel):
     description: str = ""
     ordered_qty: Decimal = Decimal("0")
     shipped_qty: Decimal = Decimal("0")
-    received_qty: Decimal = Decimal("0")
+    received_qty: Decimal | None = None
     unit_price: Decimal | None = None
     expected_receipt_date: date | None = None
     source_last_modified: datetime | None = None

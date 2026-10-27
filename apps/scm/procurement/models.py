@@ -147,6 +147,11 @@ class PurchaseOrderLine(BaseTeamModel):
             return self.unit_price * self.ordered_qty
         return None
 
+    @property
+    def outstanding_qty(self) -> Decimal:
+        """Ordered but not yet received. Never negative, as for the order's remaining_qty."""
+        return max(self.ordered_qty - self.received_qty, Decimal("0"))
+
     class Meta:
         verbose_name = _("Purchase Order Line")
         verbose_name_plural = _("Purchase Order Lines")
