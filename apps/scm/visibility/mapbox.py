@@ -15,6 +15,9 @@ from django.conf import settings
 # map with nothing to draw. A custom style can be swapped in later without code.
 DEFAULT_STYLE_URL = "mapbox://styles/mapbox/standard"
 
+# The Control Tower's dark-mode style when MAPBOX_CONTROL_TOWER_DARK_STYLE_URL is blank.
+DEFAULT_DARK_STYLE_URL = "mapbox://styles/mapbox/dark-v11"
+
 
 @dataclass(frozen=True)
 class MapboxConfig:
@@ -22,8 +25,10 @@ class MapboxConfig:
 
     token: str
     style_url: str
-    # The Control Tower's own style; falls back to ``style_url`` when unset.
+    # The Control Tower's own styles, light and dark: it follows the application
+    # theme. The light one falls back to ``style_url`` when unset.
     tower_style_url: str = ""
+    tower_dark_style_url: str = DEFAULT_DARK_STYLE_URL
 
     @property
     def is_configured(self) -> bool:
@@ -41,4 +46,6 @@ def get_mapbox_config() -> MapboxConfig:
         token=(getattr(settings, "MAPBOX_PUBLIC_TOKEN", "") or "").strip(),
         style_url=style_url,
         tower_style_url=(getattr(settings, "MAPBOX_CONTROL_TOWER_STYLE_URL", "") or "").strip() or style_url,
+        tower_dark_style_url=(getattr(settings, "MAPBOX_CONTROL_TOWER_DARK_STYLE_URL", "") or "").strip()
+        or DEFAULT_DARK_STYLE_URL,
     )

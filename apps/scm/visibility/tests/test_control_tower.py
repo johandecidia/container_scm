@@ -166,9 +166,10 @@ class ControlTowerPageTest(TestCase):
 
         The anchor is matched along with the href on purpose: both list URLs are
         also in the sidebar, so a bare href assertion would pass whether or not
-        the card itself is a link.
+        the card itself is a link. The surface is the Control Tower's floating one,
+        shared with the arrival forecast tiles.
         """
-        return f'<a href="{url}" class="stat bg-base-200'
+        return f'<a href="{url}" class="stat scm-glass'
 
     def test_the_three_operational_kpi_cards_select_this_boards_views(self):
         """Tracking, Delayed and Exceptions are the board's own views.

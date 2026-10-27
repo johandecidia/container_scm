@@ -1,0 +1,25 @@
+{% comment %}
+  The always-visible header of one collapsible Control Tower section.
+
+  Usage:
+    <details class="scm-glass group" data-scm-section="arrivals">
+      {% include "scm/visibility/components/section_summary.html" with title=_("Upcoming arrivals") count=8 %}
+      …the section's content…
+    </details>
+
+  Optional: subtitle.
+
+  The badge is the section's own total and stays visible while collapsed — zero
+  included, because a closed section reading "0" is the answer rather than a gap.
+  Nothing interactive goes in here: a summary is the toggle, and a link inside it
+  would be a control inside a control. A section's own links go in its body.
+{% endcomment %}
+
+<summary class="flex cursor-pointer list-none items-center gap-3 rounded-box px-4 py-3 select-none hover:bg-base-content/5 [&::-webkit-details-marker]:hidden">
+  <i class="fa fa-chevron-right w-3 text-xs text-base-content/50 transition-transform group-open:rotate-90" aria-hidden="true"></i>
+  <h2 class="text-sm font-semibold">{{ title }}</h2>
+  {% if subtitle %}
+    <span class="hidden truncate text-xs text-base-content/50 sm:inline">{{ subtitle }}</span>
+  {% endif %}
+  <span class="badge badge-sm badge-neutral ml-auto tabular-nums">{{ count }}</span>
+</summary>

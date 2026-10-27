@@ -16,8 +16,9 @@
   map_variant.
 
   map_variant="tower" is the Control Tower's: no card around the map, edges faded
-  into the page, its own style (MAPBOX_CONTROL_TOWER_STYLE_URL, else the usual one —
-  at night, when that is Mapbox Standard), and the title, legend, filters and coverage
+  into the page, its own light and dark styles following the application theme
+  (MAPBOX_CONTROL_TOWER_STYLE_URL, else the usual one; and
+  MAPBOX_CONTROL_TOWER_DARK_STYLE_URL), and the title, legend, filters and coverage
   gathered into one floating panel at the top right (below the map on one column).
   The note and the coverage line go into a disclosure there, so they stay one click
   away without covering the map. Every other page leaves it unset and renders
@@ -133,7 +134,8 @@
       {% if map_variant == "tower" %}
         {# Room for the floating panels, so a fitted map does not put markers under them. #}
         data-map-fit-padding='{"top": 190, "bottom": 230, "left": 64, "right": 340}'
-        data-map-light-preset="night"
+        {# Followed live: the map switches style when the application theme does. #}
+        data-mapbox-dark-style="{{ mapbox.tower_dark_style_url }}"
         class="scm-map-fade w-full {{ map_height|default:'h-96' }}"
       {% else %}
       class="w-full overflow-hidden rounded-box bg-base-200 {{ map_height|default:'h-96' }}"

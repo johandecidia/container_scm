@@ -31,6 +31,12 @@
   @apply rounded-box border border-base-content/10 bg-base-100/80 shadow-lg backdrop-blur-md;
 }
 
+/* One focus ring for everything on that surface that can be operated. */
+a.scm-glass:focus-visible,
+.scm-glass > summary:focus-visible {
+  @apply outline-2 outline-offset-2 outline-primary;
+}
+
 /*
   The Control Tower map's edges, faded into the page. The mask is on Mapbox's canvas
   only — not on the map element — so the zoom buttons, the logo and the attribution
@@ -50,6 +56,27 @@
 */
 .scm-map-fade .mapboxgl-popup {
   z-index: 30;
+}
+
+/*
+  And on the page's own surface, so it follows the theme: Mapbox draws a white
+  popup, which in dark mode would carry the theme's light text. The tip is a border,
+  coloured on the side that points at the marker.
+*/
+.scm-map-fade .mapboxgl-popup-content {
+  @apply bg-base-100 text-base-content;
+}
+.scm-map-fade [class*="mapboxgl-popup-anchor-bottom"] .mapboxgl-popup-tip {
+  border-top-color: var(--color-base-100);
+}
+.scm-map-fade [class*="mapboxgl-popup-anchor-top"] .mapboxgl-popup-tip {
+  border-bottom-color: var(--color-base-100);
+}
+.scm-map-fade .mapboxgl-popup-anchor-left .mapboxgl-popup-tip {
+  border-right-color: var(--color-base-100);
+}
+.scm-map-fade .mapboxgl-popup-anchor-right .mapboxgl-popup-tip {
+  border-left-color: var(--color-base-100);
 }
 
 /* The marker panel, as a drawer over the right edge of the page. */

@@ -750,8 +750,12 @@ SCM_BUSINESS_CENTRAL_DISPATCH_ENABLED = env.bool("SCM_BUSINESS_CENTRAL_DISPATCH_
 # working; the map is an enhancement, not a dependency.
 MAPBOX_PUBLIC_TOKEN = env.str("MAPBOX_PUBLIC_TOKEN", default="")
 MAPBOX_STYLE_URL = env.str("MAPBOX_STYLE_URL", default="mapbox://styles/mapbox/standard")
-# The Control Tower's backdrop map only — a darker style, say. Blank means MAPBOX_STYLE_URL.
+# The Control Tower's backdrop map only, which follows the application theme: one
+# style for light mode (blank means MAPBOX_STYLE_URL) and one for dark mode.
 MAPBOX_CONTROL_TOWER_STYLE_URL = env.str("MAPBOX_CONTROL_TOWER_STYLE_URL", default="")
+MAPBOX_CONTROL_TOWER_DARK_STYLE_URL = env.str(
+    "MAPBOX_CONTROL_TOWER_DARK_STYLE_URL", default="mapbox://styles/mapbox/dark-v11"
+)
 
 # Pegasus config
 

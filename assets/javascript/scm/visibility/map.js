@@ -103,27 +103,55 @@ class VisibilityMap {
     this.data = EMPTY;
 
     mapboxgl.accessToken = element.dataset.mapboxToken;
-    const options = {
+    // A dark style is given only to a map that follows the application theme — the
+    // Control Tower's. Every other map keeps the one style it was given.
+    this.lightStyle = element.dataset.mapboxStyle;
+    this.darkStyle = element.dataset.mapboxDarkStyle || '';
+    this.style = this.themeStyle();
+    this.map = new mapboxgl.Map({
       container: element,
-      style: element.dataset.mapboxStyle,
+      style: this.style,
       center: FALLBACK_CENTER,
       zoom: FALLBACK_ZOOM,
       cooperativeGestures: true,
-    };
-    // A Mapbox Standard light preset ("night", "dusk", …). Only Standard-based
-    // styles have a basemap to configure; any other style ignores it.
-    if (element.dataset.mapLightPreset) {
-      options.config = { basemap: { lightPreset: element.dataset.mapLightPreset } };
-    }
-    this.map = new mapboxgl.Map(options);
+    });
     this.map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+    // On every style load — the first, and each theme switch — because setStyle()
+    // replaces the whole style, our source and layers with it.
+    this.map.on('style.load', () => this.addLayers());
     this.map.on('load', () => this.onLoad());
+    if (this.darkStyle) watchTheme(() => this.followTheme());
   }
 
   onLoad() {
+    this.bindInteractions();
+    this.map.resize();
+    this.refresh(withMapFilters(this.baseUrl));
+  }
+
+  // -- theme --------------------------------------------------------------
+
+  themeStyle() {
+    // Pegasus marks dark mode with the `dark` class on <html>.
+    const dark = document.documentElement.classList.contains('dark');
+    return dark && this.darkStyle ? this.darkStyle : this.lightStyle;
+  }
+
+  followTheme() {
+    const style = this.themeStyle();
+    if (style === this.style) return;
+    this.style = style;
+    // The camera survives setStyle(). A full reload rather than a diff, so that
+    // style.load fires and addLayers() puts back the source — with the data already
+    // loaded, so nothing is fetched again and the view is not refitted.
+    this.map.setStyle(style, { diff: false });
+  }
+
+  addLayers() {
+    if (this.map.getSource(SOURCE_ID)) return;
     this.map.addSource(SOURCE_ID, {
       type: 'geojson',
-      data: EMPTY,
+      data: this.data,
       // No Mapbox clustering. Containers at one canonical location are grouped
       // server-side, by that location, which is the grouping that means something:
       // "84 at Oceanterminalen" rather than "84 within 44 screen pixels".
@@ -132,8 +160,21 @@ class VisibilityMap {
     // Journey layers first so the canonical markers draw on top of the evidence.
     if (this.mode !== 'overview') this.addJourneyLayers();
     this.addPositionLayers();
-    this.map.resize();
-    this.refresh(withMapFilters(this.baseUrl));
+    if (this.selectedEventId !== null) this.highlightEvent(this.selectedEventId);
+  }
+
+  bindInteractions() {
+    // Bound once. Mapbox keeps layer listeners by layer id, so they hold across a
+    // style switch while the layers themselves are re-added.
+    DRAW_ORDER.forEach((positionClass) => {
+      const id = `scm-positions-${positionClass}`;
+      this.map.on('click', id, (event) => this.selectPosition(event));
+      this.pointer(id);
+    });
+    if (this.mode !== 'overview') {
+      this.map.on('click', 'scm-events', (event) => this.selectEvent(event));
+      this.pointer('scm-events');
+    }
   }
 
   addPositionLayers() {
@@ -172,8 +213,6 @@ class VisibilityMap {
         },
         paint: { 'text-color': MARKER_TEXT_COLOR },
       });
-      this.map.on('click', id, (event) => this.selectPosition(event));
-      this.pointer(id);
     });
 
     this.map.addLayer({
@@ -263,8 +302,6 @@ class VisibilityMap {
         'circle-stroke-color': COLOR.selected,
       },
     });
-    this.map.on('click', 'scm-events', (event) => this.selectEvent(event));
-    this.pointer('scm-events');
   }
 
   pointer(layerId) {
@@ -498,6 +535,17 @@ function makeMarkerImage(shape, color, sizeInPixels) {
 // for, rather than delivered and hidden.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+
+function watchTheme(callback) {
+  // Pegasus switches theme by toggling `dark` on <html> — on load, from the nav's
+  // selector and when the system preference changes — so that class is the one
+  // thing to watch.
+  new MutationObserver(callback).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+}
+
 function mapFilterParams() {
   const params = new URLSearchParams();
   document.querySelectorAll('[data-scm-map-filter]').forEach((element) => {
@@ -556,6 +604,23 @@ function onKeydown(event) {
   if (panel && panel.innerHTML.trim()) panel.innerHTML = '';
 }
 
+// The Control Tower's collapsible sections live in the board an HTMX filter change
+// replaces, so they would all close on every change. Which ones were open is noted
+// before a swap and put back after it — by name, since the elements are new.
+let openSections = [];
+
+function onBeforeSwap() {
+  openSections = Array.from(document.querySelectorAll('details[data-scm-section][open]'))
+    .map((section) => section.dataset.scmSection);
+}
+
+function reopenSections() {
+  openSections.forEach((name) => {
+    const section = document.querySelector(`details[data-scm-section="${name}"]`);
+    if (section) section.open = true;
+  });
+}
+
 function onAfterSwap(event) {
   // A board filter change swaps the board and leaves the map alone: we only point
   // its existing source at the URL describing the new selection, then re-apply the
@@ -568,6 +633,7 @@ function onAfterSwap(event) {
     instance.setBaseUrl(source.dataset.scmMapSource);
     instance.applyFilters();
   }
+  reopenSections();
   initialise();
 }
 
@@ -577,6 +643,7 @@ document.addEventListener('change', onMapFilterChange);
 document.addEventListener('scm-map:event-selected', onEventSelected);
 document.addEventListener('keydown', onKeydown);
 // htmx events bubble to document, so one listener covers every swap on the page.
+document.addEventListener('htmx:beforeSwap', onBeforeSwap);
 document.addEventListener('htmx:afterSwap', onAfterSwap);
 
 export { VisibilityMap };

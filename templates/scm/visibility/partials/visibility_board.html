@@ -54,14 +54,18 @@
     outstanding, so a shipment gated in on Monday stops being counted as Wednesday's
     work; "Awaiting receipt" is the gap between a box landing and somebody taking it
     into their records.
+
+    "Arriving ≤7d" counts rows and the forecast tile "Next 7 days" counts containers;
+    the two are kept as they are rather than made to agree. Both wear the same
+    surface, scm-glass, through metric_card's card_class.
   {% endcomment %}
   <div class="order-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:col-span-3 lg:row-start-2 lg:grid-cols-6">
-    {% include "scm/components/metric_card.html" with label=_("Tracking") value=overview.tracking_container_count icon="fa-satellite-dish" color="success" href=overview_url|add:"?view=tracking" %}
-    {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" href=shipments_url %}
-    {% include "scm/components/metric_card.html" with label=_("Arriving ≤7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" href=arrivals_url %}
-    {% include "scm/components/metric_card.html" with label=_("Awaiting receipt") value=overview.awaiting_receipt|length icon="fa-clipboard-check" color="info" href=arrivals_url|add:"?window=30&state=arrived" %}
-    {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed_total icon="fa-clock" color="warning" href=overview_url|add:"?view=delayed" %}
-    {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exception_total icon="fa-triangle-exclamation" color="error" href=overview_url|add:"?view=exceptions" %}
+    {% include "scm/components/metric_card.html" with label=_("Tracking") value=overview.tracking_container_count icon="fa-satellite-dish" color="success" href=overview_url|add:"?view=tracking" card_class="scm-glass" %}
+    {% include "scm/components/metric_card.html" with label=_("Active shipments") value=overview.active_shipments icon="fa-ship" href=shipments_url card_class="scm-glass" %}
+    {% include "scm/components/metric_card.html" with label=_("Arriving ≤7d") value=overview.arriving_soon|length icon="fa-anchor" color="info" href=arrivals_url card_class="scm-glass" %}
+    {% include "scm/components/metric_card.html" with label=_("Awaiting receipt") value=overview.awaiting_receipt|length icon="fa-clipboard-check" color="info" href=arrivals_url|add:"?window=30&state=arrived" card_class="scm-glass" %}
+    {% include "scm/components/metric_card.html" with label=_("Delayed") value=overview.delayed_total icon="fa-clock" color="warning" href=overview_url|add:"?view=delayed" card_class="scm-glass" %}
+    {% include "scm/components/metric_card.html" with label=_("Exceptions") value=overview.exception_total icon="fa-triangle-exclamation" color="error" href=overview_url|add:"?view=exceptions" card_class="scm-glass" %}
   </div>
 
   {% comment %}
@@ -77,7 +81,7 @@
   {% endcomment %}
   <div class="order-4 lg:col-span-3 lg:row-start-3">
     <form
-      class="scm-panel flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5"
+      class="scm-glass flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5"
       hx-get="{% url 'visibility:overview' %}"
       hx-target="#visibility-board"
       hx-swap="outerHTML"
@@ -150,61 +154,91 @@
   </div>
 
   {% comment %}
-    3. What needs attention. The exception engine's findings first, then the delay
+    3–5. The three lists, as sections that open on demand: collapsed by default, so
+    the page stays the map and its numbers, and each opened on its own.
+
+    Native <details>, so the keyboard, the state and the semantics come from the
+    browser. The badge is each list's own length — none of the three is paginated or
+    truncated, so that is also how many rows opening it shows. The board is swapped
+    whole on a filter change, which would close them all again; map.js notes which
+    were open before an HTMX swap and reopens them after it.
+
+    Full width and stacked, each `self-start`, so opening one never stretches
+    another. The queue links sit in the bodies: a summary is the toggle, and a link
+    inside it would be a control inside a control.
+  {% endcomment %}
+
+  {# 3. What is arriving. #}
+  <details class="order-5 scm-glass group self-start lg:col-span-3 lg:row-start-4" data-scm-section="arrivals">
+    {% include "scm/visibility/components/section_summary.html" with title=_("Upcoming arrivals") count=overview.arriving_soon|length subtitle=_("Next 7 days") %}
+    <div class="border-t border-base-content/10 px-4 pb-4 pt-3">
+      <div class="mb-2 flex justify-end">
+        <a href="{{ arrivals_url }}" class="text-xs link link-hover">{% translate "Open queue" %}</a>
+      </div>
+      {% if overview.arriving_soon %}
+        <ul class="divide-y divide-base-200">
+          {% for object in overview.arriving_soon %}
+            {% include "scm/visibility/partials/visibility_object_row.html" with object=object %}
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="py-4 text-sm text-base-content/50">{% translate "Nothing arriving in the next 7 days." %}</p>
+      {% endif %}
+    </div>
+  </details>
+
+  {% comment %}
+    4. What needs attention. The exception engine's findings first, then the delay
     engine's — see VisibilityOverview.needs_attention. A summary of the Exceptions
     queue, which is where the same findings are worked; this panel deliberately does
     not grow the queue's filters or columns.
   {% endcomment %}
-  <section class="order-5 scm-panel flex flex-col lg:col-start-3 lg:row-start-4">
-    {% include "scm/components/section_header.html" with title=_("Needs attention") count=overview.needs_attention|length action_url=exceptions_url action_label=_("Open queue") %}
-    {% if overview.needs_attention %}
-      <ul class="max-h-[22rem] divide-y divide-base-200 overflow-y-auto">
-        {% for object in overview.needs_attention %}
-          {% include "scm/visibility/components/attention_item.html" with object=object %}
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="py-8 text-center text-sm text-base-content/50">
-        <i class="fa fa-check text-success"></i>
-        {% translate "Nothing needs attention." %}
-      </p>
-    {% endif %}
-  </section>
-
-  {# 4. What is arriving. #}
-  <section class="order-6 scm-panel lg:col-span-2 lg:col-start-1 lg:row-start-4">
-    {% include "scm/components/section_header.html" with title=_("Upcoming arrivals") count=overview.arriving_soon|length subtitle=_("Next 7 days") action_url=arrivals_url action_label=_("Open queue") %}
-    {% if overview.arriving_soon %}
-      <ul class="divide-y divide-base-200">
-        {% for object in overview.arriving_soon %}
-          {% include "scm/visibility/partials/visibility_object_row.html" with object=object %}
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="py-4 text-sm text-base-content/50">{% translate "Nothing arriving in the next 7 days." %}</p>
-    {% endif %}
-  </section>
+  <details class="order-6 scm-glass group self-start lg:col-span-3 lg:row-start-5" data-scm-section="attention">
+    {% include "scm/visibility/components/section_summary.html" with title=_("Needs attention") count=overview.needs_attention|length %}
+    <div class="border-t border-base-content/10 px-4 pb-4 pt-3">
+      <div class="mb-2 flex justify-end">
+        <a href="{{ exceptions_url }}" class="text-xs link link-hover">{% translate "Open queue" %}</a>
+      </div>
+      {% if overview.needs_attention %}
+        <ul class="max-h-[22rem] divide-y divide-base-200 overflow-y-auto">
+          {% for object in overview.needs_attention %}
+            {% include "scm/visibility/components/attention_item.html" with object=object %}
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="py-8 text-center text-sm text-base-content/50">
+          <i class="fa fa-check text-success"></i>
+          {% translate "Nothing needs attention." %}
+        </p>
+      {% endif %}
+    </div>
+  </details>
 
   {% comment %}
-    5. The selected view itself — the list the map beside it is drawn from.
+    5. The selected view itself — the list the map is drawn from.
 
     Titled after the view rather than "Active supply chain", because the three views
     are three different lists and a heading that stayed the same would leave the
     reader to work out which one they were looking at. Soonest arrival first,
     whatever the view: see selectors.sort_by_arrival.
+
+    Its badge counts these rows — shipments and standalone containers — and so can
+    differ from the Tracking card above, which counts distinct containers.
   {% endcomment %}
-  <section class="order-7 scm-panel lg:col-span-3 lg:row-start-5">
-    {% include "scm/components/section_header.html" with title=overview.view_label count=overview.objects|length subtitle=_("Soonest arrival first") %}
-    {% if overview.objects %}
-      <ul class="divide-y divide-base-200">
-        {% for object in overview.objects %}
-          {% include "scm/visibility/partials/visibility_object_row.html" with object=object %}
-        {% endfor %}
-      </ul>
-    {% elif filters.is_active %}
-      {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("Nothing matches these filters") message=_("Clear a filter or choose another view to widen the search.") %}
-    {% else %}
-      {% include "scm/components/empty_state.html" with icon="fa-satellite-dish" title=_("Nothing is being tracked yet") message=_("Start tracking a container or book a shipment and it will appear here.") action_url=containers_url action_label=_("Go to containers") %}
-    {% endif %}
-  </section>
+  <details class="order-7 scm-glass group self-start lg:col-span-3 lg:row-start-6" data-scm-section="view">
+    {% include "scm/visibility/components/section_summary.html" with title=overview.view_label count=overview.objects|length subtitle=_("Soonest arrival first") %}
+    <div class="border-t border-base-content/10 px-4 pb-4 pt-3">
+      {% if overview.objects %}
+        <ul class="divide-y divide-base-200">
+          {% for object in overview.objects %}
+            {% include "scm/visibility/partials/visibility_object_row.html" with object=object %}
+          {% endfor %}
+        </ul>
+      {% elif filters.is_active %}
+        {% include "scm/components/empty_state.html" with icon="fa-filter" title=_("Nothing matches these filters") message=_("Clear a filter or choose another view to widen the search.") %}
+      {% else %}
+        {% include "scm/components/empty_state.html" with icon="fa-satellite-dish" title=_("Nothing is being tracked yet") message=_("Start tracking a container or book a shipment and it will appear here.") action_url=containers_url action_label=_("Go to containers") %}
+      {% endif %}
+    </div>
+  </details>
 </div>
