@@ -1,0 +1,17 @@
+{% comment %}
+  A purchase order's Business Central document status, as one compact soft badge.
+
+  Usage: {% include "scm/procurement/partials/purchase_order_status_badge.html" with purchase_order=po %}
+
+  Colour follows where the order is: blue while open or released, amber part way,
+  green when everything is in, grey once closed. Soft badges keep the tint subtle
+  and readable in both themes; `whitespace-nowrap` keeps a two-word status on one
+  line. The label is the model's own, so nothing here renames a status.
+{% endcomment %}
+
+{% with status=purchase_order.status %}
+  <span class="badge badge-sm badge-soft whitespace-nowrap
+    {% if status == 'open' or status == 'released' %}badge-info{% elif status == 'partially_received' %}badge-warning{% elif status == 'fully_received' %}badge-success{% else %}badge-neutral{% endif %}">
+    {{ purchase_order.get_status_display }}
+  </span>
+{% endwith %}

@@ -9,6 +9,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
@@ -17,6 +18,7 @@ from apps.scm.integrations.business_systems.business_central.receipt_serial_line
 
 from .activity import get_purchase_order_activity
 from .forms import PurchaseOrderForm, PurchaseOrderLineForm
+from .list_table import clear_all_url, column_headers, filter_chips, parse_purchase_order_list_filters
 from .manual import (
     create_purchase_order_line,
     delete_purchase_order_line,
@@ -25,13 +27,16 @@ from .manual import (
 )
 from .models import PurchaseOrderLine
 from .selectors import (
+    filter_purchase_orders,
     get_purchase_order_line_summaries,
     get_purchase_order_workspace,
     get_team_purchase_orders,
 )
-from .services import calculate_purchase_order_fulfillment, create_purchase_order, delete_purchase_order
+from .services import create_purchase_order, delete_purchase_order
 
 PURCHASE_ORDERS_PER_PAGE = 50
+
+PURCHASE_ORDER_TABLE_TEMPLATE = "scm/procurement/partials/purchase_order_table.html"
 
 LINE_FORM_TEMPLATE = "scm/procurement/partials/purchase_order_line_form.html"
 
@@ -42,16 +47,31 @@ BC_DENIAL = _("This purchase order is managed by Business Central and cannot be 
 
 @scm_login_required
 def purchase_order_list(request):
+    """The purchase order list, sorted, filtered and paged from the query string.
+
+    An HTMX request — a header click, a filter, a page — gets the table alone, which
+    replaces the one on screen. A history restore is the exception: htmx asks for the
+    whole page when its cache misses, and a table on its own would be all it showed.
+    """
     team = request.default_team
-    po_qs = get_team_purchase_orders(team=team)
-    paginator = Paginator(po_qs, PURCHASE_ORDERS_PER_PAGE)
+    filters = parse_purchase_order_list_filters(request.GET)
+    paginator = Paginator(filter_purchase_orders(team, filters), PURCHASE_ORDERS_PER_PAGE)
     page_obj = paginator.get_page(request.GET.get("page"))
-    po_rows = [(po, calculate_purchase_order_fulfillment(po)) for po in page_obj]
     context = {
-        "po_rows": po_rows,
+        "po_rows": list(page_obj),
         "page_obj": page_obj,
+        # The names web/components/paginator_htmx.html reads.
+        "is_paginated": page_obj.has_other_pages(),
+        "elided_page_range": paginator.get_elided_page_range(page_obj.number, on_each_side=1, on_ends=1),
+        "filters": filters,
+        "columns": column_headers(filters, request.GET),
+        "chips": filter_chips(filters, request.GET),
+        "clear_all_url": clear_all_url(request.GET),
+        "list_url": reverse("procurement:purchase_order_list"),
         "team_slug": team.slug,
     }
+    if request.htmx and not request.htmx.history_restore_request:
+        return render(request, PURCHASE_ORDER_TABLE_TEMPLATE, context)
     return render(request, "scm/procurement/pages/purchase_order_list.html", context)
 
 

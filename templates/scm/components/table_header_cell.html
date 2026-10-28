@@ -1,0 +1,89 @@
+{% load i18n %}
+
+{% comment %}
+  One column header of a server-sorted, server-filtered list table.
+
+  Usage: {% include "scm/components/table_header_cell.html" with column=columns.supplier list_url=list_url %}
+  Optional: target (the element the list is swapped into, default "#list-content").
+
+  `column` is a dict — see apps.scm.procurement.list_table.column_headers for one:
+  label, sort_url, direction ("asc"/"desc"/""), numeric, active, hidden, clear_url,
+  and any of text (param, value, placeholder), choices (param, [(value, label,
+  checked)]) and range (param prefix, min, max). Every URL comes from the server,
+  which is where the allowed fields are decided; this only draws them.
+
+  The filter opens as a popover, not a CSS dropdown: the table scrolls sideways, and
+  an ordinary dropdown inside a scrolling box is clipped by it. A popover sits in the
+  top layer above everything. The form is a plain GET — it carries the other
+  filters and the sort in hidden fields and drops the page — and HTMX only saves
+  the reload.
+{% endcomment %}
+
+{% with target=target|default:"#list-content" popover_id="table-filter-"|add:column.key %}
+  <th class="whitespace-nowrap {% if column.numeric %}text-right{% endif %}"
+      {% if column.direction == "asc" %}aria-sort="ascending"{% elif column.direction == "desc" %}aria-sort="descending"{% endif %}>
+    <span class="inline-flex items-center gap-1">
+      <a href="{{ column.sort_url }}" hx-get="{{ column.sort_url }}" hx-target="{{ target }}" hx-push-url="true"
+         class="inline-flex items-center gap-1 rounded hover:text-base-content focus-visible:outline-2 focus-visible:outline-primary {% if column.direction %}text-base-content{% endif %}"
+         title="{% blocktranslate trimmed with label=column.label %}Sort by {{ label }}{% endblocktranslate %}">
+        {{ column.label }}
+        {% if column.direction == "asc" %}
+          <i class="fa fa-arrow-up text-[10px] text-primary" aria-hidden="true"></i>
+        {% elif column.direction == "desc" %}
+          <i class="fa fa-arrow-down text-[10px] text-primary" aria-hidden="true"></i>
+        {% else %}
+          <i class="fa fa-sort text-[10px] opacity-30" aria-hidden="true"></i>
+        {% endif %}
+      </a>
+
+      {% if column.text or column.choices or column.range %}
+        <button type="button" popovertarget="{{ popover_id }}" style="anchor-name: --{{ popover_id }}"
+                class="btn btn-ghost btn-xs btn-square h-6 min-h-6 w-6 {% if column.active %}text-primary{% else %}opacity-50 hover:opacity-100{% endif %}"
+                aria-label="{% blocktranslate trimmed with label=column.label %}Filter {{ label }}{% endblocktranslate %}">
+          <i class="fa fa-filter text-[10px]" aria-hidden="true"></i>
+        </button>
+        <div popover id="{{ popover_id }}" style="position-anchor: --{{ popover_id }}"
+             class="dropdown {% if column.numeric %}dropdown-end{% endif %} mt-1 w-64 rounded-box border border-base-300 bg-base-100 p-3 text-left text-sm font-normal normal-case tracking-normal text-base-content shadow-lg">
+          <form method="get" action="{{ list_url }}" hx-get="{{ list_url }}" hx-target="{{ target }}" hx-push-url="true" class="space-y-3">
+            {% for name, value in column.hidden %}
+              <input type="hidden" name="{{ name }}" value="{{ value }}">
+            {% endfor %}
+
+            {% if column.text %}
+              <input type="search" name="{{ column.text.0 }}" value="{{ column.text.1 }}" placeholder="{{ column.text.2 }}"
+                     maxlength="100" class="input input-sm w-full" aria-label="{{ column.text.2 }}">
+            {% endif %}
+
+            {% if column.choices %}
+              <fieldset class="space-y-1">
+                {% for value, label, checked in column.choices.1 %}
+                  <label class="flex cursor-pointer items-center gap-2">
+                    <input type="checkbox" name="{{ column.choices.0 }}" value="{{ value }}" class="checkbox checkbox-xs" {% if checked %}checked{% endif %}>
+                    <span>{{ label }}</span>
+                  </label>
+                {% endfor %}
+              </fieldset>
+            {% endif %}
+
+            {% if column.range %}
+              <div class="flex items-center gap-2">
+                <input type="number" step="any" name="{{ column.range.0 }}_min" value="{{ column.range.1 }}"
+                       placeholder="{% translate 'Min' %}" aria-label="{% translate 'Minimum' %}" class="input input-sm w-full">
+                <span class="text-base-content/50">–</span>
+                <input type="number" step="any" name="{{ column.range.0 }}_max" value="{{ column.range.2 }}"
+                       placeholder="{% translate 'Max' %}" aria-label="{% translate 'Maximum' %}" class="input input-sm w-full">
+              </div>
+            {% endif %}
+
+            <div class="flex items-center justify-between pt-1">
+              <a href="{{ list_url }}{{ column.clear_url }}" hx-get="{{ list_url }}{{ column.clear_url }}" hx-target="{{ target }}" hx-push-url="true" class="btn btn-ghost btn-xs">
+                {% translate "Clear" %}
+              </a>
+              <button type="submit" class="btn btn-primary btn-xs">{% translate "Apply" %}</button>
+            </div>
+          </form>
+        </div>
+      {% endif %}
+    </span>
+  </th>
+{% endwith %}

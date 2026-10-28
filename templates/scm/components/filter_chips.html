@@ -1,0 +1,30 @@
+{% load i18n %}
+
+{% comment %}
+  The filters narrowing a list, one removable chip each, and Clear all.
+
+  Usage: {% include "scm/components/filter_chips.html" with chips=chips clear_all_url=clear_all_url list_url=list_url %}
+  Optional: target (default "#list-content").
+
+  `chips` are apps.scm.tables.FilterChip: a label and the relative URL that removes
+  that filter and keeps every other one, the sort included. Renders nothing when no
+  filter is active.
+{% endcomment %}
+
+{% if chips %}
+  {% with target=target|default:"#list-content" %}
+    <div class="flex flex-wrap items-center gap-2" role="list" aria-label="{% translate 'Active filters' %}">
+      {% for chip in chips %}
+        <a role="listitem" href="{{ list_url }}{{ chip.remove_url }}" hx-get="{{ list_url }}{{ chip.remove_url }}" hx-target="{{ target }}" hx-push-url="true"
+           class="badge badge-soft badge-primary gap-1.5 whitespace-nowrap hover:brightness-95"
+           aria-label="{% blocktranslate trimmed with label=chip.label %}Remove filter {{ label }}{% endblocktranslate %}">
+          {{ chip.label }}
+          <i class="fa fa-xmark text-[10px]" aria-hidden="true"></i>
+        </a>
+      {% endfor %}
+      <a href="{{ list_url }}{{ clear_all_url }}" hx-get="{{ list_url }}{{ clear_all_url }}" hx-target="{{ target }}" hx-push-url="true" class="link link-hover text-xs">
+        {% translate "Clear all" %}
+      </a>
+    </div>
+  {% endwith %}
+{% endif %}

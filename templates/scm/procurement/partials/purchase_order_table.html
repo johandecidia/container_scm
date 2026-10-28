@@ -1,0 +1,105 @@
+{% load i18n %}
+{% load team_tags %}
+
+{% comment %}
+  The purchase order table: active filters, the count, the rows and the pages.
+
+  The swap target for every sort, filter and page change — the page wraps it in
+  #list-content and the HTMX views return this alone. All state is in the query
+  string, built server-side (see apps.scm.procurement.list_table), so this template
+  never assembles a URL by hand.
+
+  Quantities come from the queryset's annotations, the same arithmetic as the
+  fulfillment service, and are shown with up to three decimals — the precision the
+  lines store — so 5.000 reads 5 and a real 2.5 is never rounded away.
+{% endcomment %}
+
+<div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+  {% include "scm/components/filter_chips.html" with chips=chips clear_all_url=clear_all_url list_url=list_url %}
+  {% if page_obj.paginator.count %}
+    <p class="ml-auto text-xs text-base-content/60 tabular-nums">
+      {% blocktranslate trimmed count total=page_obj.paginator.count with first=page_obj.start_index last=page_obj.end_index %}
+        {{ total }} purchase order
+      {% plural %}
+        {{ first }}–{{ last }} of {{ total }} purchase orders
+      {% endblocktranslate %}
+    </p>
+  {% endif %}
+</div>
+
+{% if po_rows or filters.is_active %}
+  <div class="overflow-x-auto">
+    <table class="table table-sm w-full">
+      <thead>
+        <tr class="text-xs uppercase tracking-wide text-base-content/60">
+          {% include "scm/components/table_header_cell.html" with column=columns.po_number %}
+          {% include "scm/components/table_header_cell.html" with column=columns.supplier %}
+          {% include "scm/components/table_header_cell.html" with column=columns.status %}
+          {% include "scm/components/table_header_cell.html" with column=columns.ordered %}
+          {% include "scm/components/table_header_cell.html" with column=columns.shipped %}
+          {% include "scm/components/table_header_cell.html" with column=columns.received %}
+          {% include "scm/components/table_header_cell.html" with column=columns.remaining %}
+          <th class="text-right">{% translate "Actions" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for po in po_rows %}
+          <tr id="po-row-{{ po.pk }}" class="hover:bg-base-200/60">
+            <td class="whitespace-nowrap">
+              <span class="inline-flex items-center gap-2">
+                <a class="link link-primary font-medium" href="{% url 'procurement:purchase_order_detail' po.pk %}">{{ po.po_number }}</a>
+                {% if po.is_business_central %}
+                  <span class="badge badge-xs badge-ghost font-medium" title="{% translate 'Managed by Business Central' %}">BC</span>
+                {% endif %}
+              </span>
+            </td>
+            {# Visual truncation only: the whole name stays in the cell for screen readers, and in the tooltip. #}
+            <td class="max-w-[16rem]">
+              <span class="block truncate" title="{{ po.supplier_name }}">{{ po.supplier_name }}</span>
+            </td>
+            <td>{% include "scm/procurement/partials/purchase_order_status_badge.html" with purchase_order=po %}</td>
+            <td class="text-right tabular-nums">{{ po.ordered_total|floatformat:"-3" }}</td>
+            <td class="text-right tabular-nums">{{ po.shipped_total|floatformat:"-3" }}</td>
+            <td class="text-right tabular-nums">{{ po.received_total|floatformat:"-3" }}</td>
+            <td class="text-right tabular-nums">{{ po.remaining_total|floatformat:"-3" }}</td>
+            <td class="text-right">
+              <div class="flex justify-end gap-1">
+                {% comment %}
+                  No delete on a Business Central order. The server refuses it,
+                  so offering the button would only produce a button that always
+                  fails. The BC badge beside the number already says why.
+                {% endcomment %}
+                {% if not po.is_business_central %}
+                  <button
+                    class="btn btn-ghost btn-xs text-error"
+                    title="{% translate 'Delete purchase order' %}"
+                    hx-delete="{% url 'procurement:purchase_order_delete' po.pk %}"
+                    hx-confirm="{% blocktranslate trimmed with po_number=po.po_number %}Permanently delete purchase order {{ po_number }}? Its lines, events and supplier deliveries are deleted too. This cannot be undone.{% endblocktranslate %}"
+                    hx-target="#po-row-{{ po.pk }}"
+                    hx-swap="outerHTML"
+                  >
+                    <i class="fa fa-trash"></i>
+                  </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="8">
+              {% include "scm/components/table_empty_state.html" with message=_("No purchase orders match these filters.") %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="mt-3">
+    {% include "web/components/paginator_htmx.html" %}
+  </div>
+{% elif request.user|is_admin_of:request.default_team %}
+  {# Imports is a Team Settings area, so only administrators are offered the import action. #}
+  {% include "scm/components/empty_state.html" with icon="fa-file-invoice" title=_("No purchase orders yet") message=_("Import purchase orders from Business Central to start tracking fulfillment.") action_url="/scm/imports/upload/?import_type=purchase_orders" action_label=_("Import data") %}
+{% else %}
+  {% include "scm/components/empty_state.html" with icon="fa-file-invoice" title=_("No purchase orders yet") message=_("Import purchase orders from Business Central to start tracking fulfillment.") %}
+{% endif %}
