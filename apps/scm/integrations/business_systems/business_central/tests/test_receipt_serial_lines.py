@@ -307,7 +307,16 @@ class OrderPageTest(_Case):
         )
         page = self._page()
         self.assertIn("Posted serials not placed on a line", page)
-        self.assertIn("Same item on several receipt lines", page)
+        # One group per receipt and reason, listing every serial — not one row per serial.
+        self.assertEqual(page.count("Same item on several receipt lines"), 1)
+        self.assertIn(SERIALS[0], page)
+        self.assertIn(SERIALS[1], page)
+
+    def test_long_source_location_name_is_truncated_with_full_name_in_title(self):
+        name = "Lager MCR05 - Lager Oceantermialen i JohnEvans"
+        PurchaseOrderLine.objects.filter(pk=self.line.pk).update(location_code="L005", location_name=name)
+        page = self._page()
+        self.assertIn(f'class="block max-w-[10rem] truncate text-base-content/60" title="{name}"', page)
 
     def test_other_team_sees_nothing(self):
         from apps.teams.models import Team

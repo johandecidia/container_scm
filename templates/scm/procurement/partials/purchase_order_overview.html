@@ -173,7 +173,9 @@
                   <td class="text-xs">
                     {% if line.location_code %}
                       <span class="font-mono">{{ line.location_code }}</span>
-                      {% if line.location_name %}<span class="block text-base-content/60">{{ line.location_name }}</span>{% endif %}
+                      {% if line.location_name %}
+                        <span class="block max-w-[10rem] truncate text-base-content/60" title="{{ line.location_name }}">{{ line.location_name }}</span>
+                      {% endif %}
                     {% else %}
                       —
                     {% endif %}
@@ -269,13 +271,24 @@
           <p class="text-warning font-medium mb-1">
             {% translate "Posted serials not placed on a line" %}
           </p>
-          <ul class="flex flex-col gap-0.5">
-            {% for posted in unattributed_serials %}
-              <li>
-                <span class="font-mono">{{ posted.serial_no }}</span>
-                <span class="text-base-content/50">{{ posted.receipt_no }} · {{ posted.item_no }}</span>
-                <span class="text-base-content/60">— {{ posted.reason_label }}</span>
-              </li>
+          {# One entry per receipt, item and reason: a receipt with 33 such serials is one problem, not 33. #}
+          {% regroup unattributed_serials|dictsort:"receipt_no" by receipt_no as by_receipt %}
+          <ul class="flex flex-col gap-2">
+            {% for receipt in by_receipt %}
+              {% regroup receipt.list by reason_label as by_reason %}
+              {% for group in by_reason %}
+                <li>
+                  <p>
+                    <span class="font-medium">{{ receipt.grouper }}</span>
+                    <span class="text-base-content/50">· {{ group.list.0.item_no }}</span>
+                    <span class="text-base-content/60">— {{ group.grouper }}</span>
+                    <span class="badge badge-xs badge-ghost">{{ group.list|length }}</span>
+                  </p>
+                  <p class="font-mono text-base-content/70 flex flex-wrap gap-x-2 mt-0.5">
+                    {% for posted in group.list %}<span>{{ posted.serial_no }}</span>{% endfor %}
+                  </p>
+                </li>
+              {% endfor %}
             {% endfor %}
           </ul>
         </div>
