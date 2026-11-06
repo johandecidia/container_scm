@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from django.db.models import Case, DecimalField, F, IntegerField, Q, QuerySet, Sum, Value, When
+from django.db.models import Case, DecimalField, Expression, F, IntegerField, Q, QuerySet, Sum, Value, When
 from django.db.models.functions import Coalesce, Greatest, Lower
 
 from apps.teams.models import Team
@@ -66,7 +66,9 @@ def annotate_purchase_order_totals(queryset):
 
 # Sortable columns: the URL's key to the expression behind it. Nothing outside this
 # mapping ever reaches order_by.
-PURCHASE_ORDER_SORTS = {
+# Typed as what the values have in common for sorting (``asc``/``desc``): ``F`` is not an
+# ``Expression``, so the literal alone infers only their shared base, which has neither.
+PURCHASE_ORDER_SORTS: dict[str, F | Expression] = {
     "po_number": F("po_number"),
     "supplier": Lower("supplier_name"),
     # Status sorts in the order an order moves through, not alphabetically.

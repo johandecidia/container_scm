@@ -92,8 +92,10 @@ def filter_chips(filters: PurchaseOrderListFilters, params) -> list[FilterChip]:
             text = f"{label} {_number(low)}–{_number(high)}"
         elif low is not None:
             text = f"{label} ≥ {_number(low)}"
-        else:
+        elif high is not None:
             text = f"{label} ≤ {_number(high)}"
+        else:  # parse_purchase_order_list_filters only keeps a range with a bound
+            continue
         chips.append(FilterChip(text, table_url(params, drop=(f"{column}_min", f"{column}_max"))))
     return chips
 

@@ -19,6 +19,8 @@ from django.utils import timezone
 from apps.scm.shipments.models import Shipment, ShipmentContainer
 from apps.scm.tracking.models import TrackingEvent
 from apps.scm.visibility.selectors import get_visibility_overview, parse_visibility_filters
+from apps.teams.models import Team
+from apps.users.models import CustomUser
 
 from .factories import TEST_STORAGES, make_container, make_provider, make_user_and_team, watch_container
 
@@ -28,6 +30,9 @@ SECTIONS = ("arrivals", "attention", "view")
 @override_settings(STORAGES=TEST_STORAGES)
 class ControlTowerSectionsTest(TestCase):
     """One shipment on customs hold arriving this week, one delayed, both watched."""
+
+    user: CustomUser
+    team: Team
 
     @classmethod
     def setUpTestData(cls):
@@ -75,7 +80,8 @@ class ControlTowerSectionsTest(TestCase):
         match = re.search(
             rf'data-scm-section="{section}".*?badge-neutral ml-auto tabular-nums">(\d+)<', html, flags=re.DOTALL
         )
-        self.assertIsNotNone(match, f"no badge for {section}")
+        if match is None:
+            self.fail(f"no badge for {section}")
         return int(match.group(1))
 
     def expected(self, **params) -> dict[str, int]:
